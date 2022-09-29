@@ -1,9 +1,9 @@
-/* jshint esversion: 6 */
 
 // Experimental
 
 var om = om || {};
 var protobuf = protobuf || require('./protobuf');
+var base = base || require('./base');
 
 om.ModelFactory = class {
 
@@ -14,7 +14,7 @@ om.ModelFactory = class {
     open(context, match) {
         const file = match;
         if (!file.model) {
-            throw om.Error('File does not contain a model definition.');
+            throw new om.Error('File does not contain a model definition.');
         }
         return context.require('./om-proto').then(() => {
             let model = null;
@@ -27,9 +27,8 @@ om.ModelFactory = class {
                 const message = error && error.message ? error.message : error.toString();
                 throw new om.Error('File format is not ge.proto.ModelDef (' + message.replace(/\.$/, '') + ').');
             }
-            return om.Metadata.open(context).then((metadata) => {
-                const weights = file.weights;
-                return new om.Model(metadata, model, weights);
+            return context.metadata('om-metadata.json').then((metadata) => {
+                return new om.Model(metadata, model, file.weights);
             });
         });
     }
@@ -74,10 +73,6 @@ om.Graph = class {
         return this._name;
     }
 
-    get groups() {
-        return false;
-    }
-
     get nodes() {
         return this._nodes;
     }
@@ -119,13 +114,13 @@ om.Node = class {
                 const inputNode = graph.op.find(node => node.name === name);
                 const desc = op.input_desc[i];
                 const format = desc.layout;
-                if (inputNode.type === 'Const' && inputNode.attr && inputNode.attr.value && inputNode.attr) {
+                if (inputNode && inputNode.type === 'Const' && inputNode.attr && inputNode.attr.value && inputNode.attr) {
                     let shape = null;
                     const value = inputNode.attr.value.t;
                     if (value.desc.shape != null) {
                         shape = value.desc.shape.dim;
                     }
-                    if (value.desc.attr.origin_shape) {
+                    else if (value.desc.attr.origin_shape) {
                         shape = value.desc.attr.origin_shape.list.i;
                     }
                     let data = null;
@@ -152,7 +147,7 @@ om.Node = class {
                     this._inputs.push(new om.Parameter(parameterName, true, [ argument ]));
                 }
                 else {
-                    const dataType = desc ? om.Utility.dtype(desc.dtype) : 'undefined';
+                    const dataType = desc ? om.Utility.dtype(desc.dtype) : '?';
                     const shape = desc.shape ? desc.shape.dim : undefined;
                     const tensorType = new om.TensorType(dataType, shape, format, null);
                     const identifier = src_index === '0' ? name : name + ':' + src_index;
@@ -319,6 +314,9 @@ om.Attribute = class {
                 this._value = null;
                 break;
             }
+            default: {
+                throw new om.Error("Unsupported attribute type '" + JSON.stringify(value).substring(0, 32) + "'.");
+            }
         }
     }
 
@@ -389,39 +387,25 @@ om.Argument = class {
 
 om.Tensor = class {
 
-    constructor(kind, type, value) {
+    constructor(category, type, value) {
         this._type = type;
-        this._name = '';
-        this._kind = kind;
+        this._category = category;
         this._data = value;
-        this._shape = type.shape.dimensions;
     }
 
-    get name() {
-        return this._name;
+    get category() {
+        return this._category;
     }
 
     get type() {
         return this._type;
     }
-
-    get kind() {
-        return this._kind;
-    }
-
-    set kind(value) {
-        this._kind = value;
-    }
-
-    get state() {
-        return 'Tensor data not implemented.';
-    }
 };
 
 om.TensorType = class {
 
-    constructor(dtype, shape, format, denotation) {
-        this._dtype = dtype;
+    constructor(dataType, shape, format, denotation) {
+        this._dataType = dataType;
         this._shape = new om.TensorShape(shape);
         const list = [];
         if (format) {
@@ -434,7 +418,7 @@ om.TensorType = class {
     }
 
     get dataType() {
-        return this._dtype;
+        return this._dataType;
     }
 
     set shape(dims) {
@@ -450,7 +434,7 @@ om.TensorType = class {
     }
 
     toString() {
-        return this.dataType + this._shape.toString();
+        return this._dataType + this._shape.toString();
     }
 };
 
@@ -477,8 +461,8 @@ om.File = class {
     static open(context) {
         const stream = context.stream;
         const signature = [ 0x49, 0x4D, 0x4F, 0x44 ]; // IMOD
-        if (stream.length >= 256 && stream.peek(4).every((value, index) => value === signature[index])) {
-            const reader = new om.File.BinaryReader(stream.peek());
+        if (stream && stream.length >= 256 && stream.peek(4).every((value, index) => value === signature[index])) {
+            const reader = new base.BinaryReader(stream);
             return new om.File(reader);
         }
         return null;
@@ -538,7 +522,7 @@ om.File = class {
                         this._model = buffer;
                         break;
                     }
-                    case 1: { // MODEL_WEIGHT
+                    case 1: { // WEIGHTS_DATA
                         this._weights = buffer;
                         break;
                     }
@@ -550,7 +534,7 @@ om.File = class {
                     case 5: { // DEVICE_CONFIG
                         this.devices = new Map();
                         const decoder = new TextDecoder('ascii');
-                        const reader = new om.File.BinaryReader(buffer);
+                        const reader = new base.BinaryReader(buffer);
                         reader.uint32();
                         for (let position = 4; position < partition.size; ) {
                             const length = reader.uint32();
@@ -563,51 +547,11 @@ om.File = class {
                         break;
                     }
                     default: {
-                        throw new om.Error("Unknown partition type '" + partition.type + "'.");
+                        throw new om.Error("Unsupported partition type '" + partition.type + "'.");
                     }
                 }
             }
         }
-    }
-};
-
-om.File.BinaryReader = class {
-
-    constructor(buffer) {
-        this._buffer = buffer;
-        this._length = buffer.length;
-        this._position = 0;
-        this._view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
-    }
-
-    seek(position) {
-        this._position = position >= 0 ? position : this._length + position;
-    }
-
-    skip(offset) {
-        this._position += offset;
-    }
-
-    read(length) {
-        if (this._position === 0 && length === undefined) {
-            this._position = this._length;
-            return this._buffer;
-        }
-        const position = this._position;
-        this.skip(length !== undefined ? length : this._length - this._position);
-        return this._buffer.subarray(position, this._position);
-    }
-
-    byte() {
-        const position = this._position;
-        this.skip(1);
-        return this._buffer[position];
-    }
-
-    uint32() {
-        const position = this._position;
-        this.skip(4);
-        return this._view.getUint32(position, true);
     }
 };
 
@@ -620,60 +564,15 @@ om.Utility = class {
             'complex64', 'complex128', 'qint8', 'qint16', 'qint32', 'quint8', 'quint16', 'resource',
             'stringref', 'dual', 'variant', 'bfloat16', 'int4', 'uint1', 'int2', 'uint2'
         ];
-        if (value < om.Utility._types.length) {
-            return om.Utility._types[value];
+        if (value >= om.Utility._types.length) {
+            throw new om.Error("Unsupported dtype '" + value + "'.");
         }
-        throw new om.Error("Unknown dtype '" + value + "'.");
+        return om.Utility._types[value];
     }
 
     static decodeText(value) {
         om.Utility._textDecoder = om.Utility._textDecoder || new TextDecoder('utf-8');
         return om.Utility._textDecoder.decode(value);
-    }
-};
-
-om.Metadata = class {
-
-    static open(context) {
-        if (om.Metadata._metadata) {
-            return Promise.resolve(om.Metadata._metadata);
-        }
-        return context.request('om-metadata.json', 'utf-8', null).then((data) => {
-            om.Metadata._metadata = new om.Metadata(data);
-            return om.Metadata._metadata;
-        }).catch(() => {
-            om.Metadata._metadata = new om.Metadata(null);
-            return om.Metadata._metadata;
-        });
-    }
-
-    constructor(data) {
-        this._map = new Map();
-        this._attributes = new Map();
-        if (data) {
-            const metadata = JSON.parse(data);
-            this._map = new Map(metadata.map((item) => [ item.name, item ]));
-        }
-    }
-
-    type(name) {
-        return this._map.get(name);
-    }
-
-    attribute(type, name) {
-        const key = type + ':' + name;
-        if (!this._attributes.has(key)) {
-            const schema = this.type(type);
-            if (schema && schema.attributes && schema.attributes.length > 0) {
-                for (const attribute of schema.attributes) {
-                    this._attributes.set(type + ':' + attribute.name, attribute);
-                }
-            }
-            if (!this._attributes.has(key)) {
-                this._attributes.set(key, null);
-            }
-        }
-        return this._attributes.get(key);
     }
 };
 

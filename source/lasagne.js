@@ -1,4 +1,3 @@
-/* jshint esversion: 6 */
 
 // Experimental
 
@@ -15,7 +14,7 @@ lasagne.ModelFactory = class {
     }
 
     open(context) {
-        return lasagne.Metadata.open(context).then((metadata) => {
+        return context.metadata('lasagne-metadata.json').then((metadata) => {
             const obj = context.open('pkl');
             return new lasagne.Model(metadata, obj);
         });
@@ -213,8 +212,8 @@ lasagne.Attribute = class {
     constructor(metadata, name, value) {
         this._name = name;
         this._value = value;
-        if (value && value.__class_) {
-            this._type = value.__class_.__module__ + '.' + value.__class_.__name__;
+        if (value && value.__class__) {
+            this._type = value.__class__.__module__ + '.' + value.__class__.__name__;
         }
     }
 
@@ -228,55 +227,6 @@ lasagne.Attribute = class {
 
     get type() {
         return this._type;
-    }
-};
-
-lasagne.Metadata = class {
-
-    static open(context) {
-        if (lasagne.Metadata._metadata) {
-            return Promise.resolve(lasagne.Metadata._metadata);
-        }
-        return context.request('lasagne-metadata.json', 'utf-8', null).then((data) => {
-            lasagne.Metadata._metadata = new lasagne.Metadata(data);
-            return lasagne.Metadata._metadata;
-        }).catch(() => {
-            lasagne.Metadata._metadata = new lasagne.Metadata(null);
-            return lasagne.Metadata._metadata;
-        });
-    }
-
-    constructor(data) {
-        this._map = new Map();
-        if (data) {
-            const metadata = JSON.parse(data);
-            this._map = new Map(metadata.map((item) => [ item.name, item ]));
-        }
-    }
-
-    type(name) {
-        return this._map.get(name);
-    }
-
-    attribute(type, name) {
-        const schema = this.type(type);
-        if (schema) {
-            let attributeMap = schema.attributeMap;
-            if (!attributeMap) {
-                attributeMap = {};
-                if (schema.attributes) {
-                    for (const attribute of schema.attributes) {
-                        attributeMap[attribute.name] = attribute;
-                    }
-                }
-                schema.attributeMap = attributeMap;
-            }
-            const attributeSchema = attributeMap[name];
-            if (attributeSchema) {
-                return attributeSchema;
-            }
-        }
-        return null;
     }
 };
 
@@ -321,23 +271,16 @@ lasagne.TensorShape = class {
 lasagne.Tensor = class {
 
     constructor(storage) {
-        this._type = new lasagne.TensorType(storage.dtype.name, new lasagne.TensorShape(storage.shape));
+        this._type = new lasagne.TensorType(storage.dtype.__name__, new lasagne.TensorShape(storage.shape));
     }
 
     get type() {
         return this._type;
     }
-
-    get state() {
-        return 'Tensor data not implemented.';
-    }
-
-    toString() {
-        return '';
-    }
 };
 
 lasagne.Error = class extends Error {
+
     constructor(message) {
         super(message);
         this.name = 'Lasagne Error';

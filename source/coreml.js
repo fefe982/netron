@@ -1,8 +1,8 @@
-/* jshint esversion: 6 */
 
 var coreml = coreml || {};
 var json = json || require('./json');
 var protobuf = protobuf || require('./protobuf');
+var base = base || require('./base');
 
 coreml.ModelFactory = class {
 
@@ -31,30 +31,25 @@ coreml.ModelFactory = class {
             }
             return 'coreml.pb';
         }
-        switch (identifier) {
-            case 'manifest.json': {
-                const obj = context.open('json');
-                if (obj && obj.rootModelIdentifier && obj.itemInfoEntries) {
-                    const entries = Object.keys(obj.itemInfoEntries).map((key) => obj.itemInfoEntries[key]);
-                    if (entries.filter((entry) => entry.path.toLowerCase().endsWith('.mlmodel').length === 1)){
-                        return 'coreml.manifest';
-                    }
+        if (identifier === 'manifest.json') {
+            const obj = context.open('json');
+            if (obj && obj.rootModelIdentifier && obj.itemInfoEntries) {
+                const entries = Object.keys(obj.itemInfoEntries).map((key) => obj.itemInfoEntries[key]);
+                if (entries.filter((entry) => entry.path.toLowerCase().endsWith('.mlmodel').length === 1)){
+                    return 'coreml.manifest';
                 }
-                break;
             }
-            case 'metadata.json': {
-                const obj = context.open('json');
-                if (obj && obj.rootModelIdentifier && obj.itemInfoEntries) {
-                    return 'coreml.metadata';
-                }
-                break;
+        }
+        if (identifier === 'metadata.json') {
+            const obj = context.open('json');
+            if (obj && obj.rootModelIdentifier && obj.itemInfoEntries) {
+                return 'coreml.metadata';
             }
-            case 'featuredescriptions.json': {
-                const obj = context.open('json');
-                if (obj && (obj.Inputs || obj.Outputs)) {
-                    return 'coreml.featuredescriptions';
-                }
-                break;
+        }
+        if (identifier === 'featuredescriptions.json') {
+            const obj = context.open('json');
+            if (obj && (obj.Inputs || obj.Outputs)) {
+                return 'coreml.featuredescriptions';
             }
         }
         if (extension === 'bin' && stream.length > 16) {
@@ -177,7 +172,7 @@ coreml.ModelFactory = class {
                         return openManifestStream(context, '../../../');
                     }
                     default: {
-                        throw new coreml.Error("Unknown Core ML format '" + match + "'.");
+                        throw new coreml.Error("Unsupported Core ML format '" + match + "'.");
                     }
                 }
             });
@@ -189,20 +184,21 @@ coreml.Model = class {
 
     constructor(metadata, format, model, weights) {
         this._format = (format || 'Core ML') + ' v' + model.specificationVersion.toString();
+        this._metadata = [];
         this._graphs = [ new coreml.Graph(metadata, model, weights) ];
         if (model.description && model.description.metadata) {
             const properties = model.description.metadata;
             if (properties.versionString) {
                 this._version = properties.versionString;
             }
-            if (properties.author) {
-                this._author = properties.author;
-            }
             if (properties.shortDescription) {
                 this._description = properties.shortDescription;
             }
+            if (properties.author) {
+                this._metadata.push({ name: 'author', value: properties.author });
+            }
             if (properties.license) {
-                this._license = properties.license;
+                this._metadata.push({ name: 'license', value: properties.license });
             }
             if (metadata.userDefined && Object.keys(properties.userDefined).length > 0) {
                 /* empty */
@@ -222,12 +218,8 @@ coreml.Model = class {
         return this._description || null;
     }
 
-    get author() {
-        return this._author || null;
-    }
-
-    get license() {
-        return this._license || null;
+    get metadata() {
+        return this._metadata;
     }
 
     get graphs() {
@@ -360,7 +352,7 @@ coreml.Graph = class {
             case 'neuralNetworkClassifier': {
                 const neuralNetworkClassifier = model.neuralNetworkClassifier;
                 for (const layer of neuralNetworkClassifier.layers) {
-                    this._createNode(scope, group, layer.layer, layer.name, description, layer[layer.layer], layer.input, layer.output);
+                    this._createNode(scope, group, layer.layer, layer.name, group === '' ? '' : description, layer[layer.layer], layer.input, layer.output);
                 }
                 this._updateClassifierOutput(group, neuralNetworkClassifier);
                 this._updatePreprocessing(scope, group, neuralNetworkClassifier.preprocessing);
@@ -369,7 +361,7 @@ coreml.Graph = class {
             case 'neuralNetwork': {
                 const neuralNetwork = model.neuralNetwork;
                 for (const layer of neuralNetwork.layers) {
-                    this._createNode(scope, group, layer.layer, layer.name, description, layer[layer.layer], layer.input, layer.output);
+                    this._createNode(scope, group, layer.layer, layer.name, group === '' ? '' : description, layer[layer.layer], layer.input, layer.output);
                 }
                 this._updatePreprocessing(scope, group, neuralNetwork.preprocessing);
                 return 'Neural Network';
@@ -419,20 +411,6 @@ coreml.Graph = class {
                     [ model.description.output[0].name ]);
                 return 'Generalized Linear Regressor';
             }
-            case 'dictVectorizer': {
-                this._createNode(scope, group, 'dictVectorizer', null, description,
-                    model.dictVectorizer,
-                    [ model.description.input[0].name ],
-                    [ model.description.output[0].name ]);
-                return 'Dictionary Vectorizer';
-            }
-            case 'featureVectorizer': {
-                this._createNode(scope, group, 'featureVectorizer', null, description,
-                    model.featureVectorizer,
-                    coreml.Graph._formatFeatureDescriptionList(model.description.input),
-                    [ model.description.output[0].name ]);
-                return 'Feature Vectorizer';
-            }
             case 'treeEnsembleClassifier': {
                 this._createNode(scope, group, 'treeEnsembleClassifier', null, description,
                     model.treeEnsembleClassifier.treeEnsemble,
@@ -477,13 +455,6 @@ coreml.Graph = class {
                     [ model.description.output[0].name ]);
                 return 'Support Vector Regressor';
             }
-            case 'arrayFeatureExtractor': {
-                this._createNode(scope, group, 'arrayFeatureExtractor', null, description,
-                    { extractIndex: model.arrayFeatureExtractor.extractIndex },
-                    [ model.description.input[0].name ],
-                    [ model.description.output[0].name ]);
-                return 'Array Feature Extractor';
-            }
             case 'oneHotEncoder': {
                 const categoryType = model.oneHotEncoder.CategoryType;
                 const oneHotEncoderParams = { outputSparse: model.oneHotEncoder.outputSparse };
@@ -506,6 +477,34 @@ coreml.Graph = class {
                     [ model.description.output[0].name ]);
                 return 'Imputer';
             }
+            case 'featureVectorizer': {
+                this._createNode(scope, group, 'featureVectorizer', null, description,
+                    model.featureVectorizer,
+                    coreml.Graph._formatFeatureDescriptionList(model.description.input),
+                    [ model.description.output[0].name ]);
+                return 'Feature Vectorizer';
+            }
+            case 'dictVectorizer': {
+                this._createNode(scope, group, 'dictVectorizer', null, description,
+                    model.dictVectorizer,
+                    [ model.description.input[0].name ],
+                    [ model.description.output[0].name ]);
+                return 'Dictionary Vectorizer';
+            }
+            case 'scaler': {
+                this._createNode(scope, group, 'scaler', null, description,
+                    model.scaler,
+                    [ model.description.input[0].name ],
+                    [ model.description.output[0].name ]);
+                return 'Scaler';
+            }
+            case 'categoricalMapping': {
+                this._createNode(scope, group, 'categoricalMapping', null, description,
+                    model.categoricalMapping,
+                    [ model.description.input[0].name ],
+                    [ model.description.output[0].name ]);
+                return 'Categorical Mapping';
+            }
             case 'normalizer': {
                 this._createNode(scope, group, 'normalizer', null, description,
                     model.normalizer,
@@ -513,24 +512,12 @@ coreml.Graph = class {
                     [ model.description.output[0].name ]);
                 return 'Normalizer';
             }
-            case 'wordTagger': {
-                this._createNode(scope, group, 'wordTagger', null, description,
-                    model.wordTagger,
-                    [ model.description.input[0].name ],
-                    [
-                        model.wordTagger.tokensOutputFeatureName,
-                        model.wordTagger.tokenTagsOutputFeatureName,
-                        model.wordTagger.tokenLocationsOutputFeatureName,
-                        model.wordTagger.tokenLengthsOutputFeatureName
-                    ]);
-                return 'Word Tagger';
-            }
-            case 'textClassifier': {
-                this._createNode(scope, group, 'textClassifier', null, description,
-                    model.textClassifier,
+            case 'arrayFeatureExtractor': {
+                this._createNode(scope, group, 'arrayFeatureExtractor', null, description,
+                    { extractIndex: model.arrayFeatureExtractor.extractIndex },
                     [ model.description.input[0].name ],
                     [ model.description.output[0].name ]);
-                return 'Text Classifier';
+                return 'Array Feature Extractor';
             }
             case 'nonMaximumSuppression': {
                 const nonMaximumSuppressionParams = {
@@ -552,6 +539,25 @@ coreml.Graph = class {
                         model.nonMaximumSuppression.coordinatesOutputFeatureName
                     ]);
                 return 'Non Maximum Suppression';
+            }
+            case 'wordTagger': {
+                this._createNode(scope, group, 'wordTagger', null, description,
+                    model.wordTagger,
+                    [ model.description.input[0].name ],
+                    [
+                        model.wordTagger.tokensOutputFeatureName,
+                        model.wordTagger.tokenTagsOutputFeatureName,
+                        model.wordTagger.tokenLocationsOutputFeatureName,
+                        model.wordTagger.tokenLengthsOutputFeatureName
+                    ]);
+                return 'Word Tagger';
+            }
+            case 'textClassifier': {
+                this._createNode(scope, group, 'textClassifier', null, description,
+                    model.textClassifier,
+                    [ model.description.input[0].name ],
+                    [ model.description.output[0].name ]);
+                return 'Text Classifier';
             }
             case 'visionFeaturePrint': {
                 const visionFeaturePrintParams = {
@@ -588,6 +594,13 @@ coreml.Graph = class {
                     model.description.output.map((feature) => feature.name));
                 return 'Item Similarity Recommender';
             }
+            case 'audioFeaturePrint': {
+                this._createNode(scope, group, 'audioFeaturePrint', null, description,
+                    model.audioFeaturePrint,
+                    [ model.description.input[0].name ],
+                    [ model.description.output[0].name ]);
+                return 'Audio Feature Print';
+            }
             case 'linkedModel': {
                 this._createNode(scope, group, 'linkedModel', null, description,
                     model.linkedModel.linkedModelFile,
@@ -605,15 +618,17 @@ coreml.Graph = class {
             case 'mlProgram': {
                 return this._loadProgram(model.mlProgram, scope, group, weights);
             }
+            default: {
+                throw new coreml.Error("Unsupported model type '" + JSON.stringify(Object.keys(model)) + "'.");
+            }
         }
-        throw new coreml.Error("Unknown model type '" + JSON.stringify(Object.keys(model)) + "'.");
     }
 
     _loadProgram(program, scope, group, weights) {
         // TODO: need to handle functions other than main?
         const main = program.functions.main;
         // TODO: need to handle more than one block specialization?
-        const block = main.block_specializations.CoreML5;
+        const block = main.block_specializations.CoreML5 || main.block_specializations.CoreML6;
 
         const convertValue = (value) => {
             switch (value.value) {
@@ -651,7 +666,7 @@ coreml.Graph = class {
                     if (stream) {
                         stream.seek(offset);
                         const buffer = stream.read(32);
-                        const reader = new coreml.BinaryReader(buffer);
+                        const reader = new base.BinaryReader(buffer);
                         const signature = reader.uint32();
                         if (signature == 0xdeadbeef) {
                             reader.uint32(); // dataType
@@ -668,6 +683,10 @@ coreml.Graph = class {
                                     data = stream.read(size);
                                     break;
                                 }
+                                case 'uint8': {
+                                    data = stream.read(size);
+                                    break;
+                                }
                                 default:
                                     throw new coreml.Error("Unsupported blob data type '" + type.dataType + "'.");
                             }
@@ -675,8 +694,10 @@ coreml.Graph = class {
                     }
                     return new coreml.Tensor('Blob', type, data);
                 }
+                default: {
+                    throw new coreml.Error("Unsupported value '" + value.value + "'.");
+                }
             }
-            throw new coreml.Error("Unsupported value '" + value.value + "'.");
         };
 
         const args = new Map();
@@ -963,29 +984,29 @@ coreml.Graph = class {
             case 'uniDirectionalLSTM':
             case 'biDirectionalLSTM': {
                 const count = (type == 'uniDirectionalLSTM') ? 1 : 2;
-                const matrixShape = [ data.outputVectorSize, data.inputVectorSize ];
-                const vectorShape = [ data.outputVectorSize ];
+                const h = data.outputVectorSize;
+                const x = data.inputVectorSize;
                 for (let i = 0; i < count; i++) {
                     const weights = count == 1 ? data.weightParams : data.weightParams[i];
                     const suffix = (i == 0) ? '' : '_rev';
-                    this._initializer(type, initializers, 'Weights', 'inputGateWeightMatrix' + suffix, matrixShape, weights.inputGateWeightMatrix);
-                    this._initializer(type, initializers, 'Weights', 'forgetGateWeightMatrix' + suffix, matrixShape, weights.forgetGateWeightMatrix);
-                    this._initializer(type, initializers, 'Weights', 'blockInputWeightMatrix' + suffix, matrixShape, weights.blockInputWeightMatrix);
-                    this._initializer(type, initializers, 'Weights', 'outputGateWeightMatrix' + suffix, matrixShape, weights.outputGateWeightMatrix);
-                    this._initializer(type, initializers, 'Weights', 'inputGateRecursionMatrix' + suffix, matrixShape, weights.inputGateRecursionMatrix);
-                    this._initializer(type, initializers, 'Weights', 'forgetGateRecursionMatrix' + suffix, matrixShape,weights.forgetGateRecursionMatrix);
-                    this._initializer(type, initializers, 'Weights', 'blockInputRecursionMatrix' + suffix, matrixShape, weights.blockInputRecursionMatrix);
-                    this._initializer(type, initializers, 'Weights', 'outputGateRecursionMatrix' + suffix, matrixShape, weights.outputGateRecursionMatrix);
+                    this._initializer(type, initializers, 'Weights', 'inputGateWeightMatrix' + suffix, [h,x], weights.inputGateWeightMatrix);
+                    this._initializer(type, initializers, 'Weights', 'forgetGateWeightMatrix' + suffix, [h,x], weights.forgetGateWeightMatrix);
+                    this._initializer(type, initializers, 'Weights', 'blockInputWeightMatrix' + suffix, [h,x], weights.blockInputWeightMatrix);
+                    this._initializer(type, initializers, 'Weights', 'outputGateWeightMatrix' + suffix, [h,x], weights.outputGateWeightMatrix);
+                    this._initializer(type, initializers, 'Weights', 'inputGateRecursionMatrix' + suffix, [h,h], weights.inputGateRecursionMatrix);
+                    this._initializer(type, initializers, 'Weights', 'forgetGateRecursionMatrix' + suffix, [h,h],weights.forgetGateRecursionMatrix);
+                    this._initializer(type, initializers, 'Weights', 'blockInputRecursionMatrix' + suffix, [h,h], weights.blockInputRecursionMatrix);
+                    this._initializer(type, initializers, 'Weights', 'outputGateRecursionMatrix' + suffix, [h,h], weights.outputGateRecursionMatrix);
                     if (data.params.hasBiasVectors) {
-                        this._initializer(type, initializers, 'Weights', 'inputGateBiasVector' + suffix, vectorShape, weights.inputGateBiasVector);
-                        this._initializer(type, initializers, 'Weights', 'forgetGateBiasVector' + suffix, vectorShape, weights.forgetGateBiasVector);
-                        this._initializer(type, initializers, 'Weights', 'blockInputBiasVector' + suffix, vectorShape, weights.blockInputBiasVector);
-                        this._initializer(type, initializers, 'Weights', 'outputGateBiasVector' + suffix, vectorShape, weights.outputGateBiasVector);
+                        this._initializer(type, initializers, 'Weights', 'inputGateBiasVector' + suffix, [h], weights.inputGateBiasVector);
+                        this._initializer(type, initializers, 'Weights', 'forgetGateBiasVector' + suffix, [h], weights.forgetGateBiasVector);
+                        this._initializer(type, initializers, 'Weights', 'blockInputBiasVector' + suffix, [h], weights.blockInputBiasVector);
+                        this._initializer(type, initializers, 'Weights', 'outputGateBiasVector' + suffix, [h], weights.outputGateBiasVector);
                     }
                     if (data.params.hasPeepholeVectors) {
-                        this._initializer(type, initializers, 'Weights', 'inputGatePeepholeVector' + suffix, vectorShape, weights.inputGatePeepholeVector);
-                        this._initializer(type, initializers, 'Weights', 'forgetGatePeepholeVector' + suffix, vectorShape, weights.forgetGatePeepholeVector);
-                        this._initializer(type, initializers, 'Weights', 'outputGatePeepholeVector' + suffix, vectorShape, weights.outputGatePeepholeVector);
+                        this._initializer(type, initializers, 'Weights', 'inputGatePeepholeVector' + suffix, [h], weights.inputGatePeepholeVector);
+                        this._initializer(type, initializers, 'Weights', 'forgetGatePeepholeVector' + suffix, [h], weights.forgetGatePeepholeVector);
+                        this._initializer(type, initializers, 'Weights', 'outputGatePeepholeVector' + suffix, [h], weights.outputGatePeepholeVector);
                     }
                 }
                 return { 'weightParams': true };
@@ -1004,8 +1025,9 @@ coreml.Graph = class {
             case 'nonMaximumSuppression':
                 data.stringClassLabels = this._convertVector(data.stringClassLabels);
                 return {};
+            default:
+                return {};
         }
-        return {};
     }
 
     _convertVector(value) {
@@ -1191,15 +1213,15 @@ coreml.Attribute = class {
 
 coreml.Tensor = class {
 
-    constructor(kind, type, data, quantization) {
-        this._kind = kind;
+    constructor(category, type, data, quantization) {
+        this._category = category;
         this._type = type;
         this._data = data;
         this._quantization = quantization;
     }
 
-    get kind() {
-        return this._kind;
+    get category() {
+        return this._category;
     }
 
     get type() {
@@ -1222,101 +1244,15 @@ coreml.Tensor = class {
         return null;
     }
 
-    get state() {
-        return this._context().state;
+    get layout() {
+        switch (this._type.dataType) {
+            case 'float32': return '|';
+            default: return '<';
+        }
     }
 
-    get value() {
-        const context = this._context();
-        if (context.state) {
-            return null;
-        }
-        context.limit = Number.MAX_SAFE_INTEGER;
-        return this._decode(context, 0);
-    }
-
-    toString() {
-        const context = this._context();
-        if (context.state) {
-            return '';
-        }
-        context.limit = 10000;
-        const value = this._decode(context, 0);
-        return JSON.stringify(value, null, 4);
-    }
-
-    _context() {
-        const context = {};
-        context.state = null;
-        context.index = 0;
-        context.count = 0;
-        context.dataType = this._type.dataType;
-        context.dimensions = this._type.shape.dimensions;
-
-        if (!this._data) {
-            context.state = 'Tensor data is empty.';
-            return context;
-        }
-
-        switch (context.dataType) {
-            case 'float32':
-                context.data = this._data;
-                break;
-            case 'float16':
-                context.data = new DataView(this._data.buffer, this._data.byteOffset, this._data.byteLength);
-                break;
-            default:
-                if (this._quantization) {
-                    context.dataType = 'quantization';
-                    context.bits = this._quantization.numberOfBits.toNumber();
-                    context.data = new DataView(this._data.buffer, this._data.byteOffset, this._data.byteLength);
-                }
-                else {
-                    context.state = 'Tensor data type is not implemented.';
-                }
-                break;
-        }
-
-        return context;
-    }
-
-    _decode(context, dimension) {
-        const results = [];
-        const size = context.dimensions[dimension];
-        if (dimension == context.dimensions.length - 1) {
-            for (let i = 0; i < size; i++) {
-                if (context.count > context.limit) {
-                    results.push('...');
-                    return results;
-                }
-                switch (context.dataType) {
-                    case 'float32':
-                        results.push(this._data[context.index]);
-                        context.index++;
-                        break;
-                    case 'float16':
-                        results.push(context.data.getFloat16(context.index, true));
-                        context.index += 2;
-                        break;
-                    case 'quantization':
-                        results.push(context.data.getBits(context.index, context.bits));
-                        context.index++;
-                        break;
-
-                }
-                context.count++;
-            }
-        }
-        else {
-            for (let j = 0; j < size; j++) {
-                if (context.count > context.limit) {
-                    results.push('...');
-                    return results;
-                }
-                results.push(this._decode(context, dimension + 1));
-            }
-        }
-        return results;
+    get values() {
+        return this._data;
     }
 };
 
@@ -1389,13 +1325,29 @@ coreml.MapType = class {
     }
 };
 
+coreml.SequenceType = class {
+
+    constructor(type) {
+        this._type = type;
+    }
+
+    get type() {
+        return this._type;
+    }
+
+    toString() {
+        return 'sequence<' + this._type + '>';
+    }
+};
+
 coreml.ImageType = class {
 
     constructor(colorSpace, width, height) {
-        this._colorSpace = '?';
+        this._width = width;
+        this._height = height;
         switch (colorSpace) {
             case coreml.proto.ImageFeatureType.ColorSpace.GRAYSCALE:
-                this._colorSpace = 'Grayscale';
+                this._colorSpace = 'grayscale';
                 break;
             case coreml.proto.ImageFeatureType.ColorSpace.RGB:
                 this._colorSpace = 'RGB';
@@ -1403,9 +1355,12 @@ coreml.ImageType = class {
             case coreml.proto.ImageFeatureType.ColorSpace.BGR:
                 this._colorSpace = 'BGR';
                 break;
+            case coreml.proto.ImageFeatureType.ColorSpace.GRAYSCALE_FLOAT16:
+                this._colorSpace = 'grayscale:float16';
+                break;
+            default:
+                throw new coreml.Error("Unsupported image color space '" + colorSpace + "'.");
         }
-        this._width = width;
-        this._height = height;
     }
 
     toString() {
@@ -1419,36 +1374,12 @@ coreml.OptionalType = class {
         this._type = type;
     }
 
+    get type() {
+        return this._type;
+    }
+
     toString() {
-        return this._type.toString() + '?';
-    }
-};
-
-coreml.BinaryReader = class {
-
-    constructor(buffer) {
-        this._buffer = buffer;
-        this._position = 0;
-        this._dataView = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
-    }
-
-    skip(offset) {
-        const position = this._position;
-        this._position += offset;
-        if (this._position > this._length) {
-            throw new Error('Expected ' + (this._position - this._length) + ' more bytes. The file might be corrupted. Unexpected end of file.');
-        }
-        return position;
-    }
-
-    uint32() {
-        const position = this.skip(4);
-        return this._dataView.getUint32(position, true);
-    }
-
-    uint64() {
-        const position = this.skip(8);
-        return this._dataView.getUint64(position, true).toNumber();
+        return 'optional<' + this._type.toString() + '>';
     }
 };
 
@@ -1484,16 +1415,25 @@ coreml.Utility = class {
                         shape = new coreml.TensorShape(type.multiArrayType.shape);
                     }
                     let dataType = '?';
+                    const ArrayDataType = coreml.proto.ArrayFeatureType.ArrayDataType;
                     switch (type.multiArrayType.dataType) {
-                        case coreml.proto.ArrayFeatureType.ArrayDataType.FLOAT32:
+                        case ArrayDataType.INVALID_ARRAY_DATA_TYPE:
+                            dataType = '?';
+                            break;
+                        case ArrayDataType.FLOAT16:
+                            dataType = 'float16';
+                            break;
+                        case ArrayDataType.FLOAT32:
                             dataType = 'float32';
                             break;
-                        case coreml.proto.ArrayFeatureType.ArrayDataType.INT32:
-                            dataType = 'int32';
-                            break;
-                        case coreml.proto.ArrayFeatureType.ArrayDataType.DOUBLE:
+                        case ArrayDataType.DOUBLE:
                             dataType = 'float64';
                             break;
+                        case ArrayDataType.INT32:
+                            dataType = 'int32';
+                            break;
+                        default:
+                            throw new coreml.Error("Unsupported array data type '" + type.multiArrayType.dataType + "'.");
                     }
                     result = new coreml.TensorType(dataType, shape);
                     break;
@@ -1514,9 +1454,16 @@ coreml.Utility = class {
                     result = new coreml.MapType(type.dictionaryType.KeyType.replace('KeyType', ''), 'float64');
                     break;
                 }
+                case 'sequenceType': {
+                    result = new coreml.SequenceType(coreml.Utility.featureType(type[type.Type]));
+                    break;
+                }
                 case 'imageType': {
                     result = new coreml.ImageType(type.imageType.colorSpace, type.imageType.width, type.imageType.height);
                     break;
+                }
+                default: {
+                    throw new coreml.Error("Unsupported feature type '" + type.Type + "'.");
                 }
             }
             if (type.isOptional) {
@@ -1636,10 +1583,8 @@ coreml.Metadata = class {
                     }
                 }
             }
-            else {
-                if (index == 0) {
-                    name = 'input';
-                }
+            else if (index == 0) {
+                name = 'input';
             }
             result.name = name ? name : '(' + index.toString() + ')';
             const array = inputs.slice(index, index + count);

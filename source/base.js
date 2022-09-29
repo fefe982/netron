@@ -1,4 +1,3 @@
-/* jshint esversion: 6 */
 
 var base = base || {};
 
@@ -97,9 +96,9 @@ base.Int64 = class Int64 {
     }
 
     toString(radix) {
-        radix = radix || 10;
-        if (radix < 2 || radix > 16) {
-            throw RangeError('radix');
+        const r = radix || 10;
+        if (r < 2 || r > 16) {
+            throw new RangeError('radix');
         }
         if (this.isZero) {
             return '0';
@@ -109,11 +108,14 @@ base.Int64 = class Int64 {
                 const r = new Int64(radix, 0);
                 const div = this.divide(r);
                 const remainder = div.multiply(r).subtract(this);
-                return div.toString(radix) + (remainder.low >>> 0).toString(radix);
+                return div.toString(r) + (remainder.low >>> 0).toString(r);
             }
-            return '-' + this.negate().toString(radix);
+            return '-' + this.negate().toString(r);
         }
-        return base.Utility.text(this, false, radix);
+        if (this.high === 0) {
+            return this.low.toString(radix);
+        }
+        return base.Utility.text(this, false, r);
     }
 };
 
@@ -212,14 +214,17 @@ base.Uint64 = class Uint64 {
     }
 
     toString(radix) {
-        radix = radix || 10;
-        if (radix < 2 || 36 < radix) {
-            throw RangeError('radix');
+        const r = radix || 10;
+        if (r < 2 || 36 < r) {
+            throw new RangeError('radix');
         }
         if (this.isZero) {
             return '0';
         }
-        return base.Utility.text(this, true, radix);
+        if (this.high === 0) {
+            return this.low.toString(radix);
+        }
+        return base.Utility.text(this, true, r);
     }
 };
 
@@ -273,9 +278,7 @@ base.Utility = class {
             if (b.isNegative) {
                 return this.negate().multiply(b.negate());
             }
-            else {
-                return this.negate().multiply(b).negate();
-            }
+            return this.negate().multiply(b).negate();
         }
         else if (b.isNegative) {
             return this.multiply(b.negate()).negate();
@@ -320,7 +323,7 @@ base.Utility = class {
 
     static divide(a, b, unsigned) {
         if (b.isZero) {
-            throw Error('Division by zero.');
+            throw new Error('Division by zero.');
         }
         if (a.isZero) {
             return unsigned ? base.Uint64.zero : base.Int64.zero;
@@ -336,19 +339,15 @@ base.Utility = class {
                 else if (b.equals(base.Int64.min)) {
                     return base.Int64.one;
                 }
-                else {
-                    const half = base.Utility._shiftRight(a, unsigned, 1);
-                    const halfDivide = half.divide(b);
-                    approx = base.Utility._shiftLeft(halfDivide, halfDivide instanceof base.Uint64, 1);
-                    if (approx.eq(base.Int64.zero)) {
-                        return b.isNegative ? base.Int64.one : base.Int64.negativeOne;
-                    }
-                    else {
-                        remainder = a.subtract(b.multiply(approx));
-                        result = approx.add(remainder.divide(b));
-                        return result;
-                    }
+                const half = base.Utility._shiftRight(a, unsigned, 1);
+                const halfDivide = half.divide(b);
+                approx = base.Utility._shiftLeft(halfDivide, halfDivide instanceof base.Uint64, 1);
+                if (approx.eq(base.Int64.zero)) {
+                    return b.isNegative ? base.Int64.one : base.Int64.negativeOne;
                 }
+                remainder = a.subtract(b.multiply(approx));
+                result = approx.add(remainder.divide(b));
+                return result;
             }
             else if (b.equals(base.Int64.min)) {
                 return unsigned ? base.Uint64.zero : base.Int64.zero;
@@ -433,6 +432,22 @@ base.Uint64.zero = new base.Uint64(0, 0);
 base.Uint64.one = new base.Uint64(1, 0);
 base.Uint64.max = new base.Uint64(-1, -1);
 
+base.Complex = class Complex {
+
+    constructor(real, imaginary) {
+        this.real = real;
+        this.imaginary = imaginary;
+    }
+
+    static create(real, imaginary) {
+        return new base.Complex(real, imaginary);
+    }
+
+    toString(/* radix */) {
+        return this.real + ' + ' + this.imaginary + 'i';
+    }
+};
+
 if (!DataView.prototype.getFloat16) {
     DataView.prototype.getFloat16 = function(byteOffset, littleEndian) {
         const value = this.getUint16(byteOffset, littleEndian);
@@ -496,6 +511,21 @@ if (!DataView.prototype.setFloat16) {
     }
 }
 
+if (!DataView.prototype.getBfloat16) {
+    DataView.prototype.getBfloat16 = function(byteOffset, littleEndian) {
+        if (littleEndian) {
+            DataView.__bfloat16_get_uint16_le[1] = this.getUint16(byteOffset, littleEndian);
+            return DataView.__bfloat16_get_float32_le[0];
+        }
+        DataView.__bfloat16_uint16_be[0] = this.getUint16(byteOffset, littleEndian);
+        return DataView.__bfloat16_get_float32_be[0];
+    };
+    DataView.__bfloat16_get_float32_le = new Float32Array(1);
+    DataView.__bfloat16_get_float32_be = new Float32Array(1);
+    DataView.__bfloat16_get_uint16_le = new Uint16Array(DataView.__bfloat16_get_float32_le.buffer, DataView.__bfloat16_get_float32_le.byteOffset, 2);
+    DataView.__bfloat16_get_uint16_be = new Uint16Array(DataView.__bfloat16_get_float32_be.buffer, DataView.__bfloat16_get_float32_be.byteOffset, 2);
+}
+
 DataView.prototype.getInt64 = DataView.prototype.getInt64 || function(byteOffset, littleEndian) {
     return littleEndian ?
         new base.Int64(this.getUint32(byteOffset, true), this.getUint32(byteOffset + 4, true)) :
@@ -513,6 +543,25 @@ DataView.prototype.setInt64 = DataView.prototype.setInt64 || function(byteOffset
     }
 };
 
+DataView.prototype.getIntBits = DataView.prototype.getUintBits || function(offset, bits) {
+    offset = offset * bits;
+    const available = (this.byteLength << 3) - offset;
+    if (bits > available) {
+        throw new RangeError("Invalid bit size '" + bits + "'.");
+    }
+    let value = 0;
+    let index = 0;
+    while (index < bits) {
+        const remainder = offset & 7;
+        const size = Math.min(bits - index, 8 - remainder);
+        value <<= size;
+        value |= (this.getUint8(offset >> 3) >> (8 - size - remainder)) & ~(0xff << size);
+        offset += size;
+        index += size;
+    }
+    return (value < (2 << (bits - 1)) ? value : (2 << bits));
+};
+
 DataView.prototype.getUint64 = DataView.prototype.getUint64 || function(byteOffset, littleEndian) {
     return littleEndian ?
         new base.Uint64(this.getUint32(byteOffset, true), this.getUint32(byteOffset + 4, true)) :
@@ -521,20 +570,20 @@ DataView.prototype.getUint64 = DataView.prototype.getUint64 || function(byteOffs
 
 DataView.prototype.setUint64 = DataView.prototype.setUint64 || function(byteOffset, value, littleEndian) {
     if (littleEndian) {
-        this.setUInt32(byteOffset, value.low, true);
-        this.setUInt32(byteOffset + 4, value.high, true);
+        this.setUint32(byteOffset, value.low, true);
+        this.setUint32(byteOffset + 4, value.high, true);
     }
     else {
-        this.setUInt32(byteOffset + 4, value.low, false);
-        this.setUInt32(byteOffset, value.high, false);
+        this.setUint32(byteOffset + 4, value.low, false);
+        this.setUint32(byteOffset, value.high, false);
     }
 };
 
-DataView.prototype.getBits = DataView.prototype.getBits || function(offset, bits /*, signed */) {
+DataView.prototype.getUintBits = DataView.prototype.getUintBits || function(offset, bits) {
     offset = offset * bits;
     const available = (this.byteLength << 3) - offset;
     if (bits > available) {
-        throw new RangeError();
+        throw new RangeError("Invalid bit size '" + bits + "'.");
     }
     let value = 0;
     let index = 0;
@@ -549,6 +598,203 @@ DataView.prototype.getBits = DataView.prototype.getBits || function(offset, bits
     return value;
 };
 
+DataView.prototype.getComplex64 = DataView.prototype.getComplex64 || function(byteOffset, littleEndian) {
+    const real = littleEndian ? this.getFloat32(byteOffset, littleEndian) : this.getFloat32(byteOffset + 4, littleEndian);
+    const imaginary = littleEndian ? this.getFloat32(byteOffset + 4, littleEndian) : this.getFloat32(byteOffset, littleEndian);
+    return base.Complex.create(real, imaginary);
+};
+
+DataView.prototype.setComplex64 = DataView.prototype.setComplex64 || function(byteOffset, value, littleEndian) {
+    if (littleEndian) {
+        this.setFloat32(byteOffset, value.real, littleEndian);
+        this.setFloat32(byteOffset + 4, value.imaginary, littleEndian);
+    }
+    else {
+        this.setFloat32(byteOffset + 4, value.real, littleEndian);
+        this.setFloat32(byteOffset, value.imaginary, littleEndian);
+    }
+};
+
+DataView.prototype.getComplex128 = DataView.prototype.getComplex128 || function(byteOffset, littleEndian) {
+    const real = littleEndian ? this.getFloat64(byteOffset, littleEndian) : this.getFloat64(byteOffset + 8, littleEndian);
+    const imaginary = littleEndian ? this.getFloat64(byteOffset + 8, littleEndian) : this.getFloat64(byteOffset, littleEndian);
+    return base.Complex.create(real, imaginary);
+};
+
+DataView.prototype.setComplex128 = DataView.prototype.setComplex128 || function(byteOffset, value, littleEndian) {
+    if (littleEndian) {
+        this.setFloat64(byteOffset, value.real, littleEndian);
+        this.setFloat64(byteOffset + 8, value.imaginary, littleEndian);
+    }
+    else {
+        this.setFloat64(byteOffset + 8, value.real, littleEndian);
+        this.setFloat64(byteOffset, value.imaginary, littleEndian);
+    }
+};
+
+base.BinaryReader = class {
+
+    constructor(data) {
+        this._buffer = data instanceof Uint8Array ? data : data.peek();
+        this._position = 0;
+        this._length = this._buffer.length;
+        this._view = new DataView(this._buffer.buffer, this._buffer.byteOffset, this._buffer.byteLength);
+    }
+
+    get length() {
+        return this._length;
+    }
+
+    get position() {
+        return this._position;
+    }
+
+    seek(position) {
+        this._position = position >= 0 ? position : this._length + position;
+        if (this._position > this._length || this._position < 0) {
+            throw new Error('Expected ' + (this._position - this._length) + ' more bytes. The file might be corrupted. Unexpected end of file.');
+        }
+    }
+
+    skip(offset) {
+        this._position += offset;
+        if (this._position > this._length) {
+            throw new Error('Expected ' + (this._position - this._length) + ' more bytes. The file might be corrupted. Unexpected end of file.');
+        }
+    }
+
+    align(mod) {
+        if (this._position % mod != 0) {
+            this.skip(mod - (this._position % mod));
+        }
+    }
+
+    peek(length) {
+        if (this._position === 0 && length === undefined) {
+            return this._buffer;
+        }
+        const position = this._position;
+        this.skip(length !== undefined ? length : this._length - this._position);
+        const end = this._position;
+        this._position = position;
+        return this._buffer.slice(position, end);
+    }
+
+    read(length) {
+        if (this._position === 0 && length === undefined) {
+            this._position = this._length;
+            return this._buffer;
+        }
+        const position = this._position;
+        this.skip(length !== undefined ? length : this._length - this._position);
+        return this._buffer.slice(position, this._position);
+    }
+
+    byte() {
+        const position = this._position;
+        this.skip(1);
+        return this._buffer[position];
+    }
+
+    int8() {
+        const position = this._position;
+        this.skip(1);
+        return this._view.getInt8(position, true);
+    }
+
+    int16() {
+        const position = this._position;
+        this.skip(2);
+        return this._view.getInt16(position, true);
+    }
+
+    int32() {
+        const position = this._position;
+        this.skip(4);
+        return this._view.getInt32(position, true);
+    }
+
+    int64() {
+        const position = this._position;
+        this.skip(8);
+        return this._view.getInt64(position, true).toNumber();
+    }
+
+    uint16() {
+        const position = this._position;
+        this.skip(2);
+        return this._view.getUint16(position, true);
+    }
+
+    uint32() {
+        const position = this._position;
+        this.skip(4);
+        return this._view.getUint32(position, true);
+    }
+
+    uint64() {
+        const position = this._position;
+        this.skip(8);
+        const low = this._view.getUint32(position, true);
+        const high = this._view.getUint32(position + 4, true);
+        if (high === 0) {
+            return low;
+        }
+        const value = (high * 4294967296) + low;
+        if (Number.isSafeInteger(value)) {
+            return value;
+        }
+        throw new Error("Unsigned 64-bit value exceeds safe integer.");
+    }
+
+    float32() {
+        const position = this._position;
+        this.skip(4);
+        return this._view.getFloat32(position, true);
+    }
+
+    float64() {
+        const position = this._position;
+        this.skip(8);
+        return this._view.getFloat64(position, true);
+    }
+
+    string() {
+        const length = this.uint32();
+        const position = this._position;
+        this.skip(length);
+        const data = this._buffer.subarray(position, this._position);
+        this._decoder = this._decoder || new TextDecoder('utf-8');
+        return this._decoder.decode(data);
+    }
+
+    boolean() {
+        return this.byte() !== 0 ? true : false;
+    }
+};
+
+base.Metadata = class {
+
+    get extensions() {
+        return [
+            'onnx', 'tflite', 'pb', 'pt', 'pth', 'h5', 'pbtxt', 'prototxt', 'caffemodel', 'mlmodel', 'mlpackage',
+            'model', 'json', 'xml', 'cfg',
+            'ort',
+            'dnn', 'cmf',
+            'hd5', 'hdf5', 'keras',
+            'tfl', 'circle', 'lite',
+            'mar',  'meta', 'nn',
+            'param', 'params',
+            'paddle', 'pdiparams', 'pdmodel', 'pdopt', 'pdparams', 'nb',
+            'pkl', 'joblib',
+            'ptl', 't7',
+            'dlc', 'uff', 'armnn',
+            'mnn', 'ms', 'ncnn', 'om', 'tm', 'mge', 'tmfile', 'tnnproto', 'xmodel', 'kmodel', 'rknn',
+            'tar', 'zip'
+        ];
+    }
+};
+
 if (typeof window !== 'undefined' && typeof window.Long != 'undefined') {
     window.long = { Long: window.Long };
     window.Int64 = base.Int64;
@@ -558,4 +804,8 @@ if (typeof window !== 'undefined' && typeof window.Long != 'undefined') {
 if (typeof module !== 'undefined' && typeof module.exports === 'object') {
     module.exports.Int64 = base.Int64;
     module.exports.Uint64 = base.Uint64;
+    module.exports.Complex64 = base.Complex;
+    module.exports.Complex128 = base.Complex;
+    module.exports.BinaryReader = base.BinaryReader;
+    module.exports.Metadata = base.Metadata;
 }

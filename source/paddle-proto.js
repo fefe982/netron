@@ -61,81 +61,11 @@ $root.paddle.framework.proto.AttrType = {
     "LONG": 9,
     "BLOCKS": 10,
     "LONGS": 11,
-    "FLOAT64S": 12
+    "FLOAT64S": 12,
+    "VAR": 13,
+    "VARS": 14,
+    "FLOAT64": 15
 };
-
-$root.paddle.framework.proto.ProcessMeshDesc = class ProcessMeshDesc {
-
-    constructor() {
-        this.topology = [];
-        this.process_group = [];
-    }
-
-    static decode(reader, length) {
-        const message = new $root.paddle.framework.proto.ProcessMeshDesc();
-        const end = length !== undefined ? reader.position + length : reader.length;
-        while (reader.position < end) {
-            const tag = reader.uint32();
-            switch (tag >>> 3) {
-                case 1:
-                    message.id = reader.int32();
-                    break;
-                case 2:
-                    message.parent_id = reader.int32();
-                    break;
-                case 3:
-                    message.topology = reader.array(message.topology, () => reader.int32(), tag);
-                    break;
-                case 4:
-                    message.process_group = reader.array(message.process_group, () => reader.int32(), tag);
-                    break;
-                default:
-                    reader.skipType(tag & 7);
-                    break;
-            }
-        }
-        if (!Object.prototype.hasOwnProperty.call(message, 'id')) {
-            throw new protobuf.Error("Excepted 'id'.");
-        }
-        if (!Object.prototype.hasOwnProperty.call(message, 'parent_id')) {
-            throw new protobuf.Error("Excepted 'parent_id'.");
-        }
-        return message;
-    }
-
-    static decodeText(reader) {
-        const message = new $root.paddle.framework.proto.ProcessMeshDesc();
-        reader.start();
-        while (!reader.end()) {
-            const tag = reader.tag();
-            switch (tag) {
-                case "id":
-                    message.id = reader.int32();
-                    break;
-                case "parent_id":
-                    message.parent_id = reader.int32();
-                    break;
-                case "topology":
-                    reader.array(message.topology, () => reader.int32());
-                    break;
-                case "process_group":
-                    reader.array(message.process_group, () => reader.int32());
-                    break;
-                default:
-                    reader.field(tag, message);
-                    break;
-            }
-        }
-        if (!Object.prototype.hasOwnProperty.call(message, "id"))
-            throw new protobuf.Error("Excepted 'id'.");
-        if (!Object.prototype.hasOwnProperty.call(message, "parent_id"))
-            throw new protobuf.Error("Excepted 'parent_id'.");
-        return message;
-    }
-};
-
-$root.paddle.framework.proto.ProcessMeshDesc.prototype.id = 0;
-$root.paddle.framework.proto.ProcessMeshDesc.prototype.parent_id = 0;
 
 $root.paddle.framework.proto.OpDesc = class OpDesc {
 
@@ -203,8 +133,9 @@ $root.paddle.framework.proto.OpDesc = class OpDesc {
                     break;
             }
         }
-        if (!Object.prototype.hasOwnProperty.call(message, "type"))
+        if (!Object.prototype.hasOwnProperty.call(message, "type")) {
             throw new protobuf.Error("Excepted 'type'.");
+        }
         return message;
     }
 };
@@ -222,6 +153,7 @@ $root.paddle.framework.proto.OpDesc.Attr = class Attr {
         this.blocks_idx = [];
         this.longs = [];
         this.float64s = [];
+        this.vars_name = [];
     }
 
     static decode(reader, length) {
@@ -274,6 +206,15 @@ $root.paddle.framework.proto.OpDesc.Attr = class Attr {
                     break;
                 case 16:
                     message.float64s = reader.doubles(message.float64s, tag);
+                    break;
+                case 17:
+                    message.var_name = reader.string();
+                    break;
+                case 18:
+                    message.vars_name.push(reader.string());
+                    break;
+                case 19:
+                    message.float64 = reader.double();
                     break;
                 default:
                     reader.skipType(tag & 7);
@@ -340,15 +281,26 @@ $root.paddle.framework.proto.OpDesc.Attr = class Attr {
                 case "float64s":
                     reader.array(message.float64s, () => reader.double());
                     break;
+                case "var_name":
+                    message.var_name = reader.string();
+                    break;
+                case "vars_name":
+                    reader.array(message.vars_name, () => reader.string());
+                    break;
+                case "float64":
+                    message.float64 = reader.double();
+                    break;
                 default:
                     reader.field(tag, message);
                     break;
             }
         }
-        if (!Object.prototype.hasOwnProperty.call(message, "name"))
+        if (!Object.prototype.hasOwnProperty.call(message, "name")) {
             throw new protobuf.Error("Excepted 'name'.");
-        if (!Object.prototype.hasOwnProperty.call(message, "type"))
+        }
+        if (!Object.prototype.hasOwnProperty.call(message, "type")) {
             throw new protobuf.Error("Excepted 'type'.");
+        }
         return message;
     }
 };
@@ -361,6 +313,8 @@ $root.paddle.framework.proto.OpDesc.Attr.prototype.s = "";
 $root.paddle.framework.proto.OpDesc.Attr.prototype.b = false;
 $root.paddle.framework.proto.OpDesc.Attr.prototype.block_idx = 0;
 $root.paddle.framework.proto.OpDesc.Attr.prototype.l = protobuf.Int64.create(0);
+$root.paddle.framework.proto.OpDesc.Attr.prototype.var_name = "";
+$root.paddle.framework.proto.OpDesc.Attr.prototype.float64 = 0;
 
 $root.paddle.framework.proto.OpDesc.Var = class Var {
 
@@ -408,8 +362,9 @@ $root.paddle.framework.proto.OpDesc.Var = class Var {
                     break;
             }
         }
-        if (!Object.prototype.hasOwnProperty.call(message, "parameter"))
+        if (!Object.prototype.hasOwnProperty.call(message, "parameter")) {
             throw new protobuf.Error("Excepted 'parameter'.");
+        }
         return message;
     }
 };
@@ -485,10 +440,12 @@ $root.paddle.framework.proto.OpProto = class OpProto {
                     break;
             }
         }
-        if (!Object.prototype.hasOwnProperty.call(message, "type"))
+        if (!Object.prototype.hasOwnProperty.call(message, "type")) {
             throw new protobuf.Error("Excepted 'type'.");
-        if (!Object.prototype.hasOwnProperty.call(message, "comment"))
+        }
+        if (!Object.prototype.hasOwnProperty.call(message, "comment")) {
             throw new protobuf.Error("Excepted 'comment'.");
+        }
         return message;
     }
 };
@@ -574,10 +531,12 @@ $root.paddle.framework.proto.OpProto.Var = class Var {
                     break;
             }
         }
-        if (!Object.prototype.hasOwnProperty.call(message, "name"))
+        if (!Object.prototype.hasOwnProperty.call(message, "name")) {
             throw new protobuf.Error("Excepted 'name'.");
-        if (!Object.prototype.hasOwnProperty.call(message, "comment"))
+        }
+        if (!Object.prototype.hasOwnProperty.call(message, "comment")) {
             throw new protobuf.Error("Excepted 'comment'.");
+        }
         return message;
     }
 };
@@ -618,6 +577,9 @@ $root.paddle.framework.proto.OpProto.Attr = class Attr {
                     break;
                 case 6:
                     message.quant = reader.bool();
+                    break;
+                case 7:
+                    message.support_tensor = reader.bool();
                     break;
                 default:
                     reader.skipType(tag & 7);
@@ -660,17 +622,23 @@ $root.paddle.framework.proto.OpProto.Attr = class Attr {
                 case "quant":
                     message.quant = reader.bool();
                     break;
+                case "support_tensor":
+                    message.support_tensor = reader.bool();
+                    break;
                 default:
                     reader.field(tag, message);
                     break;
             }
         }
-        if (!Object.prototype.hasOwnProperty.call(message, "name"))
+        if (!Object.prototype.hasOwnProperty.call(message, "name")) {
             throw new protobuf.Error("Excepted 'name'.");
-        if (!Object.prototype.hasOwnProperty.call(message, "type"))
+        }
+        if (!Object.prototype.hasOwnProperty.call(message, "type")) {
             throw new protobuf.Error("Excepted 'type'.");
-        if (!Object.prototype.hasOwnProperty.call(message, "comment"))
+        }
+        if (!Object.prototype.hasOwnProperty.call(message, "comment")) {
             throw new protobuf.Error("Excepted 'comment'.");
+        }
         return message;
     }
 };
@@ -681,6 +649,7 @@ $root.paddle.framework.proto.OpProto.Attr.prototype.comment = "";
 $root.paddle.framework.proto.OpProto.Attr.prototype.generated = false;
 $root.paddle.framework.proto.OpProto.Attr.prototype.extra = false;
 $root.paddle.framework.proto.OpProto.Attr.prototype.quant = false;
+$root.paddle.framework.proto.OpProto.Attr.prototype.support_tensor = false;
 
 $root.paddle.framework.proto.VarType = class VarType {
 
@@ -719,6 +688,9 @@ $root.paddle.framework.proto.VarType = class VarType {
                     break;
                 case 10:
                     message.vocab = $root.paddle.framework.proto.VarType.TensorDesc.decode(reader, reader.uint32());
+                    break;
+                case 11:
+                    message.sparse_coo = $root.paddle.framework.proto.VarType.TensorDesc.decode(reader, reader.uint32());
                     break;
                 default:
                     reader.skipType(tag & 7);
@@ -764,13 +736,17 @@ $root.paddle.framework.proto.VarType = class VarType {
                 case "vocab":
                     message.vocab = $root.paddle.framework.proto.VarType.TensorDesc.decodeText(reader);
                     break;
+                case "sparse_coo":
+                    message.sparse_coo = $root.paddle.framework.proto.VarType.TensorDesc.decodeText(reader);
+                    break;
                 default:
                     reader.field(tag, message);
                     break;
             }
         }
-        if (!Object.prototype.hasOwnProperty.call(message, "type"))
+        if (!Object.prototype.hasOwnProperty.call(message, "type")) {
             throw new protobuf.Error("Excepted 'type'.");
+        }
         return message;
     }
 };
@@ -784,6 +760,7 @@ $root.paddle.framework.proto.VarType.prototype.tuple = null;
 $root.paddle.framework.proto.VarType.prototype.string = null;
 $root.paddle.framework.proto.VarType.prototype.strings = null;
 $root.paddle.framework.proto.VarType.prototype.vocab = null;
+$root.paddle.framework.proto.VarType.prototype.sparse_coo = null;
 
 $root.paddle.framework.proto.VarType.Type = {
     "BOOL": 0,
@@ -813,7 +790,9 @@ $root.paddle.framework.proto.VarType.Type = {
     "STRING": 25,
     "STRINGS": 26,
     "VOCAB": 27,
-    "FEED_LIST": 28
+    "FEED_LIST": 28,
+    "PSTRING": 29,
+    "SPARSE_COO": 30
 };
 
 $root.paddle.framework.proto.VarType.TensorDesc = class TensorDesc {
@@ -862,8 +841,9 @@ $root.paddle.framework.proto.VarType.TensorDesc = class TensorDesc {
                     break;
             }
         }
-        if (!Object.prototype.hasOwnProperty.call(message, "data_type"))
+        if (!Object.prototype.hasOwnProperty.call(message, "data_type")) {
             throw new protobuf.Error("Excepted 'data_type'.");
+        }
         return message;
     }
 };
@@ -915,8 +895,9 @@ $root.paddle.framework.proto.VarType.LoDTensorDesc = class LoDTensorDesc {
                     break;
             }
         }
-        if (!Object.prototype.hasOwnProperty.call(message, "tensor"))
+        if (!Object.prototype.hasOwnProperty.call(message, "tensor")) {
             throw new protobuf.Error("Excepted 'tensor'.");
+        }
         return message;
     }
 };
@@ -969,8 +950,9 @@ $root.paddle.framework.proto.VarType.LoDTensorArrayDesc = class LoDTensorArrayDe
                     break;
             }
         }
-        if (!Object.prototype.hasOwnProperty.call(message, "tensor"))
+        if (!Object.prototype.hasOwnProperty.call(message, "tensor")) {
             throw new protobuf.Error("Excepted 'tensor'.");
+        }
         return message;
     }
 };
@@ -1139,10 +1121,12 @@ $root.paddle.framework.proto.VarDesc = class VarDesc {
                     break;
             }
         }
-        if (!Object.prototype.hasOwnProperty.call(message, "name"))
+        if (!Object.prototype.hasOwnProperty.call(message, "name")) {
             throw new protobuf.Error("Excepted 'name'.");
-        if (!Object.prototype.hasOwnProperty.call(message, "type"))
+        }
+        if (!Object.prototype.hasOwnProperty.call(message, "type")) {
             throw new protobuf.Error("Excepted 'type'.");
+        }
         return message;
     }
 };
@@ -1221,10 +1205,12 @@ $root.paddle.framework.proto.VarDesc.Attr = class Attr {
                     break;
             }
         }
-        if (!Object.prototype.hasOwnProperty.call(message, "name"))
+        if (!Object.prototype.hasOwnProperty.call(message, "name")) {
             throw new protobuf.Error("Excepted 'name'.");
-        if (!Object.prototype.hasOwnProperty.call(message, "type"))
+        }
+        if (!Object.prototype.hasOwnProperty.call(message, "type")) {
             throw new protobuf.Error("Excepted 'type'.");
+        }
         return message;
     }
 };
@@ -1302,10 +1288,12 @@ $root.paddle.framework.proto.BlockDesc = class BlockDesc {
                     break;
             }
         }
-        if (!Object.prototype.hasOwnProperty.call(message, "idx"))
+        if (!Object.prototype.hasOwnProperty.call(message, "idx")) {
             throw new protobuf.Error("Excepted 'idx'.");
-        if (!Object.prototype.hasOwnProperty.call(message, "parent_idx"))
+        }
+        if (!Object.prototype.hasOwnProperty.call(message, "parent_idx")) {
             throw new protobuf.Error("Excepted 'parent_idx'.");
+        }
         return message;
     }
 };
@@ -1353,8 +1341,9 @@ $root.paddle.framework.proto.OpVersion = class OpVersion {
                     break;
             }
         }
-        if (!Object.prototype.hasOwnProperty.call(message, "version"))
+        if (!Object.prototype.hasOwnProperty.call(message, "version")) {
             throw new protobuf.Error("Excepted 'version'.");
+        }
         return message;
     }
 };
@@ -1450,10 +1439,12 @@ $root.paddle.framework.proto.OpVersionMap.OpVersionPair = class OpVersionPair {
                     break;
             }
         }
-        if (!Object.prototype.hasOwnProperty.call(message, "op_name"))
+        if (!Object.prototype.hasOwnProperty.call(message, "op_name")) {
             throw new protobuf.Error("Excepted 'op_name'.");
-        if (!Object.prototype.hasOwnProperty.call(message, "op_version"))
+        }
+        if (!Object.prototype.hasOwnProperty.call(message, "op_version")) {
             throw new protobuf.Error("Excepted 'op_version'.");
+        }
         return message;
     }
 };

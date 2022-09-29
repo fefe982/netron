@@ -1,4 +1,3 @@
-/* jshint esversion: 6 */
 
 var armnn = armnn || {};
 var flatbuffers = flatbuffers || require('./flatbuffers');
@@ -6,15 +5,16 @@ var flatbuffers = flatbuffers || require('./flatbuffers');
 armnn.ModelFactory = class {
 
     match(context) {
-        switch (context.identifier.split('.').pop().toLowerCase()) {
-            case 'armnn': {
-                return 'armnn.flatbuffers';
-            }
-            case 'json': {
-                const obj = context.open('json');
-                if (obj && obj.layers && obj.inputIds && obj.outputIds) {
-                    return 'armnn.flatbuffers.json';
-                }
+        const identifier = context.identifier;
+        const extension = identifier.split('.').pop().toLowerCase();
+        const stream = context.stream;
+        if (stream && extension === 'armnn') {
+            return 'armnn.flatbuffers';
+        }
+        if (extension === 'json') {
+            const obj = context.open('json');
+            if (obj && obj.layers && obj.inputIds && obj.outputIds) {
+                return 'armnn.flatbuffers.json';
             }
         }
         return undefined;
@@ -49,8 +49,11 @@ armnn.ModelFactory = class {
                     }
                     break;
                 }
+                default: {
+                    throw new armnn.Error("Unsupported Arm NN '" + match + "'.");
+                }
             }
-            return armnn.Metadata.open(context).then((metadata) => {
+            return context.metadata('armnn-metadata.json').then((metadata) => {
                 return new armnn.Model(metadata, model);
             });
         });
@@ -154,10 +157,6 @@ armnn.Graph = class {
         return this._name;
     }
 
-    get groups() {
-        return false;
-    }
-
     get inputs() {
         return this._inputs;
     }
@@ -227,10 +226,6 @@ armnn.Node = class {
 
     get name() {
         return this._name;
-    }
-
-    get group() {
-        return null;
     }
 
     get inputs() {
@@ -340,123 +335,23 @@ armnn.Argument = class {
 
 armnn.Tensor = class {
 
-    constructor(tensor, kind) {
+    constructor(tensor, category) {
         this._type = new armnn.TensorType(tensor.info);
-        this._data = tensor.data.data.slice(0);
-        this._kind = kind ? kind : '';
+        this._category = category || '';
+        const data = tensor.data.data.slice(0);
+        this._values = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
     }
 
-    get kind() {
-        return this._kind;
+    get category() {
+        return this._category;
     }
 
     get type() {
         return this._type;
     }
 
-    get state() {
-        return this._context().state;
-    }
-
-    get value() {
-        const context = this._context();
-        if (context.state) {
-            return null;
-        }
-        context.limit = Number.MAX_SAFE_INTEGER;
-        return this._decode(context, 0);
-    }
-
-    toString() {
-        const context = this._context();
-        if (context.state) {
-            return '';
-        }
-        context.limit = 10000;
-        const value = this._decode(context, 0);
-        return JSON.stringify(value, null, 4);
-    }
-
-    _context() {
-        const context = {};
-        context.state = null;
-        context.index = 0;
-        context.count = 0;
-
-        if (this._data == null) {
-            context.state = 'Tensor data is empty.';
-            return context;
-        }
-
-        context.dataType = this._type.dataType;
-        context.shape = this._type.shape.dimensions;
-        context.data = new DataView(this._data.buffer, this._data.byteOffset, this._data.byteLength);
-
-        return context;
-    }
-
-    _decode(context, dimension) {
-        let shape = context.shape;
-        if (shape.length == 0) {
-            shape = [ 1 ];
-        }
-        const size = shape[dimension];
-        const results = [];
-        if (dimension == shape.length - 1) {
-            for (let i = 0; i < size; i++) {
-                if (context.count > context.limit) {
-                    results.push('...');
-                    return results;
-                }
-                switch (context.dataType) {
-                    case 'float16':
-                        results.push(context.data.getFloat16(context.index, true));
-                        context.index += 2;
-                        context.count++;
-                        break;
-                    case 'float32':
-                        results.push(context.data.getFloat32(context.index, true));
-                        context.index += 4;
-                        context.count++;
-                        break;
-                    case 'quint8':
-                        results.push(context.data.getUint8(context.index));
-                        context.index += 1;
-                        context.count++;
-                        break;
-                    case 'qint16':
-                        results.push(context.data.getInt16(context.index, true));
-                        context.index += 2;
-                        context.count++;
-                        break;
-                    case 'int32':
-                        results.push(context.data.getInt32(context.index, true));
-                        context.index += 4;
-                        context.count++;
-                        break;
-                    case 'boolean':
-                        results.push(context.data.getInt8(context.index));
-                        context.index += 1;
-                        context.count++;
-                        break;
-                    default:
-                        break;
-                }
-            }
-        }
-        else {
-            for (let j = 0; j < size; j++) {
-                if (context.count > context.limit) {
-                    results.push('...');
-                    return results;
-                }
-                results.push(this._decode(context, dimension + 1));
-            }
-        }
-        if (context.shape.length == 0) {
-            return results[0];
-        }
-        return results;
+    get values() {
+        return this._values;
     }
 };
 
@@ -476,7 +371,7 @@ armnn.TensorType = class {
             case 8: this._dataType = 'qint8'; break; // QAsymmS8
             case 9: this._dataType = 'qint8'; break; // QSymmS8
             default:
-                throw new armnn.Error("Unknown data type '" + JSON.stringify(dataType) + "'.");
+                throw new armnn.Error("Unsupported data type '" + JSON.stringify(dataType) + "'.");
         }
         this._shape = new armnn.TensorShape(tensorInfo.dimensions);
     }
@@ -509,49 +404,6 @@ armnn.TensorShape = class {
             return '';
         }
         return '[' + this._dimensions.map((dimension) => dimension.toString()).join(',') + ']';
-    }
-};
-
-armnn.Metadata = class {
-
-    static open(context) {
-        if (armnn.Metadata._metadata) {
-            return Promise.resolve(armnn.Metadata._metadata);
-        }
-        return context.request('armnn-metadata.json', 'utf-8', null).then((data) => {
-            armnn.Metadata._metadata = new armnn.Metadata(data);
-            return armnn.Metadata._metadata;
-        }).catch(() => {
-            armnn.Metadata._metadata = new armnn.Metadata(null);
-            return armnn.Metadata._metadata;
-        });
-    }
-
-    constructor(data) {
-        this._types = new Map();
-        this._attributes = new Map();
-        if (data) {
-            const metadata = JSON.parse(data);
-            this._types = new Map(metadata.map((item) => [ item.name, item ]));
-        }
-    }
-
-    type(name) {
-        return this._types.get(name);
-    }
-
-    attribute(type, name) {
-        const key = type + ':' + name;
-        if (!this._attributes.has(key)) {
-            this._attributes.set(key, null);
-            const metadata = this.type(type);
-            if (metadata && Array.isArray(metadata.attributes)) {
-                for (const attribute of metadata.attributes) {
-                    this._attributes.set(type + ':' + attribute.name, attribute);
-                }
-            }
-        }
-        return this._attributes.get(key);
     }
 };
 

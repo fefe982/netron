@@ -1,15 +1,17 @@
-/* jshint esversion: 6 */
 
 var tnn = tnn || {};
 var text = text || require('./text');
+var base = base || require('./base');
 
 tnn.ModelFactory = class {
 
     match(context) {
         const identifier = context.identifier.toLowerCase();
-        if (identifier.endsWith('.tnnproto')) {
+        const stream = context.stream;
+        if (stream && identifier.endsWith('.tnnproto')) {
             try {
-                const reader = text.Reader.open(context.stream.peek(), 2048);
+                const buffer = stream.peek();
+                const reader = text.Reader.open(buffer, 2048);
                 const content = reader.read();
                 if (content !== undefined) {
                     const line = content.trim();
@@ -25,8 +27,7 @@ tnn.ModelFactory = class {
                 // continue regardless of error
             }
         }
-        if (identifier.endsWith('.tnnmodel')) {
-            const stream = context.stream;
+        if (stream && identifier.endsWith('.tnnmodel')) {
             for (const signature of [ [ 0x02, 0x00, 0xbc, 0xfa ], [ 0x04, 0x00, 0xbc, 0xfa ] ]) {
                 if (signature.length <= stream.length && stream.peek(signature.length).every((value, index) => value === signature[index])) {
                     return 'tnn.params';
@@ -37,7 +38,7 @@ tnn.ModelFactory = class {
     }
 
     open(context, match) {
-        return tnn.Metadata.open(context).then((metadata) => {
+        return context.metadata('tnn-metadata.json').then((metadata) => {
             switch (match) {
                 case 'tnn.model': {
                     const tnnmodel = context.identifier.substring(0, context.identifier.length - 9) + '.tnnmodel';
@@ -54,6 +55,9 @@ tnn.ModelFactory = class {
                         const buffer = stream.peek();
                         return new tnn.Model(metadata, buffer, context.stream.peek());
                     });
+                }
+                default: {
+                    throw new tnn.Error("Unsupported TNN format '" + match + "'.");
                 }
             }
         });
@@ -165,12 +169,7 @@ tnn.Node = class {
         this._outputs = [];
         this._attributes = [];
         this._name = layer.name;
-        let type = layer.type;
-        const operator = metadata.operator(type);
-        if (operator) {
-            type = operator;
-        }
-        this._type = metadata.type(type) || { name: type };
+        this._type = metadata.type(layer.type);
         const attributeSchemas = this._type && this._type.attributes ? this._type && this._type.attributes.slice() : [];
         const attributes = layer.attributes.slice();
         while (attributes.length > 0) {
@@ -230,7 +229,7 @@ tnn.Node = class {
                 return new tnn.Parameter(outputName, [ new tnn.Argument(output, null, null) ]);
             }));
         }
-        switch (type) {
+        switch (this._type.name) {
             case 'Convolution':
             case 'ConvolutionDepthWise':
             case 'Deconvolution':
@@ -343,6 +342,9 @@ tnn.Node = class {
                 }
                 break;
             }
+            default: {
+                break;
+            }
         }
     }
 
@@ -388,15 +390,22 @@ tnn.Attribute = class {
                 this._type = schema.type;
             }
             switch (this._type) {
+                case '':
+                    break;
                 case 'int32':
                     this._value = parseInt(this._value, 10);
                     break;
                 case 'float32':
                     this._value = parseFloat(this._value);
                     break;
+                case 'int32[]':
+                    this._value = this._value.map((v) => parseInt(v, 10));
+                    break;
                 case 'float32[]':
                     this._value = this._value.map((v) => parseFloat(v));
                     break;
+                default:
+                    throw new tnn.Error("Unsupported attribute type '" + this._type + "'.");
             }
             if (Object.prototype.hasOwnProperty.call(schema, 'visible') && !schema.visible) {
                 this._visible = false;
@@ -433,109 +442,15 @@ tnn.Tensor = class {
         this._data = data;
     }
 
-    get kind() {
+    get category() {
         return 'Weight';
     }
-
     get type() {
         return this._type;
     }
 
-    get state() {
-        return this._context().state || null;
-    }
-
-    get value() {
-        const context = this._context();
-        if (context.state) {
-            return null;
-        }
-        context.limit = Number.MAX_SAFE_INTEGER;
-        return this._decode(context, 0);
-    }
-
-    toString() {
-        const context = this._context();
-        if (context.state) {
-            return '';
-        }
-        context.limit = 10000;
-        const value = this._decode(context, 0);
-        return JSON.stringify(value, null, 4);
-    }
-
-    _context() {
-        const context = {};
-        context.index = 0;
-        context.count = 0;
-        context.state = null;
-
-        if (this._type.dataType == '?') {
-            context.state = 'Tensor has unknown data type.';
-            return context;
-        }
-        if (!this._type.shape) {
-            context.state = 'Tensor has no dimensions.';
-            return context;
-        }
-
-        if (!this._data) {
-            context.state = 'Tensor data is empty.';
-            return context;
-        }
-
-        switch (this._type.dataType) {
-            case 'float16':
-            case 'float32':
-                context.data = new DataView(this._data.buffer, this._data.byteOffset, this._data.byteLength);
-                break;
-            default:
-                context.state = 'Tensor data type is not implemented.';
-                break;
-        }
-
-        context.dataType = this._type.dataType;
-        context.shape = this._type.shape.dimensions;
-        return context;
-    }
-
-    _decode(context, dimension) {
-        const shape = context.shape.length !== 0 ? context.shape : [ 1 ];
-        const results = [];
-        const size = shape[dimension];
-        if (dimension == shape.length - 1) {
-            for (let i = 0; i < size; i++) {
-                if (context.count > context.limit) {
-                    results.push('...');
-                    return results;
-                }
-                switch (this._type.dataType) {
-                    case 'float32':
-                        results.push(context.data.getFloat32(context.index, true));
-                        context.index += 4;
-                        context.count++;
-                        break;
-                    case 'float16':
-                        results.push(context.data.getFloat16(context.index, true));
-                        context.index += 2;
-                        context.count++;
-                        break;
-                }
-            }
-        }
-        else {
-            for (let j = 0; j < size; j++) {
-                if (context.count > context.limit) {
-                    results.push('...');
-                    return results;
-                }
-                results.push(this._decode(context, dimension + 1));
-            }
-        }
-        if (context.shape.length == 0) {
-            return results[0];
-        }
-        return results;
+    get values() {
+        return this._data;
     }
 };
 
@@ -571,57 +486,6 @@ tnn.TensorShape = class {
 
     toString() {
         return this._dimensions ? ('[' + this._dimensions.map((dimension) => dimension ? dimension.toString() : '?').join(',') + ']') : '';
-    }
-};
-
-tnn.Metadata = class {
-
-    static open(context) {
-        if (tnn.Metadata._metadata) {
-            return Promise.resolve(tnn.Metadata._metadata);
-        }
-        return context.request('tnn-metadata.json', 'utf-8', null).then((data) => {
-            tnn.Metadata._metadata = new tnn.Metadata(data);
-            return tnn.Metadata._metadata;
-        }).catch(() => {
-            tnn.Metadata._metadata = new tnn.Metadata(null);
-            return tnn.Metadata._metadatas;
-        });
-    }
-
-    constructor(data) {
-        this._operatorMap = new Map();
-        this._map = new Map();
-        this._attributeCache = new Map();
-        if (data) {
-            const metadata = JSON.parse(data);
-            this._map = new Map(metadata.map((item) => [ item.name, item ]));
-            this._operatorMap = new Map(metadata.map((item) => [ item.operator, item ]));
-        }
-    }
-
-    operator(code) {
-        return this._operatorMap.get(code);
-    }
-
-    type(operator) {
-        return this._map.get(operator);
-    }
-
-    attribute(operator, name) {
-        const key = operator + ':' + name;
-        if (!this._attributeCache.has(key)) {
-            const schema = this.type(operator);
-            if (schema && schema.attributes && schema.attributes.length > 0) {
-                for (const attribute of schema.attributes) {
-                    this._attributeCache.set(operator + ':' + attribute.name, attribute);
-                }
-            }
-            if (!this._attributeCache.has(key)) {
-                this._attributeCache.set(key, null);
-            }
-        }
-        return this._attributeCache.get(key);
     }
 };
 
@@ -671,7 +535,9 @@ tnn.TextProtoReader = class {
             };
         });
         lines.shift();
-        this._outputs = split(lines.shift(), ' ', true, false).map((output) => { return { name: output }; });
+        this._outputs = split(lines.shift(), ' ', true, false).map((output) => {
+            return { name: output };
+        });
         lines.shift();
         this._layers = [];
         while (lines.length > 0) {
@@ -727,12 +593,12 @@ tnn.LayerResourceReader = class {
     constructor(buffer) {
         this._layerResources = [];
         if (buffer) {
-            const reader = new tnn.BinaryReader(buffer);
+            const reader = new base.BinaryReader(buffer);
             const magic_number = reader.uint32();
             if (magic_number !== 0xFABC0002 && magic_number !== 0xFABC0004) {
                 throw new tnn.Error("Invalid blob header signature '" + magic_number.toString() + "'.");
             }
-            const layerCount = reader.int32() & 0x1FFFFFFF;
+            this._layerResources = new Array(reader.int32() & 0x1FFFFFFF);
             const raw = (reader) => {
                 const magic_number = reader.uint32();
                 if (magic_number !== 0xFABC0002 && magic_number !== 0xFABC0004) {
@@ -740,7 +606,7 @@ tnn.LayerResourceReader = class {
                 }
                 const data_type = reader.int32();
                 if (data_type > 4) {
-                    throw new tnn.Error("Unknown data type '" + data_type + "'.");
+                    throw new tnn.Error("Unsupported data type '" + data_type + "'.");
                 }
                 const length = reader.int32();
                 if (length <= 0) {
@@ -749,16 +615,22 @@ tnn.LayerResourceReader = class {
                 let dims = null;
                 if (magic_number === 0xFABC0004) {
                     const dim_size = reader.int32();
-                    dims = reader.bytes(dim_size * 4);
+                    dims = reader.read(dim_size * 4);
                 }
                 return {
                     dataType: [ 'float32', 'float16', 'int8', 'int32', 'bfloat16' ][data_type],
                     length: length / [ 4, 2, 1, 4, 2 ][data_type],
-                    value: reader.bytes(length),
+                    value: reader.read(length),
                     shape: dims
                 };
             };
-            for (let i = 0; i < layerCount; i++) {
+            const expect = (reader, name) => {
+                const content = reader.string();
+                if (name !== content) {
+                    throw new tnn.Error("Invalid string '" + content + "' instead of '" + name + "'.");
+                }
+            };
+            for (let i = 0; i < this._layerResources.length; i++) {
                 const resource = {};
                 resource.operator = reader.int32();
                 resource.type = reader.string();
@@ -768,7 +640,7 @@ tnn.LayerResourceReader = class {
                     case 'ConvolutionDepthWise':
                     case 'Deconvolution':
                     case 'DeconvolutionDepthWise': {
-                        reader.expect(resource.name);
+                        expect(reader, resource.name);
                         const bias = reader.int32();
                         resource.filter = raw(reader);
                         if (bias) {
@@ -780,7 +652,7 @@ tnn.LayerResourceReader = class {
                         break;
                     }
                     case 'Conv3D': {
-                        reader.expect(resource.name);
+                        expect(reader, resource.name);
                         const bias = reader.int32();
                         resource.filter = raw(reader);
                         if (bias) {
@@ -789,7 +661,7 @@ tnn.LayerResourceReader = class {
                         break;
                     }
                     case 'InnerProduct': {
-                        reader.expect(resource.name);
+                        expect(reader, resource.name);
                         resource.weight = raw(reader);
                         resource.bias = raw(reader);
                         if (resource.weight.dataType === 'int8') {
@@ -798,7 +670,7 @@ tnn.LayerResourceReader = class {
                         break;
                     }
                     case 'PReLU': {
-                        reader.expect(resource.name);
+                        expect(reader, resource.name);
                         resource.slope = raw(reader);
                         break;
                     }
@@ -839,12 +711,13 @@ tnn.LayerResourceReader = class {
                         }
                         break;
                     }
-                    default:
-                        throw new tnn.Error("Unknown layer resource type '" + resource.type + "'.");
+                    default: {
+                        throw new tnn.Error("Unsupported layer resource type '" + resource.type + "'.");
+                    }
                 }
-                this._layerResources.push(resource);
+                this._layerResources[i] = resource;
             }
-            if (!reader.end()) {
+            if (reader.position !== reader.length) {
                 throw new tnn.Error("Invalid blob size.");
             }
         }
@@ -856,59 +729,6 @@ tnn.LayerResourceReader = class {
             throw new tnn.Error("Invalid blob layer name '" + name + "'.");
         }
         return resource;
-    }
-};
-
-tnn.BinaryReader = class {
-
-    constructor(buffer) {
-        this._buffer = buffer;
-        this._dataView = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
-        this._position = 0;
-    }
-
-    end() {
-        return this._position === this._buffer.length;
-    }
-
-    skip(size) {
-        this._position += size;
-        if (this._position > this._buffer.length) {
-            throw new tnn.Error('Expected ' + (this._position - this._buffer.length) + ' more bytes. The file might be corrupted. Unexpected end of file.');
-        }
-    }
-
-    bytes(size) {
-        const position = this._position;
-        this.skip(size);
-        return this._buffer.subarray(position, this._position);
-    }
-
-    uint32() {
-        const position = this._position;
-        this.skip(4);
-        return this._dataView.getUint32(position, true);
-    }
-
-    int32() {
-        const position = this._position;
-        this.skip(4);
-        return this._dataView.getInt32(position, true);
-    }
-
-    string() {
-        const length = this.int32();
-        const position = this._position;
-        this.skip(length);
-        const data = this._buffer.subarray(position, this._position);
-        return new TextDecoder('utf-8').decode(data);
-    }
-
-    expect(name) {
-        const content = this.string();
-        if (name !== content) {
-            throw new tnn.Error("Invalid string '" + content + "' instead of '" + name + "'.");
-        }
     }
 };
 

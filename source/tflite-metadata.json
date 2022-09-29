@@ -305,6 +305,13 @@
     ]
   },
   {
+    "name": "Gelu",
+    "category": "Activation",
+    "attributes": [
+      { "name": "approximate", "type": "boolean", "default": false }
+    ]
+  },
+  {
     "name": "HardSwish",
     "category": "Activation",
     "inputs": [
@@ -928,7 +935,8 @@
     "inputs": [
       { "name": "output_shape" },
       { "name": "weights" },
-      { "name": "input" }
+      { "name": "input" },
+      { "name": "bias", "optional": true }
     ],
     "outputs": [
       { "name": "output" }
@@ -986,6 +994,12 @@
     "attributes": [
       { "name": "num", "type": "int32", "default": 0 },
       { "name": "axis", "type": "int32", "default": 0 }
+    ]
+  },
+  {
+    "name": "UnsortedSegmentProd",
+    "attributes": [
+      { "name": "num_segments", "type": "int32", "default": 0 }
     ]
   },
   {

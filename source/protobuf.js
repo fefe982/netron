@@ -1,6 +1,4 @@
 
-/* jshint esversion: 6 */
-
 var protobuf = protobuf || {};
 var base = base || require('./base');
 var text = text || require('./text');
@@ -15,8 +13,8 @@ protobuf.get = (name) => {
 
 protobuf.BinaryReader = class {
 
-    static open(buffer) {
-        return new protobuf.BinaryReader(buffer);
+    static open(data) {
+        return data ? new protobuf.BinaryReader(data) : null;
     }
 
     constructor(data) {
@@ -344,14 +342,12 @@ protobuf.BinaryReader = class {
             }
             this._position = end;
         }
+        else if (obj !== undefined && obj.length < 1000000) {
+            obj.push(this.float());
+        }
         else {
-            if (obj !== undefined && obj.length < 1000000) {
-                obj.push(this.float());
-            }
-            else {
-                obj = undefined;
-                this.float();
-            }
+            obj = undefined;
+            this.float();
         }
         return obj;
     }
@@ -375,14 +371,12 @@ protobuf.BinaryReader = class {
             }
             this._position = end;
         }
+        else if (obj !== undefined && obj.length < 1000000) {
+            obj.push(this.double());
+        }
         else {
-            if (obj !== undefined && obj.length < 1000000) {
-                obj.push(this.double());
-            }
-            else {
-                obj = undefined;
-                this.double();
-            }
+            obj = undefined;
+            this.double();
         }
         return obj;
     }
@@ -404,16 +398,15 @@ protobuf.BinaryReader = class {
     }
 
     _uint32() {
-        let c;
         if (this._position < this._length) {
-            c = this._buffer[this._position++];
+            let c = this._buffer[this._position++];
             let value = (c & 127) >>> 0;
             if (c < 128) {
                 return value;
             }
             if (this._position < this._length) {
                 c = this._buffer[this._position++];
-                value = (value | (c & 127) <<  7) >>> 0;
+                value = (value | (c & 127) << 7) >>> 0;
                 if (c < 128) {
                     return value;
                 }
@@ -494,10 +487,10 @@ protobuf.BinaryReader = class {
                 break;
             }
             case 5: {
-                if (this._position + 4 >= this._length) {
+                this._position += 4;
+                if (this._position > this._length) {
                     return false;
                 }
-                this._position += 4;
                 break;
             }
             default: {
@@ -605,36 +598,50 @@ protobuf.BinaryReader = class {
 protobuf.TextReader = class {
 
     static open(data) {
-        const buffer = data instanceof Uint8Array ? data : data.peek();
-        const decoder = text.Decoder.open(buffer);
-        let first = true;
-        for (let i = 0; i < 0x100; i++) {
-            const c = decoder.decode();
-            if (c === undefined) {
-                if (i === 0) {
+        if (data) {
+            const buffer = data instanceof Uint8Array ? data : data.peek();
+            const decoder = text.Decoder.open(buffer);
+            let first = true;
+            for (let i = 0; i < 0x100; i++) {
+                const c = decoder.decode();
+                if (c === undefined) {
+                    if (i === 0) {
+                        return null;
+                    }
+                    break;
+                }
+                if (c === '\0') {
                     return null;
                 }
-                break;
-            }
-            if (c === '\0') {
-                return null;
-            }
-            const whitespace = c === ' ' || c === '\n' || c === '\r' || c === '\t';
-            if (c < ' ' && !whitespace) {
-                return null;
-            }
-            if (first && !whitespace) {
-                first = false;
-                if (c === '#' || c === '[') {
-                    continue;
+                const whitespace = c === ' ' || c === '\n' || c === '\r' || c === '\t';
+                if (c < ' ' && !whitespace) {
+                    return null;
                 }
-                if (c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z') {
-                    continue;
+                if (first && !whitespace) {
+                    first = false;
+                    if (c === '#') {
+                        let c;
+                        do {
+                            c = decoder.decode();
+                        }
+                        while (c !== undefined && c !== '\n');
+                        if (c === undefined) {
+                            break;
+                        }
+                        continue;
+                    }
+                    if (c === '[') {
+                        continue;
+                    }
+                    if (c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z') {
+                        continue;
+                    }
+                    return null;
                 }
-                return null;
             }
+            return new protobuf.TextReader(buffer);
         }
-        return new protobuf.TextReader(buffer);
+        return null;
     }
 
     constructor(buffer) {
@@ -730,22 +737,21 @@ protobuf.TextReader = class {
     }
 
     double() {
+        let value = NaN;
         let token = this._token;
-        if (token.startsWith('nan')) {
-            return NaN;
-        }
-        if (token.startsWith('inf')) {
-            return Infinity;
-        }
-        if (token.startsWith('-inf')) {
-            return -Infinity;
-        }
-        if (token.endsWith('f')) {
-            token = token.substring(0, token.length - 1);
-        }
-        const value = Number.parseFloat(token);
-        if (Number.isNaN(token - value)) {
-            throw new protobuf.Error("Couldn't parse float '" + token + "'" + this.location());
+        switch (token) {
+            case 'nan': value = NaN; break;
+            case 'inf': value = Infinity; break;
+            case '-inf': value = -Infinity; break;
+            default:
+                if (token.endsWith('f')) {
+                    token = token.substring(0, token.length - 1);
+                }
+                value = Number.parseFloat(token);
+                if (Number.isNaN(token - value)) {
+                    throw new protobuf.Error("Couldn't parse float '" + token + "'" + this.location());
+                }
+                break;
         }
         this.next();
         this.semicolon();
@@ -829,8 +835,9 @@ protobuf.TextReader = class {
                 this.next();
                 this.semicolon();
                 return false;
+            default:
+                throw new protobuf.Error("Couldn't parse boolean '" + token + "'" + this.location());
         }
-        throw new protobuf.Error("Couldn't parse boolean '" + token + "'" + this.location());
     }
 
     bytes() {
@@ -934,13 +941,16 @@ protobuf.TextReader = class {
         let k;
         let v;
         while (!this.end()) {
-            switch (this.tag()) {
+            const tag = this.tag();
+            switch (tag) {
                 case 'key':
                     k = key();
                     break;
                 case 'value':
                     v = value();
                     break;
+                default:
+                    throw new protobuf.Error("Unsupported entry tag '" + tag + "'.");
             }
         }
         obj[k] = v;
@@ -1040,7 +1050,7 @@ protobuf.TextReader = class {
     }
 
     field(token /*, module */) {
-        throw new protobuf.Error("Unknown field '" + token + "'" + this.location());
+        throw new protobuf.Error("Unsupported field '" + token + "'" + this.location());
     }
 
     token() {
@@ -1066,7 +1076,7 @@ protobuf.TextReader = class {
                     do {
                         c = this._decoder.decode();
                         if (c === undefined) {
-                            this._token === undefined;
+                            this._token = undefined;
                             return;
                         }
                     }
@@ -1074,6 +1084,8 @@ protobuf.TextReader = class {
                     this._position = this._decoder.position;
                     c = this._decoder.decode();
                     continue;
+                default:
+                    break;
             }
             break;
         }
@@ -1237,12 +1249,21 @@ protobuf.TextReader = class {
                     }
                     break;
                 }
+                if (token === '-' && c === 'i' && this._decoder.decode() === 'n' && this._decoder.decode() === 'f') {
+                    token = '-inf';
+                    position = this._decoder.position;
+                }
+                if (token === '-' || token === '+' || token === '.') {
+                    throw new protobuf.Error("Unexpected token '" + token + "'" + this.location());
+                }
                 this._decoder.position = position;
                 this._token = token;
                 return;
             }
+            default: {
+                throw new protobuf.Error("Unexpected token '" + c + "'" + this.location());
+            }
         }
-        throw new protobuf.Error("Unexpected token '" + c + "'" + this.location());
     }
 
     expect(value) {

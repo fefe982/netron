@@ -1,8 +1,9 @@
-/* jshint esversion: 6 */
 
 var paddle = paddle || {};
 var flatbuffers = flatbuffers || require('./flatbuffers');
 var protobuf = protobuf || require('./protobuf');
+var python = python || require('./python');
+var base = base || require('./base');
 
 paddle.ModelFactory = class {
 
@@ -22,11 +23,14 @@ paddle.ModelFactory = class {
             }
         }
         const stream = context.stream;
-        if (stream.length > 16 && stream.peek(16).every((value) => value === 0x00)) {
+        if (stream && stream.length > 16 && stream.peek(16).every((value) => value === 0x00)) {
             return 'paddle.params';
         }
-        if (paddle.Weights.open(context)) {
-            return 'paddle.weights';
+        if (paddle.Pickle.open(context)) {
+            return 'paddle.pickle';
+        }
+        if (paddle.Entries.open(context)) {
+            return 'paddle.entries';
         }
         if (paddle.NaiveBuffer.open(context)) {
             return 'paddle.naive';
@@ -35,7 +39,7 @@ paddle.ModelFactory = class {
     }
 
     open(context, match) {
-        return paddle.Metadata.open(context).then((metadata) => {
+        return context.metadata('paddle-metadata.json').then((metadata) => {
             switch (match) {
                 case 'paddle.naive': {
                     return context.require('./paddle-schema').then(() => {
@@ -53,7 +57,6 @@ paddle.ModelFactory = class {
                         const base = parts.join('.');
                         const openProgram = (stream, match) => {
                             const program = {};
-                            program.format = 'PaddlePaddle';
                             switch (match) {
                                 case 'paddle.pbtxt': {
                                     try {
@@ -78,13 +81,28 @@ paddle.ModelFactory = class {
                                     break;
                                 }
                                 default: {
-                                    throw new paddle.Error("Unknown Paddle format '" + match + "'.");
+                                    throw new paddle.Error("Unsupported Paddle format '" + match + "'.");
                                 }
                             }
-                            const programDesc = program.desc;
-                            program.format += paddle.Utility.formatVersion(programDesc.version);
+                            const formatVersion = (version) => {
+                                if (version && version.version && version.version.toNumber) {
+                                    const number = version.version.toNumber();
+                                    if (number > 0) {
+                                        const list = [ Math.floor(number / 1000000) % 1000, Math.floor(number / 1000) % 1000, number % 1000 ];
+                                        if (list.slice(-1).pop() === 0) {
+                                            list.pop();
+                                            if (list.slice(-1).pop() === 0) {
+                                                list.pop();
+                                            }
+                                        }
+                                        return ' v' + list.map((item) => item.toString()).join('.');
+                                    }
+                                }
+                                return '';
+                            };
+                            program.format = 'PaddlePaddle' + formatVersion(program.desc.version);
                             const variables = new Set();
-                            for (const block of programDesc.blocks) {
+                            for (const block of program.desc.blocks) {
                                 const blockVars = new Set();
                                 for (const variable of block.vars) {
                                     if (variable.persistable && variable.type &&
@@ -106,57 +124,105 @@ paddle.ModelFactory = class {
                             program.vars = Array.from(variables).sort();
                             return program;
                         };
-                        const loadParams = (metadata, program, stream) => {
-                            const tensors = new Map();
+                        const createModel = (metadata, format, desc, tensors) => {
+                            return new paddle.Model(metadata, format, desc, tensors);
+                        };
+                        const loadParams = (stream) => {
+                            const params = [];
                             while (stream.position < stream.length) {
-                                const tensor = paddle.Utility.openTensor(stream);
-                                tensors.set(program.vars.shift(), tensor);
+                                const tensor = paddle.Utility.openTensorDesc(stream);
+                                params.push(tensor);
                             }
-                            return new paddle.Model(metadata, program.format, program.desc, tensors);
+                            return params;
+                        };
+                        const mapParams = (params, program) => {
+                            const weights = new Map();
+                            const vars = program.vars.slice();
+                            for (const param of params) {
+                                weights.set(vars.shift(), param);
+                            }
+                            return weights;
                         };
                         switch (match) {
-                            case 'paddle.weights': {
-                                const container = paddle.Weights.open(context);
-                                return new paddle.Model(metadata, container.format, null, container.weights);
+                            case 'paddle.pickle': {
+                                const container = paddle.Pickle.open(context);
+                                return createModel(metadata, container.format, null, container.weights);
+                            }
+                            case 'paddle.entries': {
+                                const container = paddle.Entries.open(context);
+                                return createModel(metadata, container.format, null, container.weights);
                             }
                             case 'paddle.params': {
                                 const file = identifier !== 'params' ? base + '.pdmodel' : 'model';
+                                const params = loadParams(context.stream);
                                 return context.request(file, null).then((stream) => {
                                     const program = openProgram(stream, 'paddle.pb');
-                                    return loadParams(metadata, program, context.stream);
+                                    const weights = mapParams(params, program);
+                                    return createModel(metadata, program.format, program.desc, weights);
+                                }).catch(() => {
+                                    const weights = new Map(params.map((param, index) => [ index.toString(), param ]));
+                                    return createModel(metadata, 'PaddlePaddle Inference Weights', null, weights);
                                 });
                             }
                             case 'paddle.pb':
                             case 'paddle.pbtxt': {
-                                const program = openProgram(context.stream, match);
                                 const loadEntries = (context, program) => {
-                                    const promises = program.vars.map((name) => context.request(name, null));
-                                    const tensors = new Map();
+                                    const promises = program.vars.map((name) => context.request(name, null).then((stream) => stream).catch(() => null));
                                     return Promise.all(promises).then((streams) => {
-                                        for (let i = 0; i < program.vars.length; i++) {
-                                            const tensor = paddle.Utility.openTensor(streams[i]);
-                                            tensors.set(program.vars[i], tensor);
-                                        }
-                                        return new paddle.Model(metadata, program.format, program.desc, tensors);
-                                    }).catch((/* err */) => {
-                                        return new paddle.Model(metadata, program.format, program.desc, tensors);
+                                        const params = streams.map((stream) => stream ? paddle.Utility.openTensorDesc(stream) : null);
+                                        const weights = mapParams(params, program);
+                                        return createModel(metadata, program.format, program.desc, weights);
                                     });
                                 };
+                                const openNumPyArrayPickle = (stream) => {
+                                    const execution = new python.Execution(null);
+                                    const unpickler = execution.invoke('pickle.Unpickler', [ stream ]);
+                                    const obj = unpickler.load();
+                                    const container = new paddle.Pickle(obj);
+                                    return container.weights || new Map();
+                                };
+                                const program = openProgram(context.stream, match);
                                 if (extension === 'pdmodel') {
                                     return context.request(base + '.pdiparams', null).then((stream) => {
-                                        return loadParams(metadata, program, stream);
+                                        const params = loadParams(stream);
+                                        const weights = mapParams(params, program);
+                                        return createModel(metadata, program.format, program.desc, weights);
                                     }).catch((/* err */) => {
-                                        return loadEntries(context, program);
+                                        return context.request(base + '.pdparams', null).then((stream) => {
+                                            const weights = openNumPyArrayPickle(stream);
+                                            return context.request(base + '.pdopt', null).then((stream) => {
+                                                for (const entry of openNumPyArrayPickle(stream)) {
+                                                    if (!weights.has(entry[0])) {
+                                                        weights.set(entry[0], entry[1]);
+                                                    }
+                                                }
+                                                return createModel(metadata, program.format, program.desc, weights);
+                                            }).catch((/* err */) => {
+                                                return createModel(metadata, program.format, program.desc, weights);
+                                            });
+                                        }).catch((/* err */) => {
+                                            return context.request(base + '.pdopt', null).then((stream) => {
+                                                const weights = openNumPyArrayPickle(stream);
+                                                return createModel(metadata, program.format, program.desc, weights);
+                                            }).catch((/* err */) => {
+                                                return loadEntries(context, program);
+                                            });
+                                        });
                                     });
                                 }
                                 if (identifier === 'model') {
                                     return context.request('params', null).then((stream) => {
-                                        return loadParams(metadata, program, stream);
+                                        const params = loadParams(stream);
+                                        const weights = mapParams(params, program);
+                                        return createModel(metadata, program.format, program.desc, weights);
                                     }).catch((/* err */) => {
                                         return loadEntries(context, program);
                                     });
                                 }
                                 return loadEntries(context, program);
+                            }
+                            default: {
+                                throw new paddle.Error("Unsupported PaddlePaddle format '" + match + "'.");
                             }
                         }
                     });
@@ -276,8 +342,9 @@ paddle.Graph = class {
                 const name = pair[0];
                 const tensor = pair[1];
                 args.set(name, new paddle.Argument(name, tensor.type, tensor));
-                const separator = [ '.', '_' ].find((separator) => name.split(separator).length > 1);
-                const parts = name.split(separator);
+                const separator = name.indexOf('.') !== -1 ? '.' : '_';
+                const regex = /(.*)_((w_attr|scale|weights|offset|b|w|b_attr)_(moment|beta|velocity|mean_square|mean_grad).*)/;
+                const parts = separator === '.' ? name.split(separator) : (regex.test(name) ? regex.exec(name).slice(1, 3) : [ '', name ]);
                 const parameter_name = parts.pop();
                 const op_name = parts.join(separator);
                 if (!ops.has(op_name)) {
@@ -371,10 +438,7 @@ paddle.Node = class {
         this._outputs = [];
         this._chain = [];
         if (op.attrs) {
-            for (const attr of op.attrs) {
-                const schema = metadata.attribute(type, this._name);
-                this._attributes.push(new paddle.Attribute(schema, attr));
-            }
+            this._attributes = op.attrs.map((attr) => new paddle.Attribute(metadata.attribute(type, this._name), attr));
         }
         if (op.inputs) {
             for (const input of op.inputs) {
@@ -462,8 +526,16 @@ paddle.Attribute = class {
                 this._value = attr.f;
                 break;
             case paddle.AttributeType.FLOATS:
-                this._type = 'float[]';
+                this._type = 'float32[]';
                 this._value = Array.from(attr.floats);
+                break;
+            case paddle.AttributeType.FLOAT64:
+                this._type = 'float64';
+                this._value = attr.float64;
+                break;
+            case paddle.AttributeType.FLOAT64S:
+                this._type = 'float64[]';
+                this._value = Array.from(attr.float64s);
                 break;
             case paddle.AttributeType.INT:
                 this._type = 'int32';
@@ -492,6 +564,8 @@ paddle.Attribute = class {
             case 'is_test':
                 this._visible = false;
                 break;
+            default:
+                break;
         }
         if (schema) {
             if (Object.prototype.hasOwnProperty.call(schema, 'default')) {
@@ -501,7 +575,7 @@ paddle.Attribute = class {
                     this._visible = false;
                 }
                 else if (Array.isArray(value) && Array.isArray(defaultValue) && value.length == defaultValue.length) {
-                    if (value.every((item, index) => { return item == defaultValue[index]; })) {
+                    if (value.every((item, index) => item == defaultValue[index])) {
                         this._visible = false;
                     }
                 }
@@ -529,143 +603,22 @@ paddle.Attribute = class {
 
 paddle.Tensor = class {
 
-    constructor(type, data, kind) {
+    constructor(type, data, category) {
         this._type = type;
         this._data = data;
-        this._kind = kind || '';
+        this._category = category || '';
     }
 
-    get kind() {
-        return this._kind;
+    get category() {
+        return this._category;
     }
 
     get type() {
         return this._type;
     }
 
-    get state() {
-        return this._context().state || null;
-    }
-
-    get value() {
-        const context = this._context();
-        if (context.state) {
-            return null;
-        }
-        context.limit = Number.MAX_SAFE_INTEGER;
-        return this._decode(context, 0);
-    }
-
-    toString() {
-        const context = this._context();
-        if (context.state) {
-            return '';
-        }
-        context.limit = 10000;
-        const value = this._decode(context, 0);
-        return paddle.Tensor._stringify(value, '', '    ');
-    }
-
-    _context() {
-        const context = {};
-        context.index = 0;
-        context.count = 0;
-        context.state = null;
-
-        if (!this._data) {
-            context.state = 'Tensor data is empty.';
-            return context;
-        }
-        if (!this._type) {
-            context.state = 'Tensor has no data type.';
-            return context;
-        }
-
-        context.dataType = this._type.dataType;
-        context.shape = this._type.shape.dimensions;
-        context.view = new DataView(this._data.buffer, this._data.byteOffset, this._data.byteLength);
-
-        switch (context.dataType) {
-            case 'float32':
-            case 'int32':
-            case 'int64':
-                break;
-            default:
-                context.state = "Tensor data type '" + context.dataType + "' is not implemented.";
-                break;
-        }
-        return context;
-    }
-
-    _decode(context, dimension) {
-        const shape = context.shape.length !== 0 ? context.shape : [ 1 ];
-        const results = [];
-        const size = shape[dimension];
-        if (dimension == shape.length - 1) {
-            for (let i = 0; i < size; i++) {
-                if (context.count > context.limit) {
-                    results.push('...');
-                    return results;
-                }
-                switch (context.dataType) {
-                    case 'float32':
-                        results.push(context.view.getFloat32(context.index, true));
-                        context.index += 4;
-                        context.count++;
-                        break;
-                    case 'int32':
-                        results.push(context.view.getInt32(context.index, true));
-                        context.index += 4;
-                        context.count++;
-                        break;
-                    case 'int64':
-                        results.push(context.view.getInt64(context.index, true));
-                        context.index += 8;
-                        context.count++;
-                        break;
-
-                }
-            }
-        }
-        else {
-            for (let j = 0; j < size; j++) {
-                if (context.count > context.limit) {
-                    results.push('...');
-                    return results;
-                }
-                results.push(this._decode(context, dimension + 1));
-            }
-        }
-        if (context.shape.length == 0) {
-            return results[0];
-        }
-        return results;
-    }
-
-    static _stringify(value, indentation, indent) {
-        if (Array.isArray(value)) {
-            const result = [];
-            result.push(indentation + '[');
-            const items = value.map((item) => paddle.Tensor._stringify(item, indentation + indent, indent));
-            if (items.length > 0) {
-                result.push(items.join(',\n'));
-            }
-            result.push(indentation + ']');
-            return result.join('\n');
-        }
-        if (typeof value == 'string') {
-            return indentation + value;
-        }
-        if (value == Infinity) {
-            return indentation + 'Infinity';
-        }
-        if (value == -Infinity) {
-            return indentation + '-Infinity';
-        }
-        if (isNaN(value)) {
-            return indentation + 'NaN';
-        }
-        return indentation + value.toString();
+    get values() {
+        return this._data;
     }
 };
 
@@ -711,157 +664,123 @@ paddle.TensorShape = class {
     }
 };
 
-paddle.Utility = class {
-
-    static createTensorType(data_type, shape) {
-        if (!paddle.Utility._dataTypes) {
-            const length = Math.max.apply(null, Object.values(paddle.DataType));
-            paddle.Utility._dataTypes = new Array(length);
-            for (const key of Object.keys(paddle.DataType)) {
-                const index = paddle.DataType[key];
-                let name = key.toLowerCase();
-                switch (name) {
-                    case 'bool': name = 'boolean'; break;
-                    case 'bf16': name = 'bfloat16'; break;
-                    case 'fp16': name = 'float16'; break;
-                    case 'fp32': name = 'float32'; break;
-                    case 'fp64': name = 'float64'; break;
-                }
-                paddle.Utility._dataTypes[index] = name;
-            }
-        }
-        const dataType = data_type < paddle.Utility._dataTypes.length ? paddle.Utility._dataTypes[data_type] : '?';
-        return new paddle.TensorType(dataType, new paddle.TensorShape(shape));
-    }
-
-    static openTensor(stream) {
-        const uint32 = (stream) => {
-            const buffer = stream.read(4);
-            const view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
-            return view.getUint32(0, true);
-        };
-        const signature = stream.read(16);
-        if (!signature.every((value) => value === 0x00)) {
-            throw new paddle.Error('Invalid paddle.TensorDesc signature.');
-        }
-        const length = uint32(stream);
-        const buffer = stream.read(length);
-        const reader = protobuf.BinaryReader.open(buffer);
-        const tensorDesc = paddle.proto.VarType.TensorDesc.decode(reader);
-        const size = tensorDesc.dims.reduce((a, b) => a * b.toNumber(), 1);
-        let itemsize = 0;
-        switch (tensorDesc.data_type) {
-            case paddle.DataType.FP32: itemsize = 4; break;
-            default: throw new paddle.Error("Invalid inference params data type '" + tensorDesc.data_type + "'.");
-        }
-        const type = paddle.Utility.createTensorType(tensorDesc.data_type, tensorDesc.dims);
-        const data = stream.read(itemsize * size);
-        return new paddle.Tensor(type, data);
-    }
-
-    static formatVersion(version) {
-        if (version && version.version && version.version.toNumber) {
-            const number = version.version.toNumber();
-            if (number > 0) {
-                const list = [ Math.floor(number / 1000000) % 1000, Math.floor(number / 1000) % 1000, number % 1000 ];
-                if (list.slice(-1).pop() === 0) {
-                    list.pop();
-                    if (list.slice(-1).pop() === 0) {
-                        list.pop();
-                    }
-                }
-                return ' v' + list.map((item) => item.toString()).join('.');
-            }
-        }
-        return '';
-    }
-};
-
-paddle.Weights = class {
+paddle.Entries = class {
 
     static open(context) {
         const extension = [ 'zip', 'tar' ].find((extension) => context.entries(extension).size > 0);
         if (extension) {
             const entries = new Map(Array.from(context.entries(extension)).filter((entry) => !entry[0].endsWith('/') && !entry[0].split('/').pop().startsWith('.')).slice());
             if (entries.size > 2 && Array.from(entries).every((entry) => entry[0].split('_').length > 0 && entry[1].peek(16).every((value) => value === 0x00))) {
-                return new paddle.Weights('entries', entries);
+                return new paddle.Entries(entries);
             }
-        }
-        const obj = context.open('pkl');
-        if (obj && !Array.isArray(obj) && Object(obj) === obj) {
-            return new paddle.Weights('pdparams', obj);
         }
         return null;
     }
 
-    constructor(format, data) {
-        this._format = format;
+    constructor(data) {
         this._data = data;
     }
 
     get format() {
-        switch (this._format) {
-            case 'entries':
-                return 'PaddlePaddle Weights';
-            case 'pdparams':
-                return 'PaddlePaddle Pickle';
-        }
-        return null;
-    }
-
-    get model() {
-        this._initialize();
-        return this._model;
+        return 'PaddlePaddle Weights';
     }
 
     get weights() {
-        this._initialize();
+        this._read();
         return this._weights;
     }
 
-    _initialize() {
+    _read() {
         if (!this._weights) {
-            switch (this._format) {
-                case 'entries': {
-                    let rootFolder = null;
-                    for (const entry of this._data) {
-                        const name = entry[0];
-                        if (name.startsWith('.') && !name.startsWith('./')) {
-                            continue;
-                        }
-                        const parts = name.split('/');
-                        const folder = ((parts.length > 2 && parts[0] === '.') ? ('./' + parts[1] + '/') : (parts.length > 1 ? parts[0] + '/' : ''));
-                        rootFolder = (rootFolder === null) ? folder : (rootFolder !== '' && folder !== rootFolder) ? '' : folder;
-                    }
-                    this._weights = new Map();
-                    for (const entry of this._data) {
-                        if (entry[0].startsWith(rootFolder)) {
-                            const name = entry[0].substring(rootFolder.length);
-                            const stream = entry[1];
-                            const tensor = paddle.Utility.openTensor(stream);
-                            this._weights.set(name, tensor);
-                        }
-                    }
-                    break;
-                }
-                case 'pdparams': {
-                    const map = null; // this._data['StructuredToParameterName@@'];
-                    this._weights = new Map();
-                    for (const key of Object.keys(this._data)) {
-                        const value = this._data[key];
-                        if (value && !Array.isArray(value) && value.__class__ && value.__class__.__module__ === 'numpy' && value.__class__.__name__ === 'ndarray') {
-                            const name = map ? map[key] : key;
-                            const type = new paddle.TensorType(value.dtype.name, new paddle.TensorShape(value.shape));
-                            const data = value.data;
-                            const tensor = new paddle.Tensor(type, data, 'NumPy Array');
-                            this._weights.set(name, tensor);
-                        }
-                    }
-                    break;
+            let rootFolder = null;
+            for (const entry of this._data) {
+                const name = entry[0];
+                if (!name.startsWith('.') || name.startsWith('./')) {
+                    const parts = name.split('/');
+                    const folder = ((parts.length > 2 && parts[0] === '.') ? ('./' + parts[1] + '/') : (parts.length > 1 ? parts[0] + '/' : ''));
+                    rootFolder = (rootFolder === null) ? folder : (rootFolder !== '' && folder !== rootFolder) ? '' : folder;
                 }
             }
-            delete this._format;
+            this._weights = new Map();
+            for (const entry of this._data) {
+                if (entry[0].startsWith(rootFolder)) {
+                    const name = entry[0].substring(rootFolder.length);
+                    const stream = entry[1];
+                    const tensor = paddle.Utility.openTensorDesc(stream);
+                    this._weights.set(name, tensor);
+                }
+            }
         }
+    }
+};
+
+paddle.Pickle = class {
+
+    static open(context) {
+        const obj = context.open('pkl');
+        const container = new paddle.Pickle(obj);
+        return container.weights !== null ? container : null;
+    }
+
+    constructor(obj) {
+        this._weights = null;
+        if (obj && !Array.isArray(obj) && (obj instanceof Map || Object(obj) === obj)) {
+            const entries = (obj) => {
+                return obj instanceof Map ? Array.from(obj) : Object(obj) === obj ? Object.entries(obj) : [];
+            };
+            const filter = (obj) => {
+                const list = [];
+                if (obj && !Array.isArray(obj)) {
+                    for (const entry of entries(obj)) {
+                        const name = entry[0];
+                        if (name !== 'StructuredToParameterName@@') {
+                            let value = entry[1];
+                            value = value && Array.isArray(value) && value.length === 2 && value[0] === name ? value[1] : value;
+                            if (value && !Array.isArray(value) && value.__class__ && value.__class__.__module__ === 'numpy' && value.__class__.__name__ === 'ndarray') {
+                                list.push([ name, value ]);
+                            }
+                        }
+                    }
+                }
+                return list;
+            };
+            const weights = filter(obj);
+            if (weights.length > 0) {
+                this._weights = weights;
+            }
+            else {
+                const list = entries(obj);
+                if (list.filter((entry) => entry[0] !== 'StructuredToParameterName@@').length === 1) {
+                    const weights = filter(list[0][1]);
+                    if (weights.length > 0) {
+                        this._weights = weights;
+                    }
+                }
+                if (this._weights === null && list.filter((entry) => entry[0] === 'StructuredToParameterName@@').length > 0) {
+                    this._weights = [];
+                }
+            }
+        }
+    }
+
+    get format() {
+        return 'PaddlePaddle Pickle';
+    }
+
+    get weights() {
+        if (this._weights && Array.isArray(this._weights)) {
+            const weights = new Map();
+            for (const entry of this._weights) {
+                const name = entry[0];
+                const value = entry[1];
+                const type = new paddle.TensorType(value.dtype.__name__, new paddle.TensorShape(value.shape));
+                const data = value.data;
+                const tensor = new paddle.Tensor(type, data, 'NumPy Array');
+                weights.set(name, tensor);
+            }
+            this._weights = weights;
+        }
+        return this._weights;
     }
 };
 
@@ -869,30 +788,28 @@ paddle.NaiveBuffer = class {
 
     static open(context) {
         const stream = context.stream;
-        if (stream.length > 4) {
-            const buffer = stream.peek();
-            const reader = new paddle.BinaryReader(buffer);
+        if (stream && stream.length > 4) {
+            const buffer = stream.peek(4);
             if (context.identifier === '__model__.nb' || context.identifier === 'param.nb') {
                 if (buffer[0] > 2 || buffer[1] !== 0x00 || buffer[2] !== 0x76 || buffer[2] !== 0x32) {
-                    return new paddle.NaiveBuffer(reader, -1);
+                    return new paddle.NaiveBuffer(stream, -1);
                 }
             }
-            const meta_version = reader.uint16();
-            if (meta_version <= 2) {
-                return new paddle.NaiveBuffer(reader, meta_version);
+            if (buffer[1] === 0x00 && buffer[0] <= 2) {
+                return new paddle.NaiveBuffer(stream, buffer[0]);
             }
         }
         return null;
     }
 
-    constructor(reader, meta_version) {
-        this.reader = reader;
+    constructor(stream, meta_version) {
+        this.stream = stream;
         this.meta_version = meta_version;
     }
 
     get format() {
         this._read();
-        return 'Paddle Lite' + (this.opt_version ? ' ' + this.opt_version : '');
+        return this._format;
     }
 
     get model() {
@@ -906,12 +823,16 @@ paddle.NaiveBuffer = class {
     }
 
     _read() {
-        if (this.reader) {
-            const reader = this.reader;
-            delete this.reader;
+        if (this.stream) {
+            const reader = new base.BinaryReader(this.stream);
+            if (this.meta_version >= 2) {
+                reader.skip(2);
+            }
+            delete this.stream;
             const decoder = new TextDecoder();
             const opt_version = reader.read(16);
-            this.opt_version = decoder.decode(opt_version.slice(0, opt_version.indexOf(0x00)));
+            const version = decoder.decode(opt_version.slice(0, opt_version.indexOf(0x00)));
+            this._format = 'Paddle Lite' + (version ? ' ' + version : '');
             const topo_size = reader.uint64();
             const openProgramDesc = (buffer) => {
                 const reader = flatbuffers.BinaryReader.open(buffer);
@@ -927,7 +848,7 @@ paddle.NaiveBuffer = class {
                 }
                 case 0:
                 case 1: {
-                    throw new paddle.Error('Paddle Lite meta format ' + this.meta_version.toString() + ' is deprecated.');
+                    throw new paddle.Error("Paddle Lite meta format '" + this.meta_version.toString() + "' is deprecated.");
                 }
                 case 2: {
                     const topo_data = new Uint8Array(topo_size);
@@ -956,49 +877,56 @@ paddle.NaiveBuffer = class {
                     break;
                 }
                 default: {
-                    throw new paddle.Error('Paddle Lite naive buffer meta format ' + this.meta_version.toString() + ' not supported.');
+                    throw new paddle.Error("Unsupported Paddle Lite naive buffer meta format '" + this.meta_version.toString() + "'.");
                 }
             }
         }
     }
 };
 
-paddle.BinaryReader = class {
 
-    constructor(data) {
-        this._buffer = data instanceof Uint8Array ? data : data.peek();
-        this._position = 0;
-        this._dataView = new DataView(this._buffer.buffer, this._buffer.byteOffset, this._buffer.byteLength);
-    }
+paddle.Utility = class {
 
-    skip(offset) {
-        const position = this._position;
-        this._position += offset;
-        if (this._position > this._length) {
-            throw new Error('Expected ' + (this._position - this._length) + ' more bytes. The file might be corrupted. Unexpected end of file.');
+    static createTensorType(data_type, shape) {
+        if (!paddle.Utility._dataTypes) {
+            const length = Math.max.apply(null, Object.entries(paddle.DataType).map((entry) => entry[1]));
+            paddle.Utility._dataTypes = new Array(length);
+            const map = new Map([ [ 'bool', 'boolean' ], [ 'bf16', 'bfloat16' ], [ 'fp16', 'float16' ], [ 'fp32', 'float32' ], [ 'fp64', 'float64' ] ]);
+            for (const entry of Object.entries(paddle.DataType)) {
+                const index = entry[1];
+                const key = entry[0].toLowerCase();
+                paddle.Utility._dataTypes[index] = map.has(key) ? map.get(key) : key;
+            }
         }
-        return position;
+        const dataType = data_type < paddle.Utility._dataTypes.length ? paddle.Utility._dataTypes[data_type] : '?';
+        return new paddle.TensorType(dataType, new paddle.TensorShape(shape));
     }
 
-    read(size) {
-        const position = this._position;
-        this.skip(size);
-        return this._buffer.subarray(position, this._position);
-    }
-
-    uint16() {
-        const position = this.skip(2);
-        return this._dataView.getUint16(position, true);
-    }
-
-    uint32() {
-        const position = this.skip(4);
-        return this._dataView.getUint32(position, true);
-    }
-
-    uint64() {
-        const position = this.skip(8);
-        return this._dataView.getUint64(position, true).toNumber();
+    static openTensorDesc(stream) {
+        const signature = stream.read(16);
+        if (!signature.every((value) => value === 0x00)) {
+            throw new paddle.Error('Invalid paddle.TensorDesc signature.');
+        }
+        const length = new base.BinaryReader(stream.read(4)).uint32();
+        const buffer = stream.read(length);
+        const reader = protobuf.BinaryReader.open(buffer);
+        const tensorDesc = paddle.proto.VarType.TensorDesc.decode(reader);
+        const size = tensorDesc.dims.reduce((a, b) => a * b.toNumber(), 1);
+        let itemsize = 0;
+        switch (tensorDesc.data_type) {
+            case paddle.DataType.FP16: itemsize = 2; break;
+            case paddle.DataType.FP32: itemsize = 4; break;
+            case paddle.DataType.FP64: itemsize = 8; break;
+            case paddle.DataType.INT8: itemsize = 1; break;
+            case paddle.DataType.INT16: itemsize = 2; break;
+            case paddle.DataType.INT32: itemsize = 4; break;
+            case paddle.DataType.INT64: itemsize = 8; break;
+            case paddle.DataType.UINT8: itemsize = 1; break;
+            default: throw new paddle.Error("Invalid inference params data type '" + tensorDesc.data_type + "'.");
+        }
+        const type = paddle.Utility.createTensorType(tensorDesc.data_type, tensorDesc.dims);
+        const data = stream.read(itemsize * size);
+        return new paddle.Tensor(type, data);
     }
 };
 
@@ -1042,51 +970,10 @@ paddle.AttributeType = {
     LONG: 9,
     BLOCKS: 10,
     LONGS: 11,
-    FLOAT64S: 12
-};
-
-paddle.Metadata = class {
-
-    static open(context) {
-        if (paddle.Metadata._metadata) {
-            return Promise.resolve(paddle.Metadata._metadata);
-        }
-        return context.request('paddle-metadata.json', 'utf-8', null).then((data) => {
-            paddle.Metadata._metadata = new paddle.Metadata(data);
-            return paddle.Metadata._metadata;
-        }).catch(() => {
-            paddle.Metadata._metadata = new paddle.Metadata(null);
-            return paddle.Metadata._metadata;
-        });
-    }
-
-    constructor(data) {
-        this._map = new Map();
-        this._attributeCache = new Map();
-        if (data) {
-            const metadata = JSON.parse(data);
-            this._map = new Map(metadata.map((item) => [ item.name, item ]));
-        }
-    }
-
-    type(name) {
-        return this._map.get(name) || null;
-    }
-
-    attribute(type, name) {
-        let map = this._attributeCache.get(type);
-        if (!map) {
-            map = new Map();
-            const metadata = this.type(type);
-            if (metadata && metadata.attributes && metadata.attributes.length > 0) {
-                for (const attribute of metadata.attributes) {
-                    map.set(attribute.name, attribute);
-                }
-            }
-            this._attributeCache.set(type, map);
-        }
-        return map.get(name) || null;
-    }
+    FLOAT64S: 12,
+    VAR: 13,
+    VARS: 14,
+    FLOAT64: 15
 };
 
 paddle.Error = class extends Error {

@@ -1,4 +1,3 @@
-/* jshint esversion: 6 */
 
 // Experimental
 
@@ -58,8 +57,11 @@ uff.ModelFactory = class {
                     }
                     break;
                 }
+                default: {
+                    throw new uff.Error("Unsupported UFF format '" + match + "'.");
+                }
             }
-            return uff.Metadata.open(context).then((metadata) => {
+            return context.metadata('uff-metadata.json').then((metadata) => {
                 return new uff.Model(metadata, meta_graph);
             });
         });
@@ -106,10 +108,10 @@ uff.Graph = class {
         this._nodes = [];
 
         const args = new Map();
-        const inputCountMap = new Map();
+        const counts = new Map();
         for (const node of graph.nodes) {
             for (const input of node.inputs) {
-                inputCountMap.set(input, inputCountMap.has(input) ? inputCountMap.get(input) + 1 : 1);
+                counts.set(input, counts.has(input) ? counts.get(input) + 1 : 1);
                 args.set(input, new uff.Argument(input));
             }
             if (!args.has(node.id)) {
@@ -118,7 +120,7 @@ uff.Graph = class {
         }
         for (let i = graph.nodes.length - 1; i >= 0; i--) {
             const node = graph.nodes[i];
-            if (node.operation === 'Const' && node.inputs.length === 0 && inputCountMap.get(node.id) === 1) {
+            if (node.operation === 'Const' && node.inputs.length === 0 && counts.get(node.id) === 1) {
                 const fields = {};
                 for (const field of node.fields) {
                     fields[field.key] = field.value;
@@ -291,7 +293,7 @@ uff.Attribute = class {
             case 'dtype_list': this._value = value.dtype_list.map((type) => new uff.TensorType(type, null).dataType); this._type = 'uff.DataType[]'; break;
             case 'dim_orders': this._value = value.dim_orders; break;
             case 'dim_orders_list': this._value = value.dim_orders_list.val; break;
-            default: throw new uff.Error("Unknown attribute '" + name + "' value '" + JSON.stringify(value) + "'.");
+            default: throw new uff.Error("Unsupported attribute '" + name + "' value '" + JSON.stringify(value) + "'.");
         }
     }
 
@@ -318,127 +320,21 @@ uff.Tensor = class {
         this._type = new uff.TensorType(dataType, shape);
         switch (values.type) {
             case 'blob': this._data = values.blob; break;
-            default: throw new uff.Error("Unknown values format '" + JSON.stringify(values.type) + "'.");
+            default: throw new uff.Error("Unsupported values format '" + JSON.stringify(values.type) + "'.");
         }
-    }
-
-    get kind() {
-        return 'Const';
+        if (this._data.length > 8 &&
+            this._data[0] === 0x28 && this._data[1] === 0x2e && this._data[2] === 0x2e && this._data[3] === 0x2e &&
+            this._data[this._data.length - 1] === 0x29 && this._data[this._data.length - 2] === 0x2e && this._data[this._data.length - 3] === 0x2e && this._data[this._data.length - 4] === 0x2e) {
+            this._data = null;
+        }
     }
 
     get type() {
         return this._type;
     }
 
-    get state() {
-        return this._context().state;
-    }
-
-    get value() {
-        const context = this._context();
-        if (context.state) {
-            return null;
-        }
-        context.limit = Number.MAX_SAFE_INTEGER;
-        return this._decode(context, 0);
-    }
-
-    toString() {
-        const context = this._context();
-        if (context.state) {
-            return '';
-        }
-        context.limit = 10000;
-        const value = this._decode(context, 0);
-        return JSON.stringify(value, null, 4);
-    }
-
-    _context() {
-        const context = {};
-        context.state = null;
-        context.index = 0;
-        context.count = 0;
-
-        if (this._data == null) {
-            context.state = 'Tensor data is empty.';
-            return context;
-        }
-        if (this._data.length > 8 &&
-            this._data[0] === 0x28 && this._data[1] === 0x2e && this._data[2] === 0x2e && this._data[3] === 0x2e &&
-            this._data[this._data.length - 1] === 0x29 && this._data[this._data.length - 2] === 0x2e && this._data[this._data.length - 3] === 0x2e && this._data[this._data.length - 4] === 0x2e) {
-            context.state = 'Tensor data is empty.';
-            return context;
-        }
-        if (this._type.dataType === '?') {
-            context.state = 'Tensor data type is unknown.';
-            return context;
-        }
-
-        context.dataType = this._type.dataType;
-        context.shape = this._type.shape.dimensions;
-        context.data = new DataView(this._data.buffer, this._data.byteOffset, this._data.byteLength);
-        return context;
-    }
-
-    _decode(context, dimension) {
-        const shape = (context.shape.length == 0) ? [ 1 ] : context.shape;
-        const size = shape[dimension];
-        const results = [];
-        if (dimension == shape.length - 1) {
-            for (let i = 0; i < size; i++) {
-                if (context.count > context.limit) {
-                    results.push('...');
-                    return results;
-                }
-                switch (context.dataType) {
-                    case 'int8':
-                        results.push(context.data.getInt8(context.index));
-                        context.index += 1;
-                        context.count++;
-                        break;
-                    case 'int16':
-                        results.push(context.data.getInt16(context.index));
-                        context.index += 2;
-                        context.count++;
-                        break;
-                    case 'int32':
-                        results.push(context.data.getInt32(context.index, true));
-                        context.index += 4;
-                        context.count++;
-                        break;
-                    case 'int64':
-                        results.push(context.data.getInt64(context.index, true));
-                        context.index += 8;
-                        context.count++;
-                        break;
-                    case 'float16':
-                        results.push(context.data.getFloat16(context.index, true));
-                        context.index += 2;
-                        context.count++;
-                        break;
-                    case 'float32':
-                        results.push(context.data.getFloat32(context.index, true));
-                        context.index += 4;
-                        context.count++;
-                        break;
-                    default:
-                        break;
-                }
-            }
-        }
-        else {
-            for (let j = 0; j < size; j++) {
-                if (context.count > context.limit) {
-                    results.push('...');
-                    return results;
-                }
-                results.push(this._decode(context, dimension + 1));
-            }
-        }
-        if (context.shape.length == 0) {
-            return results[0];
-        }
-        return results;
+    get values() {
+        return this._data;
     }
 };
 
@@ -453,8 +349,7 @@ uff.TensorType = class {
             case uff.proto.DataType.DT_FLOAT16: this._dataType = 'float16'; break;
             case uff.proto.DataType.DT_FLOAT32: this._dataType = 'float32'; break;
             case 7: this._dataType = '?'; break;
-            default:
-                throw new uff.Error("Unknown data type '" + JSON.stringify(dataType) + "'.");
+            default: throw new uff.Error("Unsupported data type '" + JSON.stringify(dataType) + "'.");
         }
         this._shape = shape ? new uff.TensorShape(shape) : null;
     }
@@ -476,7 +371,7 @@ uff.TensorShape = class {
 
     constructor(shape) {
         if (shape.type !== 'i_list') {
-            throw new uff.Error("Unknown shape format '" + JSON.stringify(shape.type) + "'.");
+            throw new uff.Error("Unsupported shape format '" + JSON.stringify(shape.type) + "'.");
         }
         this._dimensions = shape.i_list.val;
     }
@@ -490,49 +385,6 @@ uff.TensorShape = class {
             return '';
         }
         return '[' + this._dimensions.join(',') + ']';
-    }
-};
-
-uff.Metadata = class {
-
-    static open(context) {
-        if (uff.Metadata._metadata) {
-            return Promise.resolve(uff.Metadata._metadata);
-        }
-        return context.request('uff-metadata.json', 'utf-8', null).then((data) => {
-            uff.Metadata._metadata = new uff.Metadata(data);
-            return uff.Metadata._metadata;
-        }).catch(() => {
-            uff.Metadata._metadata = new uff.Metadata(null);
-            return uff.Metadata._metadata;
-        });
-    }
-
-    constructor(data) {
-        this._types = new Map();
-        this._attributes = new Map();
-        if (data) {
-            const metadata = JSON.parse(data);
-            this._types = new Map(metadata.map((item) => [ item.name, item ]));
-        }
-    }
-
-    type(name) {
-        return this._types.get(name);
-    }
-
-    attribute(type, name) {
-        const key = type + ':' + name;
-        if (!this._attributes.has(key)) {
-            this._attributes.set(key, null);
-            const metadata = this.type(type);
-            if (metadata && Array.isArray(metadata.attributes)) {
-                for (const attribute of metadata.attributes) {
-                    this._attributes.set(type + ':' + attribute.name, attribute);
-                }
-            }
-        }
-        return this._attributes.get(key);
     }
 };
 

@@ -1,29 +1,21 @@
-#!/usr/bin/env node
-
-/* jshint esversion: 6 */
 /* eslint "no-console": off */
 
 const fs = require('fs');
 const path = require('path');
 const process = require('process');
-const http = require('http');
-const https = require('https');
 const util = require('util');
 
-// const json = require('../source/json');
+const base = require('../source/base');
 const protobuf = require('../source/protobuf');
 const flatbuffers = require('../source/flatbuffers');
-const sidebar = require('../source/view-sidebar.js');
-const view = require('../source/view.js');
+const sidebar = require('../source/view-sidebar');
+const view = require('../source/view');
 const zip = require('../source/zip');
 const gzip = require('../source/gzip');
 const tar = require('../source/tar');
-const base = require('../source/base');
 
 global.Int64 = base.Int64;
 global.Uint64 = base.Uint64;
-
-// global.json = json;
 global.protobuf = protobuf;
 global.flatbuffers = flatbuffers;
 
@@ -59,7 +51,7 @@ global.TextDecoder = class {
     }
 };
 
-const filter = process.argv.length > 2 ? new RegExp('^' + process.argv[2].replace(/\./, '\\.').replace(/\*/, '.*')) : null;
+const filter = process.argv.length > 2 ? process.argv[2].split('*') : ['', ''];
 const dataFolder = path.normalize(__dirname + '/../third_party/test');
 const items = JSON.parse(fs.readFileSync(__dirname + '/models.json', 'utf-8'));
 
@@ -361,12 +353,6 @@ class DOMTokenList {
     }
 }
 
-const makeDir = (dir) => {
-    if (!fs.existsSync(dir)){
-        fs.mkdirSync(dir, { recursive: true });
-    }
-};
-
 const clearLine = () => {
     if (process.stdout.clearLine) {
         process.stdout.clearLine();
@@ -393,14 +379,10 @@ const decompress = (buffer) => {
 };
 
 const request = (location, cookie) => {
-    const options = { rejectUnauthorized: false };
     const url = new URL(location);
-    const protocol = url.protocol === 'https:' ? https : http;
-    const request = protocol.request(location, options);
+    const protocol = url.protocol === 'https:' ? require('https') : require('http');
+    const request = protocol.request(location, {});
     return new Promise((resolve, reject) => {
-        if (!request) {
-            reject(new Error("Unknown HTTP request."));
-        }
         if (cookie && cookie.length > 0) {
             request.setHeader('Cookie', cookie);
         }
@@ -494,7 +476,8 @@ const download = (folder, targets, sources) => {
         }
     }
     for (const target of targets) {
-        makeDir(path.dirname(folder + '/' + target));
+        const dir = path.dirname(folder + '/' + target);
+        fs.existsSync(dir) || fs.mkdirSync(dir, { recursive: true });
     }
     return downloadFile(source).then((data) => {
         if (sourceFiles.length > 0) {
@@ -534,7 +517,7 @@ const download = (folder, targets, sources) => {
         if (sources.length > 0) {
             return download(folder, targets, sources);
         }
-        return;
+        return null;
     });
 };
 
@@ -631,6 +614,8 @@ const loadModel = (target, item) => {
                     if (argument.type) {
                         argument.type.toString();
                     }
+                    argument.quantization;
+                    argument.initializer;
                 }
             }
             for (const output of graph.outputs) {
@@ -658,7 +643,7 @@ const loadModel = (target, item) => {
                 for (const attribute of node.attributes) {
                     attribute.name.toString();
                     attribute.name.length;
-                    let value = sidebar.NodeSidebar.formatAttributeValue(attribute.value, attribute.type);
+                    let value = new sidebar.Formatter(attribute.value, attribute.type).toString();
                     if (value && value.length > 1000) {
                         value = value.substring(0, 1000) + '...';
                     }
@@ -675,8 +660,43 @@ const loadModel = (target, item) => {
                             argument.type.toString();
                         }
                         if (argument.initializer) {
-                            argument.initializer.toString();
+                            // console.log(argument.name);
                             argument.initializer.type.toString();
+                            const log = (/* message */) => {
+                                // console.log('  ' + message);
+                            };
+                            const tensor = new sidebar.Tensor(argument.initializer);
+                            if (tensor.layout !== '<' && tensor.layout !== '>' && tensor.layout !== '|' && tensor.layout !== 'sparse' && tensor.layout !== 'sparse.coo') {
+                                log("Tensor layout '" + tensor.layout + "' is not implemented.");
+                            }
+                            else if (tensor.empty) {
+                                log('Tensor data is empty.');
+                            }
+                            else if (tensor.type && tensor.type.dataType === '?') {
+                                log('Tensor data type is not defined.');
+                            }
+                            else if (tensor.type && !tensor.type.shape) {
+                                log('Tensor shape is not defined.');
+                            }
+                            else {
+                                tensor.toString();
+                                // tensor.value;
+                            }
+                            /*
+                            const python = require('../source/python');
+                            const tensor = argument.initializer;
+                            if (tensor.type && tensor.type.dataType !== '?') {
+                                let data_type = tensor.type.dataType;
+                                switch (data_type) {
+                                    case 'boolean': data_type = 'bool'; break;
+                                }
+                                const execution = new python.Execution(null);
+                                const bytes = execution.invoke('io.BytesIO', []);
+                                const dtype = execution.invoke('numpy.dtype', [ data_type ]);
+                                const array = execution.invoke('numpy.asarray', [ tensor.value, dtype ]);
+                                execution.invoke('numpy.save', [ bytes, array ]);
+                            }
+                            */
                         }
                     }
                 }
@@ -714,12 +734,8 @@ const renderModel = (model, item) => {
     try {
         const host = new TestHost();
         const currentView = new view.View(host);
-        if (!currentView.showAttributes) {
-            currentView.toggleAttributes();
-        }
-        if (!currentView.showInitializers) {
-            currentView.toggleInitializers();
-        }
+        currentView.options.attributes = true;
+        currentView.options.initializers = true;
         return currentView.renderGraph(model, model.graphs[0]);
     }
     catch (error) {
@@ -740,7 +756,7 @@ const next = () => {
     const target = targets[0];
     const folder = dataFolder + '/' + item.type;
     const name = item.type + '/' + target;
-    if (filter && !filter.test(name)) {
+    if ((filter[0] && !name.startsWith(filter[0])) || (filter[1] && !name.endsWith(filter[1]))) {
         next();
         return;
     }
@@ -753,24 +769,22 @@ const next = () => {
     clearLine();
 
     const sources = item.source;
-    return download(folder, targets, sources).then(() => {
+    download(folder, targets, sources).then(() => {
         return loadModel(folder + '/' + target, item).then((model) => {
             return renderModel(model, item).then(() => {
-                if (item.error) {
-                    console.error('Expected error.');
+                if (!item.error) {
+                    next();
+                    return;
                 }
-                else {
-                    return next();
-                }
+                console.error('Expected error.');
             });
         });
     }).catch((error) => {
-        if (!item.error || item.error != error.message) {
-            console.error(error.message);
+        if (item.error && item.error == error.message) {
+            next();
+            return;
         }
-        else {
-            return next();
-        }
+        console.error(error.message);
     });
 };
 

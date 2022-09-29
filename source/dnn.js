@@ -1,4 +1,3 @@
-/* jshint esversion: 6 */
 
 // Experimental
 
@@ -27,7 +26,7 @@ dnn.ModelFactory = class {
                 const message = error && error.message ? error.message : error.toString();
                 throw new dnn.Error('File format is not dnn.Graph (' + message.replace(/\.$/, '') + ').');
             }
-            return dnn.Metadata.open(context).then((metadata) => {
+            return context.metadata('dnn-metadata.json').then((metadata) => {
                 return new dnn.Model(metadata, model);
             });
         });
@@ -188,7 +187,7 @@ dnn.Node = class {
         this._inputs = [];
         this._outputs = [];
 
-        const inputs = node.input.map((input) => { return arg(input); });
+        const inputs = node.input.map((input) => arg(input));
         for (const weight of layer.weight) {
             let quantization = null;
             if (layer.is_quantized && weight === layer.weight[0] && layer.quantization && layer.quantization.data) {
@@ -202,7 +201,7 @@ dnn.Node = class {
             const initializer = new dnn.Tensor(weight, quantization);
             inputs.push(new dnn.Argument('', initializer.type, initializer, quantization));
         }
-        const outputs = node.output.map((output) => { return arg(output); });
+        const outputs = node.output.map((output) => arg(output));
 
         if (inputs && inputs.length > 0) {
             let inputIndex = 0;
@@ -284,11 +283,11 @@ dnn.Tensor = class {
 
     constructor(weight, quantization) {
         const shape = new dnn.TensorShape([ weight.dim0, weight.dim1, weight.dim2, weight.dim3 ]);
-        this._data = quantization ? weight.quantized_data : weight.data;
+        this._values = quantization ? weight.quantized_data : weight.data;
 
         const size = shape.dimensions.reduce((a, b) => a * b, 1);
-        const itemSize = Math.floor(this._data.length / size);
-        const remainder = this._data.length - (itemSize * size);
+        const itemSize = Math.floor(this._values.length / size);
+        const remainder = this._values.length - (itemSize * size);
         if (remainder < 0 || remainder > itemSize) {
             throw new dnn.Error('Invalid tensor data size.');
         }
@@ -300,7 +299,7 @@ dnn.Tensor = class {
                 this._type = new dnn.TensorType('float16', shape);
                 break;
             case 4:
-                this._type = new dnn.TensorType('float16', shape);
+                this._type = new dnn.TensorType('float32', shape);
                 break;
             default:
                 this._type = new dnn.TensorType('?', shape);
@@ -308,107 +307,16 @@ dnn.Tensor = class {
         }
     }
 
-    get kind() {
-        return 'Weight';
+    get category() {
+        return 'Weights';
     }
 
     get type() {
         return this._type;
     }
 
-    get state() {
-        return this._context().state;
-    }
-
-    get value() {
-        const context = this._context();
-        if (context.state) {
-            return null;
-        }
-        context.limit = Number.MAX_SAFE_INTEGER;
-        return this._decode(context, 0);
-    }
-
-    toString() {
-        const context = this._context();
-        if (context.state) {
-            return '';
-        }
-        context.limit = 10000;
-        const value = this._decode(context, 0);
-        return JSON.stringify(value, null, 4);
-    }
-
-    _context() {
-        const context = {};
-        context.state = null;
-        context.index = 0;
-        context.count = 0;
-
-        if (this._data == null) {
-            context.state = 'Tensor data is empty.';
-            return context;
-        }
-        switch (this._type.dataType) {
-            case 'int8':
-            case 'float16':
-            case 'float32':
-                break;
-            default:
-                context.state = "Tensor data type '" + this._type.dataType + "' is not supported.";
-                return context;
-        }
-
-        context.dataType = this._type.dataType;
-        context.shape = this._type.shape.dimensions;
-        context.data = new DataView(this._data.buffer, this._data.byteOffset, this._data.byteLength);
-        return context;
-    }
-
-    _decode(context, dimension) {
-        const shape = (context.shape.length == 0) ? [ 1 ] : context.shape;
-        const size = shape[dimension];
-        const results = [];
-        if (dimension == shape.length - 1) {
-            for (let i = 0; i < size; i++) {
-                if (context.count > context.limit) {
-                    results.push('...');
-                    return results;
-                }
-                switch (context.dataType) {
-                    case 'int8':
-                        results.push(context.data.getInt8(context.index));
-                        context.index++;
-                        context.count++;
-                        break;
-                    case 'float16':
-                        results.push(context.data.getFloat16(context.index, true));
-                        context.index += 2;
-                        context.count++;
-                        break;
-                    case 'float32':
-                        results.push(context.data.getFloat32(context.index, true));
-                        context.index += 4;
-                        context.count++;
-                        break;
-                    default:
-                        break;
-                }
-            }
-        }
-        else {
-            for (let j = 0; j < size; j++) {
-                if (context.count > context.limit) {
-                    results.push('...');
-                    return results;
-                }
-                results.push(this._decode(context, dimension + 1));
-            }
-        }
-        if (context.shape.length == 0) {
-            return results[0];
-        }
-        return results;
+    get values() {
+        return this._values;
     }
 };
 
@@ -447,51 +355,6 @@ dnn.TensorShape = class {
             return '';
         }
         return '[' + this._dimensions.join(',') + ']';
-    }
-};
-
-dnn.Metadata = class {
-
-    static open(context) {
-        if (dnn.Metadata._metadata) {
-            return Promise.resolve(dnn.Metadata._metadata);
-        }
-        return context.request('dnn-metadata.json', 'utf-8', null).then((data) => {
-            dnn.Metadata._metadata = new dnn.Metadata(data);
-            return dnn.Metadata._metadata;
-        }).catch(() => {
-            dnn.Metadata._metadata = new dnn.Metadata(null);
-            return dnn.Metadata._metadata;
-        });
-    }
-
-    constructor(data) {
-        this._map = new Map();
-        this._attributeCache = new Map();
-        if (data) {
-            const metadata = JSON.parse(data);
-            this._map = new Map(metadata.map((item) => [ item.name, item ]));
-        }
-    }
-
-    type(name) {
-        return this._map.get(name);
-    }
-
-    attribute(type, name) {
-        const key = type + ':' + name;
-        if (!this._attributeCache.has(key)) {
-            const schema = this.type(type);
-            if (schema && schema.attributes && schema.attributes.length > 0) {
-                for (const attribute of schema.attributes) {
-                    this._attributeCache.set(type + ':' + attribute.name, attribute);
-                }
-            }
-            if (!this._attributeCache.has(key)) {
-                this._attributeCache.set(key, null);
-            }
-        }
-        return this._attributeCache.get(key);
     }
 };
 

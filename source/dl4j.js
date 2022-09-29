@@ -1,4 +1,3 @@
-/* jshint esversion: 6 */
 
 // Experimental
 
@@ -8,14 +7,45 @@ var json = json || require('./json');
 dl4j.ModelFactory = class {
 
     match(context) {
-        const entries = context.entries('zip');
-        return dl4j.Container.open(entries);
+        const identifier = context.identifier;
+        if (identifier === 'configuration.json') {
+            const obj = context.open('json');
+            if (obj && (obj.confs || obj.vertices)) {
+                return 'dl4j.configuration';
+            }
+        }
+        if (identifier === 'coefficients.bin') {
+            const signature = [ 0x00, 0x07, 0x4A, 0x41, 0x56, 0x41, 0x43, 0x50, 0x50 ];
+            const stream = context.stream;
+            if (signature.length <= stream.length && stream.peek(signature.length).every((value, index) => value === signature[index])) {
+                return 'dl4j.coefficients';
+            }
+        }
+        return undefined;
     }
 
     open(context, match) {
-        return dl4j.Metadata.open(context).then((metadata) => {
-            const container = match;
-            return new dl4j.Model(metadata, container.configuration, container.coefficients);
+        return context.metadata('dl4j-metadata.json').then((metadata) => {
+            switch (match) {
+                case 'dl4j.configuration': {
+                    const obj = context.open('json');
+                    return context.request('coefficients.bin', null).then((stream) => {
+                        return new dl4j.Model(metadata, obj, stream.peek());
+                    }).catch(() => {
+                        return new dl4j.Model(metadata, obj, null);
+                    });
+                }
+                case 'dl4j.coefficients': {
+                    return context.request('configuration.json', null).then((stream) => {
+                        const reader = json.TextReader.open(stream);
+                        const obj = reader.read();
+                        return new dl4j.Model(metadata, obj, context.stream.peek());
+                    });
+                }
+                default: {
+                    throw new dl4j.Error("Unsupported Deeplearning4j format '" + match + "'.");
+                }
+            }
         });
     }
 };
@@ -44,8 +74,7 @@ dl4j.Graph = class {
         this._outputs =[];
         this._nodes = [];
 
-        const reader = new dl4j.NDArrayReader(coefficients);
-        const dataType = reader.dataType;
+        const dataType = coefficients ? new dl4j.NDArrayReader(coefficients).dataType : '?';
 
         if (configuration.networkInputs) {
             for (const input of configuration.networkInputs) {
@@ -201,7 +230,7 @@ dl4j.Node = class {
                                 tensor = new dl4j.Tensor(dataType, [ layer.nout ]);
                                 break;
                             default:
-                                throw new dl4j.Error("Unknown '" + this._type + "' variable '" + variable + "'.");
+                                throw new dl4j.Error("Unsupported '" + this._type + "' variable '" + variable + "'.");
                         }
                         break;
                     case 'SeparableConvolution2D':
@@ -213,7 +242,7 @@ dl4j.Node = class {
                                 tensor = new dl4j.Tensor(dataType, [ layer.nout ]);
                                 break;
                             default:
-                                throw new dl4j.Error("Unknown '" + this._type + "' variable '" + variable + "'.");
+                                throw new dl4j.Error("Unsupported '" + this._type + "' variable '" + variable + "'.");
                         }
                         break;
                     case 'Output':
@@ -226,14 +255,14 @@ dl4j.Node = class {
                                 tensor = new dl4j.Tensor(dataType, [ layer.nout ]);
                                 break;
                             default:
-                                throw new dl4j.Error("Unknown '" + this._type + "' variable '" + variable + "'.");
+                                throw new dl4j.Error("Unsupported '" + this._type + "' variable '" + variable + "'.");
                         }
                         break;
                     case 'BatchNormalization':
                         tensor = new dl4j.Tensor(dataType, [ layer.nin ]);
                         break;
                     default:
-                        throw new dl4j.Error("Unknown '" + this._type + "' variable '" + variable + "'.");
+                        throw new dl4j.Error("Unsupported '" + this._type + "' variable '" + variable + "'.");
                 }
                 this._inputs.push(new dl4j.Parameter(variable, true, [
                     new dl4j.Argument(variable, null, tensor)
@@ -275,6 +304,8 @@ dl4j.Node = class {
                 case 'idropout':
                 case 'hasBias':
                     continue;
+                default:
+                    break;
             }
             this._attributes.push(new dl4j.Attribute(metadata.attribute(type, key), key, attributes[key]));
         }
@@ -373,10 +404,6 @@ dl4j.Tensor = class {
     get type() {
         return this._type;
     }
-
-    get state() {
-        return 'Tensor data not implemented.';
-    }
 };
 
 dl4j.TensorType = class {
@@ -420,85 +447,6 @@ dl4j.TensorShape = class {
     }
 };
 
-dl4j.Metadata = class {
-
-    static open(context) {
-        if (dl4j.Metadata._metadata) {
-            return Promise.resolve(dl4j.Metadata._metadata);
-        }
-        return context.request('dl4j-metadata.json', 'utf-8', null).then((data) => {
-            dl4j.Metadata._metadata = new dl4j.Metadata(data);
-            return dl4j.Metadata._metadata;
-        }).catch(() => {
-            dl4j.Metadata._metadata = new dl4j.Metadata(null);
-            return dl4j.Metadata._metadata;
-        });
-    }
-
-    constructor(data) {
-        this._map = new Map();
-        this._attributes = new Map();
-        if (data) {
-            const metadata = JSON.parse(data);
-            this._map = new Map(metadata.map((item) => [ item.name, item ]));
-        }
-    }
-
-    type(name) {
-        return this._map.get(name);
-    }
-
-    attribute(type, name) {
-        const key = type + ':' + name;
-        if (!this._attributes.has(key)) {
-            const metadata = this.type(type);
-            if (metadata && metadata.attributes && metadata.attributes.length > 0) {
-                for (const attribute of metadata.attributes) {
-                    this._attributes.set(type + ':' + attribute.name, attribute);
-                }
-            }
-            if (!this._attributes.has(key)) {
-                this._attributes.set(key, null);
-            }
-        }
-        return this._attributes.get(key);
-    }
-};
-
-dl4j.Container = class {
-
-    static open(entries) {
-        const stream = entries.get('configuration.json');
-        const coefficients = entries.get('coefficients.bin');
-        if (stream) {
-            try {
-                const reader = json.TextReader.open(stream);
-                const configuration = reader.read();
-                if (configuration && (configuration.confs || configuration.vertices)) {
-                    return new dl4j.Container(configuration, coefficients ? coefficients.peek() : []);
-                }
-            }
-            catch (error) {
-                // continue regardless of error
-            }
-        }
-        return undefined;
-    }
-
-    constructor(configuration, coefficients) {
-        this._configuration = configuration;
-        this._coefficients = coefficients;
-    }
-
-    get configuration() {
-        return this._configuration;
-    }
-
-    get coefficients() {
-        return this._coefficients;
-    }
-};
-
 dl4j.NDArrayReader = class {
 
     constructor(buffer) {
@@ -526,6 +474,8 @@ dl4j.NDArrayReader = class {
             case 'MIXED_DATA_TYPES':
                 header.length = reader.int64();
                 break;
+            default:
+                throw new dl4j.Error("Unsupported header alloc '" + header.alloc + "'.");
         }
         header.type = reader.string();
         switch (header.type) {
@@ -537,8 +487,10 @@ dl4j.NDArrayReader = class {
                 header.type = 'float32';
                 header.itemsize = 4;
                 break;
+            default:
+                throw new dl4j.Error("Unsupported header type '" + header.type + "'.");
         }
-        header.data = reader.bytes(header.itemsize * header.length);
+        header.data = reader.read(header.itemsize * header.length);
         return header;
     }
 };
@@ -549,10 +501,9 @@ dl4j.BinaryReader = class {
         this._buffer = buffer;
         this._position = 0;
         this._view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
-        this._decoder = new TextDecoder('ascii');
     }
 
-    bytes(size) {
+    read(size) {
         const data = this._buffer.subarray(this._position, this._position + size);
         this._position += size;
         return data;
@@ -560,7 +511,8 @@ dl4j.BinaryReader = class {
 
     string() {
         const size = this._buffer[this._position++] << 8 | this._buffer[this._position++];
-        const buffer = this.bytes(size);
+        const buffer = this.read(size);
+        this._decoder = this._decoder || new TextDecoder('ascii');
         return this._decoder.decode(buffer);
     }
 

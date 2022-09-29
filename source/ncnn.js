@@ -1,7 +1,7 @@
-/* jshint esversion: 6 */
 
 var ncnn = ncnn || {};
 var text = text || require('./text');
+var base = base || require('./base');
 
 // https://github.com/Tencent/ncnn/wiki/param-and-model-file-structure
 // https://github.com/Tencent/ncnn/wiki/operation-param-weight-table
@@ -11,20 +11,7 @@ ncnn.ModelFactory = class {
 
     match(context) {
         const identifier = context.identifier.toLowerCase();
-        if (identifier.endsWith('.param') || identifier.endsWith('.cfg.ncnn')) {
-            const reader = text.Reader.open(context.stream, 2048);
-            const signature = reader.read();
-            if (signature !== undefined) {
-                if (signature.trim() === '7767517') {
-                    return 'ncnn.model';
-                }
-                const header = signature.trim().split(' ');
-                if (header.length === 2 && header.every((value) => value >>> 0 === parseFloat(value))) {
-                    return 'ncnn.model';
-                }
-            }
-        }
-        if (identifier.endsWith('.param.bin')) {
+        if (identifier.endsWith('.param.bin') || identifier.endsWith('.ncnnmodel')) {
             const stream = context.stream;
             if (stream.length > 4) {
                 const buffer = stream.peek(4);
@@ -32,6 +19,24 @@ ncnn.ModelFactory = class {
                 if (signature == 0x007685DD) {
                     return 'ncnn.model.bin';
                 }
+            }
+        }
+        if (identifier.endsWith('.param') || identifier.endsWith('.cfg.ncnn')) {
+            try {
+                const reader = text.Reader.open(context.stream, 2048);
+                const signature = reader.read();
+                if (signature !== undefined) {
+                    if (signature.trim() === '7767517') {
+                        return 'ncnn.model';
+                    }
+                    const header = signature.trim().split(' ');
+                    if (header.length === 2 && header.every((value) => value >>> 0 === parseFloat(value))) {
+                        return 'ncnn.model';
+                    }
+                }
+            }
+            catch (err) {
+                // continue regardless of error
             }
         }
         if (identifier.endsWith('.bin') || identifier.endsWith('.weights.ncnn')) {
@@ -52,7 +57,7 @@ ncnn.ModelFactory = class {
     }
 
     open(context, match) {
-        return ncnn.Metadata.open(context).then((metadata) => {
+        return context.metadata('ncnn-metadata.json').then((metadata) => {
             const identifier = context.identifier.toLowerCase();
             const openBinary = (param, bin) => {
                 const reader = new ncnn.BinaryParamReader(metadata, param);
@@ -104,6 +109,9 @@ ncnn.ModelFactory = class {
                             return openBinary(buffer, context.stream.peek());
                         });
                     });
+                }
+                default: {
+                    throw new ncnn.Error("Unsupported ncnn format '" + match + "'.");
                 }
             }
         });
@@ -248,7 +256,7 @@ ncnn.Node = class {
         this._chain = [];
         this._name = layer.name || '';
         const type = layer.type;
-        this._type = metadata.type(type) || metadata.operator(type) || { name: type };
+        this._type = metadata.type(type);
         const attributeMetadata = this._type && this._type.attributes ? this._type.attributes : [];
         const attributes = layer.attributes;
         const inputs = layer.inputs || [];
@@ -320,9 +328,9 @@ ncnn.Node = class {
             case 'Embed': {
                 const num_output = parseInt(attributes.get('0') || 0, 10);
                 const weight_data_size = parseInt(attributes.get('3') || 0, 10);
-                this._weight(blobReader, 'weight', [ weight_data_size ]);
+                this._weight(blobReader, 'weight', [ weight_data_size / num_output, num_output ]);
                 if (parseInt(attributes.get('2') || 0, 10) === 1) {
-                    this._weight(blobReader, 'bias', [ num_output], 'float32');
+                    this._weight(blobReader, 'bias', [ num_output ], 'float32');
                 }
                 attributes.get('3');
                 break;
@@ -344,25 +352,76 @@ ncnn.Node = class {
                 const kernel_w = parseInt(attributes.get('1') || 0, 10);
                 const kernel_h = parseInt(attributes.get('11') || kernel_w, 10);
                 const weight_data_size = parseInt(attributes.get('6') || 0, 10);
-                this._weight(blobReader, 'weight', [ num_output, weight_data_size / ( num_output * kernel_w * kernel_h), kernel_h, kernel_w ]);
+                this._weight(blobReader, 'weight', [ num_output, weight_data_size / (num_output * kernel_w * kernel_h), kernel_h, kernel_w ]);
                 if (parseInt(attributes.get('5') || 0, 10) === 1) {
                     this._weight(blobReader, 'bias', [ num_output ], 'float32');
                 }
                 attributes.delete('6');
                 break;
             }
-            case 'Dequantize': {
-                if (parseInt(attributes.get('1') || 0, 10) === 1) {
-                    const bias_data_size = parseInt(attributes.get('2') || 0, 10);
-                    this._weight(blobReader, 'bias', [ bias_data_size ], 'float32');
+            case 'Convolution1D':
+            case 'ConvolutionDepthWise1D': {
+                const activation_names = [ '', 'ReLU', 'LeakyReLU', 'Clip', 'Sigmoid', 'Mish', 'HardSwish' ];
+                const activation_type = parseInt(attributes.get('9') || 0, 10);
+                if (activation_type > 0 && activation_type < activation_names.length) {
+                    const layer = {
+                        type: activation_names[activation_type],
+                        attributes: new Map()
+                    };
+                    this._chain.push(new ncnn.Node(metadata, blobReader, layer, arg));
                 }
+                const num_output = parseInt(attributes.get('0') || 0, 10);
+                const kernel_w = parseInt(attributes.get('1') || 0, 10);
+                const weight_data_size = parseInt(attributes.get('6') || 0, 10);
+                this._weight(blobReader, 'weight', [ num_output, weight_data_size / (num_output * kernel_w), kernel_w ]);
+                if (parseInt(attributes.get('5') || 0, 10) === 1) {
+                    this._weight(blobReader, 'bias', [ num_output ], 'float32');
+                }
+                attributes.delete('6');
+                break;
+            }
+            case 'Convolution3D':
+            case 'ConvolutionDepthWise3D': {
+                const activation_names = [ '', 'ReLU', 'LeakyReLU', 'Clip', 'Sigmoid', 'Mish', 'HardSwish' ];
+                const activation_type = parseInt(attributes.get('9') || 0, 10);
+                if (activation_type > 0 && activation_type < activation_names.length) {
+                    const layer = {
+                        type: activation_names[activation_type],
+                        attributes: new Map()
+                    };
+                    this._chain.push(new ncnn.Node(metadata, blobReader, layer, arg));
+                }
+                const num_output = parseInt(attributes.get('0') || 0, 10);
+                const kernel_w = parseInt(attributes.get('1') || 0, 10);
+                const kernel_h = parseInt(attributes.get('11') || kernel_w, 10);
+                const kernel_d = parseInt(attributes.get('21') || kernel_w, 10);
+                const weight_data_size = parseInt(attributes.get('6') || 0, 10);
+                this._weight(blobReader, 'weight', [ num_output, weight_data_size / (num_output * kernel_w * kernel_h * kernel_d), kernel_d, kernel_h, kernel_w ]);
+                if (parseInt(attributes.get('5') || 0, 10) === 1) {
+                    this._weight(blobReader, 'bias', [ num_output ], 'float32');
+                }
+                attributes.delete('6');
+                break;
+            }
+            case 'Quantize': {
+                const scale_data_size = parseInt(attributes.get('0') || 1, 10);
+                this._weight(blobReader, 'scale', [ scale_data_size ], 'float32');
+                break;
+            }
+            case 'Dequantize': {
+                const scale_data_size = parseInt(attributes.get('0') || 1, 10);
+                const bias_data_size = parseInt(attributes.get('1') || 0, 10);
+                this._weight(blobReader, 'scale', [ scale_data_size ], 'float32');
+                this._weight(blobReader, 'bias', [ bias_data_size ], 'float32');
                 break;
             }
             case 'Requantize': {
-                if (parseInt(attributes.get('2') || 0, 10) === 1) {
-                    const bias_data_size = parseInt(attributes.get('3') || 0, 10);
-                    this._weight(blobReader, 'bias', [ bias_data_size ], 'float32');
-                }
+                const scale_in_data_size = parseInt(attributes.get('0') || 1, 10);
+                const scale_out_data_size = parseInt(attributes.get('1') || 1, 10);
+                const bias_data_size = parseInt(attributes.get('2') || 0, 10);
+                this._weight(blobReader, 'scale_in', [ scale_in_data_size ], 'float32');
+                this._weight(blobReader, 'scale_out', [ scale_out_data_size ], 'float32');
+                this._weight(blobReader, 'bias', [ bias_data_size ], 'float32');
                 break;
             }
             case 'InstanceNorm': {
@@ -402,8 +461,12 @@ ncnn.Node = class {
             case 'MemoryData': {
                 const w = parseInt(attributes.get('0') || 0, 10);
                 const h = parseInt(attributes.get('1') || 0, 10);
+                const d = parseInt(attributes.get('11') || 0, 10);
                 const c = parseInt(attributes.get('2') || 0, 10);
-                if (c != 0) {
+                if (d != 0) {
+                    this._weight(blobReader, 'data', [ c, d, h, w ], 'float32');
+                }
+                else if (c != 0) {
                     this._weight(blobReader, 'data', [ c, h, w ], 'float32');
                 }
                 else if (h != 0) {
@@ -463,6 +526,24 @@ ncnn.Node = class {
                 this._weight(blobReader, 'bias_c', [ num_directions, 4, num_output ]);
                 this._weight(blobReader, 'weight_hc', [ num_directions, 3, num_output, num_output ]);
                 attributes.delete('1');
+                break;
+            }
+            case 'MultiHeadAttention': {
+                const embed_dim = parseInt(attributes.get('0') || 0, 10);
+                // const num_head = parseInt(attributes.get('1') || 0, 10);
+                // const weight_data_size = parseInt(attributes.get('2') || 0, 10);
+                this._weight(blobReader, 'weight_q', [ embed_dim, embed_dim ]);
+                this._weight(blobReader, 'bias_q', [ embed_dim ], 'float32');
+                this._weight(blobReader, 'weight_k', [ embed_dim, embed_dim ]);
+                this._weight(blobReader, 'bias_k', [ embed_dim ], 'float32');
+                this._weight(blobReader, 'weight_v', [ embed_dim, embed_dim ]);
+                this._weight(blobReader, 'bias_v', [ embed_dim ], 'float32');
+                this._weight(blobReader, 'weight_out', [ embed_dim, embed_dim ]);
+                this._weight(blobReader, 'bias_out', [ embed_dim ], 'float32');
+                attributes.delete('2');
+                break;
+            }
+            default: {
                 break;
             }
         }
@@ -575,109 +656,16 @@ ncnn.Tensor = class {
         this._data = data;
     }
 
-    get kind() {
-        return 'Weight';
+    get category() {
+        return 'Weights';
     }
 
     get type() {
         return this._type;
     }
 
-    get state() {
-        return this._context().state || null;
-    }
-
-    get value() {
-        const context = this._context();
-        if (context.state) {
-            return null;
-        }
-        context.limit = Number.MAX_SAFE_INTEGER;
-        return this._decode(context, 0);
-    }
-
-    toString() {
-        const context = this._context();
-        if (context.state) {
-            return '';
-        }
-        context.limit = 10000;
-        const value = this._decode(context, 0);
-        return JSON.stringify(value, null, 4);
-    }
-
-    _context() {
-        const context = {};
-        context.index = 0;
-        context.count = 0;
-        context.state = null;
-
-        if (this._type.dataType == '?') {
-            context.state = 'Tensor has unknown data type.';
-            return context;
-        }
-        if (!this._type.shape) {
-            context.state = 'Tensor has no dimensions.';
-            return context;
-        }
-
-        if (!this._data) {
-            context.state = 'Tensor data is empty.';
-            return context;
-        }
-
-        switch (this._type.dataType) {
-            case 'float16':
-            case 'float32':
-                context.data = new DataView(this._data.buffer, this._data.byteOffset, this._data.byteLength);
-                break;
-            default:
-                context.state = 'Tensor data type is not implemented.';
-                break;
-        }
-
-        context.dataType = this._type.dataType;
-        context.shape = this._type.shape.dimensions;
-        return context;
-    }
-
-    _decode(context, dimension) {
-        const shape = context.shape.length !== 0 ? context.shape : [ 1 ];
-        const results = [];
-        const size = shape[dimension];
-        if (dimension == shape.length - 1) {
-            for (let i = 0; i < size; i++) {
-                if (context.count > context.limit) {
-                    results.push('...');
-                    return results;
-                }
-                switch (this._type.dataType) {
-                    case 'float32':
-                        results.push(context.data.getFloat32(context.index, true));
-                        context.index += 4;
-                        context.count++;
-                        break;
-                    case 'float16':
-                        results.push(context.data.getFloat16(context.index, true));
-                        context.index += 2;
-                        context.count++;
-                        break;
-                }
-            }
-        }
-        else {
-            for (let j = 0; j < size; j++) {
-                if (context.count > context.limit) {
-                    results.push('...');
-                    return results;
-                }
-                results.push(this._decode(context, dimension + 1));
-            }
-        }
-        if (context.shape.length == 0) {
-            return results[0];
-        }
-        return results;
+    get values() {
+        return this._data;
     }
 };
 
@@ -716,72 +704,19 @@ ncnn.TensorShape = class {
     }
 };
 
-ncnn.Metadata = class {
-
-    static open(context) {
-        if (ncnn.Metadata._metadata) {
-            return Promise.resolve(ncnn.Metadata._metadata);
-        }
-        return context.request('ncnn-metadata.json', 'utf-8', null).then((data) => {
-            ncnn.Metadata._metadata = new ncnn.Metadata(data);
-            return ncnn.Metadata._metadata;
-        }).catch(() => {
-            ncnn.Metadata._metadata = new ncnn.Metadata(null);
-            return ncnn.Metadata._metadatas;
-        });
-    }
-
-    constructor(data) {
-        this._operatorMap = new Map();
-        this._map = new Map();
-        this._attributes = new Map();
-        if (data) {
-            const items = JSON.parse(data);
-            for (const item of items) {
-                if (item.name) {
-                    this._map.set(item.name, item);
-                    if (Object.prototype.hasOwnProperty.call(item, 'operator')) {
-                        this._operatorMap.set(item.operator, item.name);
-                    }
-                }
-            }
-        }
-    }
-
-    operator(code) {
-        return this._operatorMap.get(code);
-    }
-
-    type(name) {
-        return this._map.get(name);
-    }
-
-    attribute(type, name) {
-        const key = type + ':' + name;
-        if (!this._attributes.has(key)) {
-            const schema = this.type(type);
-            if (schema && schema.attributes && schema.attributes.length > 0) {
-                for (const attribute of schema.attributes) {
-                    this._attributes.set(type + ':' + attribute.name, attribute);
-                }
-            }
-            if (!this._attributes.has(key)) {
-                this._attributes.set(key, null);
-            }
-        }
-        return this._attributes.get(key);
-    }
-};
-
 ncnn.Utility = class {
 
     static value(value, type) {
         ncnn.Utility._enum = ncnn.Utility._enum || new Map([
             [ 'BinaryOpType', [ 'Add', 'Sub', 'Mul', 'Div', 'Max', 'Min', 'Pow', 'RSub', 'RDiv' ] ],
+            [ 'CastOpType', [ 'Auto', 'Float32', 'Float16', 'Int8', 'BFloat16' ] ],
             [ 'EltwiseType', [ 'Prod', 'Sum', 'Max' ] ],
+            [ 'PaddingType', [ 'Constant', 'Replicate', 'Reflect' ] ],
             [ 'PoolingType', [ 'Max', 'Average' ] ],
             [ 'InterpResizeType', [ '', 'Nearest', 'Bilinear', 'Bicubic' ] ],
-            [ 'PermuteOrderType', [ 'WHC', 'HWC', 'WCH', 'CWH', 'HCW', 'CHW'] ]
+            [ 'PermuteOrderType', [ 'WH WHC WHDC', 'HW HWC HWDC', 'WCH WDHC', 'CWH DWHC', 'HCW HDWC', 'CHW DHWC', 'WHCD', 'HWCD', 'WCHD', 'CWHD', 'HCWD', 'CHWD', 'WDCH', 'DWCH', 'WCDH', 'CWDH', 'DCWH', 'CDWH', 'HDCW', 'DHCW', 'HCDW', 'CHDW', 'DCHW', 'CDHW' ] ],
+            [ 'ReductionOpType', [ 'Sum', 'ASum', 'SumSq', 'Mean', 'Max', 'Min', 'Prod', 'L1', 'L2', 'LogSum', 'LogSumExp' ] ],
+            [ 'UnaryOpType', [ 'Abs', 'Neg', 'Floor', 'Ceil', 'Square', 'Sqrt', 'Rsq', 'Exp', 'Log', 'Sin', 'Cos', 'Tan', 'ASin', 'ACos', 'ATan', 'Reciprocal', 'Tanh' ] ]
         ]);
         if (this._enum.has(type) && typeof value === 'string') {
             const index = parseInt(value, 10);
@@ -856,7 +791,7 @@ ncnn.TextParamReader = class {
 ncnn.BinaryParamReader = class {
 
     constructor(metadata, buffer) {
-        const reader = new ncnn.BinaryReader(buffer);
+        const reader = new base.BinaryReader(buffer);
         if (reader.int32() !== 0x007685DD) {
             throw new ncnn.Error('Invalid signature.');
         }
@@ -865,7 +800,7 @@ ncnn.BinaryParamReader = class {
         this._layers = [];
         for (let i = 0; i < layerCount; i++) {
             const typeIndex = reader.int32();
-            const operator = metadata.operator(typeIndex);
+            const operator = metadata.type(typeIndex);
             const layer = {
                 type: operator || typeIndex.toString(),
                 name: i.toString(),
@@ -943,7 +878,7 @@ ncnn.BlobReader = class {
                             break;
                         case 0x0002C056: // size * sizeof(float) - raw data with extra scaling
                         default:
-                            throw new ncnn.Error("Unknown weight type '" + type + "'.");
+                            throw new ncnn.Error("Unsupported weight type '" + type + "'.");
                     }
                 }
                 else {
@@ -983,35 +918,13 @@ ncnn.BlobReader = class {
                             data = null;
                             break;
                         default:
-                            throw new ncnn.Error("Unknown weight type '" + dataType + "'.");
+                            throw new ncnn.Error("Unsupported weight type '" + dataType + "'.");
                     }
                 }
             }
             return { dataType: dataType, data: data };
         }
         return null;
-    }
-};
-
-ncnn.BinaryReader = class {
-
-    constructor(buffer) {
-        this._buffer = buffer;
-        this._dataView = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
-        this._position = 0;
-    }
-
-    skip(size) {
-        this._position += size;
-        if (this._position > this._buffer.length) {
-            throw new ncnn.Error('Expected ' + (this._position - this._buffer.length) + ' more bytes. The file might be corrupted. Unexpected end of file.');
-        }
-    }
-
-    int32() {
-        const position = this._position;
-        this.skip(4);
-        return this._dataView.getInt32(position, true);
     }
 };
 

@@ -1,4 +1,3 @@
-/* jshint esversion: 6 */
 
 var host = host || {};
 
@@ -59,45 +58,50 @@ host.ElectronHost = class {
             this._openPath(data.path);
         });
         return new Promise((resolve /*, reject */) => {
-            const accept = () => {
-                if (this._environment.package) {
-                    this._telemetry = new host.Telemetry('UA-54146-13', this._getConfiguration('userId'), navigator.userAgent, this.type, this.version);
-                }
-                resolve();
-            };
-            const request = () => {
-                this._view.show('welcome consent');
-                const acceptButton = this.document.getElementById('consent-accept-button');
-                if (acceptButton) {
-                    acceptButton.addEventListener('click', () => {
-                        this._setConfiguration('consent', Date.now());
-                        accept();
-                    });
-                }
-            };
-            const time = this._getConfiguration('consent');
-            if (time && (Date.now() - time) < 30 * 24 * 60 * 60 * 1000) {
-                accept();
+            const age = (new Date() - new Date(this._environment.date)) / ( 24 * 60 * 60 * 1000);
+            if (age > 180) {
+                this._message('Please update to the newest version.', 'Download', () => {
+                    const link = this.document.getElementById('logo-github').href;
+                    this.openURL(link);
+                }, true);
             }
             else {
-                this._request('https://ipinfo.io/json', { 'Content-Type': 'application/json' }, 2000).then((text) => {
-                    try {
-                        const json = JSON.parse(text);
-                        const countries = ['AT', 'BE', 'BG', 'HR', 'CZ', 'CY', 'DK', 'EE', 'FI', 'FR', 'DE', 'EL', 'HU', 'IE', 'IT', 'LV', 'LT', 'LU', 'MT', 'NL', 'NO', 'PL', 'PT', 'SK', 'ES', 'SE', 'GB', 'UK', 'GR', 'EU', 'RO'];
-                        if (json && json.country && !countries.indexOf(json.country) !== -1) {
-                            this._setConfiguration('consent', Date.now());
-                            accept();
-                        }
-                        else {
-                            request();
-                        }
+                const telemetry = () => {
+                    if (this._environment.packaged) {
+                        this._telemetry = new host.Telemetry('UA-54146-13', this._getConfiguration('userId'), navigator.userAgent, this.type, this.version);
                     }
-                    catch (err) {
-                        request();
-                    }
-                }).catch(() => {
-                    request();
-                });
+                    resolve();
+                };
+                const consent = () => {
+                    this._message('This app uses cookies to report errors and anonymous usage information.', 'Accept', () => {
+                        this._setConfiguration('consent', Date.now());
+                        telemetry();
+                    });
+                };
+                const time = this._getConfiguration('consent');
+                if (time && (Date.now() - time) < 30 * 24 * 60 * 60 * 1000) {
+                    telemetry();
+                }
+                else {
+                    this._request('https://ipinfo.io/json', { 'Content-Type': 'application/json' }, 2000).then((text) => {
+                        try {
+                            const json = JSON.parse(text);
+                            const countries = ['AT', 'BE', 'BG', 'HR', 'CZ', 'CY', 'DK', 'EE', 'FI', 'FR', 'DE', 'EL', 'HU', 'IE', 'IT', 'LV', 'LT', 'LU', 'MT', 'NL', 'NO', 'PL', 'PT', 'SK', 'ES', 'SE', 'GB', 'UK', 'GR', 'EU', 'RO'];
+                            if (json && json.country && !countries.indexOf(json.country) !== -1) {
+                                this._setConfiguration('consent', Date.now());
+                                telemetry();
+                            }
+                            else {
+                                consent();
+                            }
+                        }
+                        catch (err) {
+                            consent();
+                        }
+                    }).catch(() => {
+                        consent();
+                    });
+                }
             }
         });
     }
@@ -127,21 +131,9 @@ host.ElectronHost = class {
         electron.ipcRenderer.on('selectall', () => {
             this._view.selectAll();
         });
-        electron.ipcRenderer.on('toggle-attributes', () => {
-            this._view.toggleAttributes();
-            this._update('show-attributes', this._view.showAttributes);
-        });
-        electron.ipcRenderer.on('toggle-initializers', () => {
-            this._view.toggleInitializers();
-            this._update('show-initializers', this._view.showInitializers);
-        });
-        electron.ipcRenderer.on('toggle-names', () => {
-            this._view.toggleNames();
-            this._update('show-names', this._view.showNames);
-        });
-        electron.ipcRenderer.on('toggle-direction', () => {
-            this._view.toggleDirection();
-            this._update('show-horizontal', this._view.showHorizontal);
+        electron.ipcRenderer.on('toggle', (sender, name) => {
+            this._view.toggle(name);
+            this._update(Object.assign({}, this._view.options));
         });
         electron.ipcRenderer.on('zoom-in', () => {
             this.document.getElementById('zoom-in-button').click();
@@ -158,10 +150,13 @@ host.ElectronHost = class {
         electron.ipcRenderer.on('find', () => {
             this._view.find();
         });
-        this.document.getElementById('menu-button').addEventListener('click', () => {
-            this._view.showModelProperties();
-        });
-
+        const menuButton = this.document.getElementById('menu-button');
+        if (menuButton) {
+            menuButton.setAttribute('title', 'Model Properties');
+            menuButton.addEventListener('click', () => {
+                this._view.showModelProperties();
+            });
+        }
         const openFileButton = this.document.getElementById('open-file-button');
         if (openFileButton) {
             openFileButton.style.opacity = 1;
@@ -172,6 +167,7 @@ host.ElectronHost = class {
         const githubButton = this.document.getElementById('github-button');
         const githubLink = this.document.getElementById('logo-github');
         if (githubButton && githubLink) {
+            githubButton.innerText = 'Download';
             githubButton.style.opacity = 1;
             githubButton.addEventListener('click', () => {
                 this.openURL(githubLink.href);
@@ -311,7 +307,7 @@ host.ElectronHost = class {
         if (this._telemetry && error && error.telemetry !== false) {
             try {
                 const name = error && error.name ? error.name + ': ' : '';
-                const message = error && error.message ? error.message : '(null)';
+                const message = error && error.message ? error.message : JSON.stringify(error);
                 const description = [ name + message ];
                 if (error.stack) {
                     const format = (file, line, column) => {
@@ -325,6 +321,10 @@ host.ElectronHost = class {
                         const match = error.stack.match(/\n {4}at (.*):(\d*):(\d*)/);
                         if (match) {
                             description.push('(' + format(match[1], match[2], match[3]) + ')');
+                        }
+                        else {
+                            const match = error.stack.match(/.*\n\s*(.*)\s*/);
+                            description.push(match ? match[1] : error.stack.split('\n').shift());
                         }
                     }
                 }
@@ -399,24 +399,22 @@ host.ElectronHost = class {
             this._context(path).then((context) => {
                 this._view.open(context).then((model) => {
                     this._view.show(null);
+                    const options = Object.assign({}, this._view.options);
                     if (model) {
-                        this._update('path', path);
+                        options.path = path;
                     }
-                    this._update('show-attributes', this._view.showAttributes);
-                    this._update('show-initializers', this._view.showInitializers);
-                    this._update('show-names', this._view.showNames);
+                    this._update(options);
                 }).catch((error) => {
+                    const options = Object.assign({}, this._view.options);
                     if (error) {
                         this._view.error(error, null, null);
-                        this._update('path', null);
+                        options.path = null;
                     }
-                    this._update('show-attributes', this._view.showAttributes);
-                    this._update('show-initializers', this._view.showInitializers);
-                    this._update('show-names', this._view.showNames);
+                    this._update(options);
                 });
             }).catch((error) => {
                 this._view.error(error, 'Error while reading file.', null);
-                this._update('path', null);
+                this._update({ path: null });
             });
         }
     }
@@ -473,8 +471,33 @@ host.ElectronHost = class {
         electron.ipcRenderer.sendSync('set-configuration', { name: name, value: value });
     }
 
-    _update(name, value) {
-        electron.ipcRenderer.send('update', { name: name, value: value });
+    _update(data) {
+        electron.ipcRenderer.send('update', data);
+    }
+
+    _message(message, action, callback, modal) {
+        const messageText = this.document.getElementById('message');
+        if (messageText) {
+            messageText.innerText = message;
+        }
+        const messageButton = this.document.getElementById('message-button');
+        if (messageButton) {
+            if (action && callback) {
+                messageButton.style.removeProperty('display');
+                messageButton.innerText = action;
+                messageButton.onclick = () => {
+                    if (!modal) {
+                        messageButton.onclick = null;
+                    }
+                    callback();
+                };
+            }
+            else {
+                messageButton.style.display = 'none';
+                messageButton.onclick = null;
+            }
+        }
+        this._view.show('welcome message');
     }
 };
 
@@ -741,5 +764,6 @@ window.addEventListener('load', () => {
     global.protobuf = require('./protobuf');
     global.flatbuffers = require('./flatbuffers');
     const view = require('./view');
-    window.__view__ = new view.View(new host.ElectronHost());
+    window.__host__ = new host.ElectronHost();
+    window.__view__ = new view.View(window.__host__);
 });

@@ -1,4 +1,3 @@
-/* jshint esversion: 6 */
 
 var openvino = openvino || {};
 var xml = xml || require('./xml');
@@ -13,11 +12,8 @@ openvino.ModelFactory = class {
         const identifier = context.identifier;
         const extension = identifier.split('.').pop().toLowerCase();
         if (extension === 'bin') {
-            switch (identifier) {
-                case 'natives_blob.bin':
-                case 'snapshot_blob.bin':
-                case 'v8_context_snapshot.bin':
-                    return undefined;
+            if (identifier === 'natives_blob.bin' || identifier === 'snapshot_blob.bin' || identifier === 'v8_context_snapshot.bin') {
+                return undefined;
             }
             const stream = context.stream;
             const signature = [ 0x21, 0xA8, 0xEF, 0xBE, 0xAD, 0xDE ];
@@ -48,7 +44,7 @@ openvino.ModelFactory = class {
 
     open(context, match) {
         const open = (stream, bin) => {
-            return openvino.Metadata.open(context).then((metadata) => {
+            return context.metadata('openvino-metadata.json').then((metadata) => {
                 let document = null;
                 try {
                     const reader = xml.TextReader.open(stream);
@@ -78,6 +74,8 @@ openvino.ModelFactory = class {
                 return context.request(identifier.substring(0, identifier.length - 4) + '.xml', null).then((stream) => {
                     return open(stream, context.stream.peek());
                 });
+            default:
+                throw new openvino.Error("Unsupported OpenVINO format '" + match + "'.");
         }
     }
 };
@@ -368,6 +366,7 @@ openvino.Graph = class {
                     switch (element_type) {
                         case 'f16': precision = 'FP16'; break;
                         case 'f32': precision = 'FP32'; break;
+                        case 'f64': precision = 'FP64'; break;
                         default: precision = element_type.toUpperCase();
                     }
                     const shape = data['shape'] ? data['shape'].split(',').map((dim) => parseInt(dim.trim(), 10)) : null;
@@ -565,6 +564,8 @@ openvino.Node = class {
                         }
                         break;
                     }
+                    default:
+                        break;
                 }
             }
             const shape = dimensions ? new openvino.TensorShape(dimensions) : null;
@@ -659,6 +660,9 @@ openvino.Attribute = class {
             if (Object.prototype.hasOwnProperty.call(schema, 'type')) {
                 this._type = schema.type;
                 switch (schema.type) {
+                    case '':
+                    case 'string':
+                        break;
                     case 'boolean':
                         switch (value) {
                             case '1':
@@ -671,6 +675,8 @@ openvino.Attribute = class {
                             case 'False':
                                 this._value = false;
                                 break;
+                            default:
+                                throw new openvino.Error("Unsupported attribute boolean value '" + value + "'.");
                         }
                         break;
                     case 'int32': {
@@ -687,8 +693,8 @@ openvino.Attribute = class {
                     case 'int32[]':
                         if (this._value.length > 2) {
                             let ints = [];
-                            this._value.split(',').map((item) => {
-                                item = item.trim();
+                            for (const entry of this._value.split(',')) {
+                                const item = entry.trim();
                                 const intValue = Number.parseInt(item, 10);
                                 if (Number.isNaN(item - intValue)) {
                                     ints = null;
@@ -696,7 +702,7 @@ openvino.Attribute = class {
                                 else if (ints != null) {
                                     ints.push(intValue);
                                 }
-                            });
+                            }
                             if (ints != null) {
                                 this._value = ints;
                             }
@@ -705,8 +711,8 @@ openvino.Attribute = class {
                     case 'float32[]':
                         if (this._value.length > 2) {
                             let floats = [];
-                            this._value.split(',').map((item) => {
-                                item = item.trim();
+                            for (const entry of this._value.split(',')) {
+                                const item = entry.trim();
                                 const floatValue = Number.parseFloat(item);
                                 if (Number.isNaN(item - floatValue)) {
                                     floats = null;
@@ -714,12 +720,14 @@ openvino.Attribute = class {
                                 else if (floats != null) {
                                     floats.push(floatValue);
                                 }
-                            });
+                            }
                             if (floats != null) {
                                 this._value = floats;
                             }
                         }
                         break;
+                    default:
+                        throw new openvino.Error("Unsupported attribute type '" + schema.type + "'.");
                 }
             }
             if (Object.prototype.hasOwnProperty.call(schema, 'visible') && schema.visible == false) {
@@ -738,7 +746,7 @@ openvino.Attribute = class {
                             defaultValue.push(defaultValue[defaultValue.length - 1]);
                         }
                     }
-                    if (this._value.every((item, index) => { return item == defaultValue[index]; })) {
+                    if (this._value.every((item, index) => item == defaultValue[index])) {
                         this._visible = false;
                     }
                 }
@@ -765,186 +773,22 @@ openvino.Attribute = class {
 
 openvino.Tensor = class {
 
-    constructor(precision, shape, data, kind) {
-        this._data = data;
+    constructor(precision, shape, data, category) {
         this._type = new openvino.TensorType(precision, shape);
-        this._kind = kind;
+        this._data = data;
+        this._category = category;
     }
 
-    get kind() {
-        return this._kind;
+    get category() {
+        return this._category;
     }
 
     get type() {
         return this._type;
     }
 
-    get state() {
-        return this._context().state;
-    }
-
-    get value() {
-        const context = this._context();
-        if (context.state) {
-            return null;
-        }
-        context.limit = Number.MAX_SAFE_INTEGER;
-        return this._decode(context, 0);
-    }
-
-    toString() {
-        const context = this._context();
-        if (context.state) {
-            return '';
-        }
-        context.limit = 10000;
-        const value = this._decode(context, 0);
-        return openvino.Tensor._stringify(value, '', '    ');
-    }
-
-    _context() {
-        const context = {};
-        context.state = null;
-
-        if (!this._data) {
-            context.state = 'Tensor data is empty.';
-            return context;
-        }
-
-        if (!this._type.shape) {
-            context.state = 'Tensor shape is not defined.';
-            return context;
-        }
-
-        switch(this._type.dataType) {
-            case 'float16':
-            case 'float32':
-            case 'int8':
-            case 'int16':
-            case 'int32':
-            case 'int64':
-            case 'uint8':
-            case 'uint16':
-            case 'uint32':
-            case 'uint64':
-                context.index = 0;
-                context.count = 0;
-                context.data = new DataView(this._data.buffer, this._data.byteOffset, this._data.byteLength);
-                break;
-            default:
-                context.state = 'Tensor data type is not implemented.';
-                break;
-        }
-
-        context.dataType = this._type.dataType;
-        context.shape = this._type.shape.dimensions;
-
-        return context;
-    }
-
-    _decode(context, dimension) {
-        const shape = context.shape.length == 0 ? [ 1 ] : context.shape;
-        const results = [];
-        const size = shape[dimension];
-        if (dimension == shape.length - 1) {
-            for (let i = 0; i < size; i++) {
-                if (context.count > context.limit) {
-                    results.push('...');
-                    return results;
-                }
-                switch (this._type.dataType) {
-                    case 'float32':
-                        results.push(context.data.getFloat32(context.index, true));
-                        context.index += 4;
-                        context.count++;
-                        break;
-                    case 'float16':
-                        results.push(context.data.getFloat16(context.index, true));
-                        context.index += 2;
-                        context.count++;
-                        break;
-                    case 'int8':
-                        results.push(context.data.getInt8(context.index));
-                        context.index += 1;
-                        context.count++;
-                        break;
-                    case 'int16':
-                        results.push(context.data.getInt16(context.index, true));
-                        context.index += 2;
-                        context.count++;
-                        break;
-                    case 'int32':
-                        results.push(context.data.getInt32(context.index, true));
-                        context.index += 4;
-                        context.count++;
-                        break;
-                    case 'int64':
-                        results.push(context.data.getInt64(context.index, true));
-                        context.index += 8;
-                        context.count++;
-                        break;
-                    case 'uint8':
-                        results.push(context.data.getUint8(context.index));
-                        context.index += 1;
-                        context.count++;
-                        break;
-                    case 'uint16':
-                        results.push(context.data.getUint16(context.index, true));
-                        context.index += 2;
-                        context.count++;
-                        break;
-                    case 'uint32':
-                        results.push(context.data.getUint32(context.index, true));
-                        context.index += 4;
-                        context.count++;
-                        break;
-                    case 'uint64':
-                        results.push(context.data.getUint64(context.index, true));
-                        context.index += 8;
-                        context.count++;
-                        break;
-                }
-            }
-        }
-        else {
-            for (let j = 0; j < size; j++) {
-                if (context.count > context.limit) {
-                    results.push('...');
-                    return results;
-                }
-                results.push(this._decode(context, dimension + 1));
-            }
-        }
-        if (context.shape.length == 0) {
-            return results[0];
-        }
-        return results;
-    }
-
-    static _stringify(value, indentation, indent) {
-        if (Array.isArray(value)) {
-            const result = [];
-            result.push(indentation + '[');
-            const items = value.map((item) => openvino.Tensor._stringify(item, indentation + indent, indent));
-            if (items.length > 0) {
-                result.push(items.join(',\n'));
-            }
-            result.push(indentation + ']');
-            return result.join('\n');
-        }
-        if (typeof value == 'string') {
-            return indentation + value;
-        }
-        if (value == Infinity) {
-            return indentation + 'Infinity';
-        }
-        if (value == -Infinity) {
-            return indentation + '-Infinity';
-        }
-        if (isNaN(value)) {
-            return indentation + 'NaN';
-        }
-        return indentation + value.toString();
+    get values() {
+        return this._data;
     }
 };
 
@@ -954,9 +798,11 @@ openvino.TensorType = class {
         precision = precision ? precision.toLowerCase() : precision;
         switch (precision) {
             case 'f16':     this._dataType = 'float16'; break;
-            case 'fp16':    this._dataType = 'float16'; break;
             case 'f32':     this._dataType = 'float32'; break;
+            case 'f64':     this._dataType = 'float64'; break;
+            case 'fp16':    this._dataType = 'float16'; break;
             case 'fp32':    this._dataType = 'float32'; break;
+            case 'fp64':    this._dataType = 'float64'; break;
             case 'bf16':    this._dataType = 'bfloat16'; break;
             case 'i4':      this._dataType = 'int4'; break;
             case 'i8':      this._dataType = 'int8'; break;
@@ -974,7 +820,7 @@ openvino.TensorType = class {
             case 'bin':     this._dataType = 'bit'; break;
             case '':        this._dataType = '?'; break;
             case null:      this._dataType = '?'; break;
-            default:        throw new openvino.Error("Unknown precision '" + JSON.stringify(precision) + "'.");
+            default:        throw new openvino.Error("Unsupported precision '" + JSON.stringify(precision) + "'.");
         }
         this._shape = shape;
     }
@@ -1010,49 +856,6 @@ openvino.TensorShape = class {
             return '';
         }
         return '[' + this._dimensions.join(',') + ']';
-    }
-};
-
-openvino.Metadata = class {
-
-    static open(context) {
-        if (openvino.Metadata._metadata) {
-            return Promise.resolve(openvino.Metadata._metadata);
-        }
-        return context.request('openvino-metadata.json', 'utf-8', null).then((data) => {
-            openvino.Metadata._metadata = new openvino.Metadata(data);
-            return openvino.Metadata._metadata;
-        }).catch(() => {
-            openvino.Metadata._metadata = new openvino.Metadata(null);
-            return openvino.Metadata._metadata;
-        });
-    }
-
-    constructor(data) {
-        this._map = new Map();
-        this._attributeMap = new Map();
-        if (data) {
-            const metadata = JSON.parse(data);
-            this._map = new Map(metadata.map((item) => [ item.name, item ]));
-        }
-    }
-
-    type(name) {
-        return this._map.get(name);
-    }
-
-    attribute(type, name) {
-        const key = type + ':' + name;
-        if (!this._attributeMap.has(key)) {
-            this._attributeMap.set(key, null);
-            const schema = this.type(type);
-            if (schema && schema.attributes) {
-                for (const attribute of schema.attributes) {
-                    this._attributeMap.set(type + ':' + attribute.name, attribute);
-                }
-            }
-        }
-        return this._attributeMap.get(key);
     }
 };
 
@@ -1137,6 +940,7 @@ openvino.XmlReader = class {
                                 switch (port.localName) {
                                     case 'input': layer.port_map.input.push(item); break;
                                     case 'output': layer.port_map.output.push(item); break;
+                                    default: throw new openvino.Error("Unsupported port local name '" + port.localName + "'.");
                                 }
                             }
                         }

@@ -1,4 +1,3 @@
-/* jshint esversion: 6 */
 
 var mslite = mslite || {};
 var flatbuffers = flatbuffers || require('./flatbuffers');
@@ -7,7 +6,7 @@ mslite.ModelFactory = class {
 
     match(context) {
         const stream = context.stream;
-        if (stream.length >= 8) {
+        if (stream && stream.length >= 8) {
             const buffer = stream.peek(8);
             const reader = flatbuffers.BinaryReader.open(buffer);
             if (reader.identifier === '' || reader.identifier === 'MSL1' || reader.identifier === 'MSL2') {
@@ -28,6 +27,8 @@ mslite.ModelFactory = class {
                     throw new mslite.Error('MSL1 format is deprecated.', false);
                 case 'MSL2':
                     break;
+                default:
+                    throw new mslite.Error("Unsupported file identifier '" + reader.identifier + "'.");
             }
             let model = null;
             try {
@@ -38,7 +39,7 @@ mslite.ModelFactory = class {
                 const message = error && error.message ? error.message : error.toString();
                 throw new mslite.Error('File format is not mslite.MetaGraph (' + message.replace(/\.$/, '') + ').');
             }
-            return mslite.Metadata.open(context).then((metadata) => {
+            return context.metadata('mslite-metadata.json').then((metadata) => {
                 return new mslite.Model(metadata, model);
             });
         });
@@ -125,10 +126,6 @@ mslite.Graph = class {
 
     get name() {
         return this._name;
-    }
-
-    get groups() {
-        return false;
     }
 
     get inputs() {
@@ -279,14 +276,16 @@ mslite.Argument = class {
         this._initializer = initializer || null;
 
         if (tensor.quantParams) {
-            const params = [];
+            const list = [];
             for (let i = 0; i < tensor.quantParams.length; i++) {
                 const param = tensor.quantParams[i];
                 if (param.scale !== 0 || param.zeroPoint !== 0) {
-                    params.push(param.scale.toString() + ' * x + ' + param.zeroPoint.toString());
+                    list.push((param.scale !== 1 ? param.scale.toString() + ' * ' : '') + 'q' + (param.zeroPoint !== 0 ? ' + ' + param.zeroPoint.toString() : ''));
                 }
             }
-            this._quantization = params.join(' -> ');
+            if (list.length > 0 && !list.every((value) => value === 'q')) {
+                this._quantization = list.length === 1 ? list[0] : list;
+            }
         }
     }
 
@@ -321,138 +320,36 @@ mslite.Tensor = class {
         return this._type;
     }
 
-    get state() {
-        return this._context().state;
+    get layout() {
+        switch (this._type.dataType) {
+            case 'string': return '|';
+            default: return '<';
+        }
     }
 
-    get value() {
-        const context = this._context();
-        if (context.state) {
-            return null;
-        }
-        context.limit = Number.MAX_SAFE_INTEGER;
-        return this._decode(context, 0);
-    }
-
-    toString() {
-        const context = this._context();
-        if (context.state) {
-            return '';
-        }
-        context.limit = 10000;
-        const value = this._decode(context, 0);
-        return JSON.stringify(value, null, 4);
-    }
-
-    _context() {
-        const context = {};
-        context.state = null;
-        context.index = 0;
-        context.count = 0;
-
-        if (this._data == null || this._data.length === 0) {
-            context.state = 'Tensor data is empty.';
-            return context;
-        }
-
-        context.dataType = this._type.dataType;
-        context.shape = this._type.shape.dimensions;
-        context.data = new DataView(this._data.buffer, this._data.byteOffset, this._data.byteLength);
-
-        if (this._type.dataType === 'string') {
-            let offset = 0;
-            const count = context.data.getInt32(0, true);
-            offset += 4;
-            const offsetTable = [];
-            for (let j = 0; j < count; j++) {
-                offsetTable.push(context.data.getInt32(offset, true));
+    get values() {
+        switch (this._type.dataType) {
+            case 'string': {
+                let offset = 0;
+                const data = new DataView(this._data.buffer, this._data.byteOffset, this._data.byteLength);
+                const count = data.getInt32(0, true);
                 offset += 4;
-            }
-            offsetTable.push(this._data.length);
-            const stringTable = [];
-            const utf8Decoder = new TextDecoder('utf-8');
-            for (let k = 0; k < count; k++) {
-                const textArray = this._data.subarray(offsetTable[k], offsetTable[k + 1]);
-                stringTable.push(utf8Decoder.decode(textArray));
-            }
-            context.data = stringTable;
-        }
-        return context;
-    }
-
-    _decode(context, dimension) {
-        const shape = (context.shape.length === 0) ? [ 1 ] : context.shape;
-        const size = shape[dimension];
-        const results = [];
-        if (dimension === shape.length - 1) {
-            for (let i = 0; i < size; i++) {
-                if (context.count > context.limit) {
-                    results.push('...');
-                    return results;
+                const offsetTable = [];
+                for (let j = 0; j < count; j++) {
+                    offsetTable.push(data.getInt32(offset, true));
+                    offset += 4;
                 }
-                switch (context.dataType) {
-                    case 'uint8':
-                        results.push(context.data.getUint8(context.index));
-                        context.index += 1;
-                        context.count++;
-                        break;
-                    case 'int8':
-                        results.push(context.data.getInt8(context.index));
-                        context.index += 1;
-                        context.count++;
-                        break;
-                    case 'int16':
-                        results.push(context.data.getInt16(context.index));
-                        context.index += 2;
-                        context.count++;
-                        break;
-                    case 'int32':
-                        results.push(context.data.getInt32(context.index, true));
-                        context.index += 4;
-                        context.count++;
-                        break;
-                    case 'int64':
-                        results.push(context.data.getInt64(context.index, true));
-                        context.index += 8;
-                        context.count++;
-                        break;
-                    case 'float16':
-                        results.push(context.data.getFloat16(context.index, true));
-                        context.index += 2;
-                        context.count++;
-                        break;
-                    case 'float32':
-                        results.push(context.data.getFloat32(context.index, true));
-                        context.index += 4;
-                        context.count++;
-                        break;
-                    case 'float64':
-                        results.push(context.data.getFloat64(context.index, true));
-                        context.index += 8;
-                        context.count++;
-                        break;
-                    case 'string':
-                        results.push(context.data[context.index++]);
-                        context.count++;
-                        break;
-                    default:
-                        break;
+                offsetTable.push(this._data.length);
+                const stringTable = [];
+                const utf8Decoder = new TextDecoder('utf-8');
+                for (let k = 0; k < count; k++) {
+                    const textArray = this._data.subarray(offsetTable[k], offsetTable[k + 1]);
+                    stringTable.push(utf8Decoder.decode(textArray));
                 }
+                return stringTable;
             }
+            default: return this._data;
         }
-        else {
-            for (let j = 0; j < size; j++) {
-                if (context.count > context.limit) {
-                    results.push('...');
-                    return results;
-                }
-                results.push(this._decode(context, dimension + 1));
-            }
-        }
-        if (context.shape.length === 0) {
-            return results[0];
-        }
-        return results;
     }
 };
 
@@ -504,8 +401,7 @@ mslite.TensorType = class {
             case 43: this._dataType = "float32"; break;
             case 44: this._dataType = "float64"; break;
             case 45: this._dataType = "complex64"; break;
-            default:
-                throw new mslite.Error("Unknown data type '" + dataType.toString() + "'.");
+            default: throw new mslite.Error("Unsupported data type '" + dataType.toString() + "'.");
         }
         this._shape = new mslite.TensorShape(Array.from(dimensions));
     }
@@ -538,55 +434,6 @@ mslite.TensorShape = class {
             return '[' + this._dimensions.map((dimension) => dimension ? dimension.toString() : '?').join(',') + ']';
         }
         return '';
-    }
-};
-
-mslite.Metadata = class {
-
-    static open(context) {
-        if (mslite.Metadata._metadata) {
-            return Promise.resolve(mslite.Metadata._metadata);
-        }
-        return context.request('mslite-metadata.json', 'utf-8', null).then((data) => {
-            mslite.Metadata._metadata = new mslite.Metadata(data);
-            return mslite.Metadata._metadata;
-        }).catch(() => {
-            mslite.Metadata._metadata = new mslite.Metadata(null);
-            return mslite.Metadata._metadata;
-        });
-    }
-
-    constructor(data) {
-        this._map = new Map();
-        if (data) {
-            const metadata = JSON.parse(data);
-            this._map = new Map(metadata.map((item) => [ item.name, item ]));
-        }
-    }
-
-    type(name) {
-        return this._map.has(name) ? this._map.get(name) : null;
-    }
-
-    attribute(type, name) {
-        const schema = this.type(type);
-        if (schema) {
-            let attributeMap = schema.attributeMap;
-            if (!attributeMap) {
-                attributeMap = {};
-                if (schema.attributes) {
-                    for (const attribute of schema.attributes) {
-                        attributeMap[attribute.name] = attribute;
-                    }
-                }
-                schema.attributeMap = attributeMap;
-            }
-            const attributeSchema = attributeMap[name];
-            if (attributeSchema) {
-                return attributeSchema;
-            }
-        }
-        return null;
     }
 };
 

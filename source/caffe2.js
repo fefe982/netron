@@ -1,4 +1,3 @@
-/* jshint esversion: 6 */
 
 var caffe2 = caffe2 || {};
 var protobuf = protobuf || require('./protobuf');
@@ -8,44 +7,39 @@ caffe2.ModelFactory = class {
     match(context) {
         const identifier = context.identifier.toLowerCase();
         const extension = identifier.split('.').pop().toLowerCase();
-        switch (extension) {
-            case 'pb': {
-                const tags = context.tags('pb');
-                if (tags.size > 0 &&
-                    Array.from(tags.keys()).every((tag) => tag <= 9) &&
-                    Array.from(tags.values()).every((type) => type <= 4)) {
-                    if (tags.size === 1 && tags.get(2) === 2 && identifier.endsWith('saved_model.pb')) {
-                        return undefined;
-                    }
-                    const schema = [[1,2],[2,2],[3,2],[4,0],[5,2],[6,2],[7,2],[8,2],[9,2]];
-                    if (schema.every((pair) => !tags.has(pair[0]) || tags.get(pair[0]) === pair[1])) {
-                        const stream = context.stream;
-                        if (stream.length > 3) {
-                            const buffer = stream.peek(Math.min(stream.length, 67));
-                            if (buffer[0] == 0x0A) {
-                                const size = buffer[1];
-                                if (size < 64 &&
-                                    buffer.length > 2 + size + 1 &&
-                                    buffer.slice(2, 2 + size).every((c) => c >= 32 && c <= 127) &&
-                                    buffer[2 + size] == 0x12) {
-                                    return 'caffe2.pb';
-                                }
-                            }
-                            if (buffer[0] == 0x12) {
+        if (extension === 'pb') {
+            const tags = context.tags('pb');
+            if (tags.size > 0 &&
+                Array.from(tags.keys()).every((tag) => tag <= 9) &&
+                Array.from(tags.values()).every((type) => type <= 4)) {
+                if (tags.size === 1 && tags.get(2) === 2 && identifier.endsWith('saved_model.pb')) {
+                    return undefined;
+                }
+                const schema = [[1,2],[2,2],[3,2],[4,0],[5,2],[6,2],[7,2],[8,2],[9,2]];
+                if (schema.every((pair) => !tags.has(pair[0]) || tags.get(pair[0]) === pair[1])) {
+                    const stream = context.stream;
+                    if (stream.length > 3) {
+                        const buffer = stream.peek(Math.min(stream.length, 67));
+                        if (buffer[0] == 0x0A) {
+                            const size = buffer[1];
+                            if (size < 64 &&
+                                buffer.length > 2 + size + 1 &&
+                                buffer.slice(2, 2 + size).every((c) => c >= 32 && c <= 127) &&
+                                buffer[2 + size] == 0x12) {
                                 return 'caffe2.pb';
                             }
                         }
+                        if (buffer[0] == 0x12) {
+                            return 'caffe2.pb';
+                        }
                     }
                 }
-                break;
             }
-            case 'pbtxt':
-            case 'prototxt': {
-                const tags = context.tags('pbtxt');
-                if (tags.has('op') && !tags.has('op.attr') && !tags.has('op.graph_op_name') && !tags.has('op.endpoint')) {
-                    return 'caffe2.pbtxt';
-                }
-                break;
+        }
+        if (extension === 'pbtxt' || extension === 'prototxt') {
+            const tags = context.tags('pbtxt');
+            if (tags.has('op') && !tags.has('op.attr') && !tags.has('op.graph_op_name') && !tags.has('op.endpoint')) {
+                return 'caffe2.pbtxt';
             }
         }
         return undefined;
@@ -53,7 +47,7 @@ caffe2.ModelFactory = class {
 
     open(context, match) {
         return context.require('./caffe2-proto').then(() => {
-            return caffe2.Metadata.open(context).then((metadata) => {
+            return context.metadata('caffe2-metadata.json').then((metadata) => {
                 const identifier = context.identifier;
                 const parts = identifier.split('.');
                 const extension = parts.pop().toLowerCase();
@@ -181,6 +175,9 @@ caffe2.ModelFactory = class {
                             return openBinary(context.stream.peek(), null);
                         });
                     }
+                    default: {
+                        throw new caffe2.Error("Unsupported Caffe2 format '" + match + "'.");
+                    }
                 }
             });
         });
@@ -267,7 +264,7 @@ caffe2.Graph = class {
                         case 'ConstantFill':
                             break;
                         default:
-                            throw new caffe2.Error("Unknown init op '" + op.type + "'.");
+                            throw new caffe2.Error("Unsupported init op '" + op.type + "'.");
                     }
                     if (initializer.values && initializer.values.floats && (initializer.values.floats.length !== 1 || initializer.values.floats[0] !== 0)) {
                         initializer.input = false;
@@ -417,12 +414,8 @@ caffe2.Node = class {
         this._device = op.engine || '';
         this._metadata = metadata;
         this._chain = [];
-        this._attributes = [];
         this._type = metadata.type(op.type);
-        for (const arg of op.arg) {
-            const attribute = new caffe2.Attribute(metadata, metadata.attribute(this._type.name, arg.name), arg);
-            this._attributes.push(attribute);
-        }
+        this._attributes = op.arg.map((arg) => new caffe2.Attribute(metadata, this._type.name, arg));
         const inputs = op.input;
         const outputs = op.output;
         const tensors = {};
@@ -516,7 +509,7 @@ caffe2.Node = class {
 
 caffe2.Attribute = class {
 
-    constructor(metadata, schema, arg) {
+    constructor(metadata, type, arg) {
         this._name = arg.name;
         if (arg.floats && arg.floats.length > 0) {
             this._value = arg.floats;
@@ -538,24 +531,22 @@ caffe2.Attribute = class {
         else {
             this._value = arg.i;
         }
-        if (schema) {
-            if (Object.prototype.hasOwnProperty.call(schema, 'type')) {
-                this._type = schema.type;
+        metadata = metadata.attribute(type, arg.name);
+        if (metadata) {
+            if (Object.prototype.hasOwnProperty.call(metadata, 'type')) {
+                this._type = metadata.type;
                 if (this._type == 'boolean') {
-                    switch (this._value) {
-                        case 1: this._value = true; break;
-                        case 0: this._value = false; break;
-                    }
+                    this._value = this._value !== 0 && this._value.toString() !== '0' ? true : false;
                 }
             }
         }
 
-        if (schema) {
-            if (Object.prototype.hasOwnProperty.call(schema, 'visible') && !schema.visible) {
+        if (metadata) {
+            if (Object.prototype.hasOwnProperty.call(metadata, 'visible') && !metadata.visible) {
                 this._visible = false;
             }
-            else if (Object.prototype.hasOwnProperty.call(schema, 'default')) {
-                if (this._value == schema.default || (this._value && this._value.toString() == schema.default.toString())) {
+            else if (metadata.default !== undefined) {
+                if (this._value == metadata.default || (this._value && this._value.toString() == metadata.default.toString())) {
                     this._visible = false;
                 }
             }
@@ -598,7 +589,7 @@ caffe2.Tensor = class {
         return this._type;
     }
 
-    get kind() {
+    get category() {
         return 'Initializer';
     }
 
@@ -609,130 +600,21 @@ caffe2.Tensor = class {
         return null;
     }
 
-    get state() {
-        return this._context().state;
+    get layout() {
+        return '|';
     }
 
-    get value() {
-        const context = this._context();
-        if (context.state) {
+    get values() {
+        if (!this._values) {
             return null;
         }
-        context.limit = Number.MAX_SAFE_INTEGER;
-        return this._decode(context, 0);
-    }
-
-    toString() {
-        const context = this._context();
-        if (context.state) {
-            return '';
-        }
-        context.limit = 10000;
-        const value = this._decode(context, 0);
-        return caffe2.Tensor._stringify(value, '', '    ');
-    }
-
-    _context() {
-        const context = {};
-        context.state = null;
-        context.index = 0;
-        context.count = 0;
-        if (!this._values) {
-            context.state = 'Tensor data is empty.';
-            return context;
-        }
-        if (this._values.floats === undefined) {
-            context.state = 'Tensor data is too large to load in Chrome.';
-            return context;
-        }
         switch (this._type.dataType) {
-            case 'float32':
-                context.data = this._values.floats;
-                break;
-            case 'boolean':
-                context.data = this._values.ints;
-                break;
-            case 'int8':
-                context.data = new Int8Array(this._values.s);
-                break;
-            case 'int32':
-                context.data = this._values.ints;
-                break;
-            default:
-                context.state = 'Unknown data type.';
-                return context;
+            case 'float32': return this._values.floats;
+            case 'boolean': return this._values.ints;
+            case 'int8': return new Int8Array(this._values.s);
+            case 'int32': return this._values.ints;
+            default: return null;
         }
-        context.shape = this._type.shape.dimensions;
-        context.dataType = this._type.dataType;
-        return context;
-    }
-
-    _decode(context, dimension) {
-        const results = [];
-        const size = context.shape[dimension];
-        if (dimension == context.shape.length - 1) {
-            for (let i = 0; i < size; i++) {
-                if (context.count > context.limit) {
-                    results.push('...');
-                    return results;
-                }
-                switch (context.dataType) {
-                    case 'float32':
-                        results.push(context.data[context.index]);
-                        break;
-                    case 'boolean':
-                        results.push(context.data[context.index] == 0 ? false : true);
-                        break;
-                    case 'int8':
-                        results.push(context.data[context.index]);
-                        break;
-                    case 'int32':
-                        results.push(context.data[context.index]);
-                        break;
-                    default:
-                        context.state = 'Unknown data type.';
-                        break;
-                }
-                context.index++;
-                context.count++;
-            }
-        }
-        else {
-            for (let j = 0; j < size; j++) {
-                if (context.count > context.limit) {
-                    results.push('...');
-                    return results;
-                }
-                results.push(this._decode(context, dimension + 1));
-            }
-        }
-        return results;
-    }
-
-    static _stringify(value, indentation, indent) {
-        if (Array.isArray(value)) {
-            const result = [];
-            result.push(indentation + '[');
-            const items = value.map((item) => caffe2.Tensor._stringify(item, indentation + indent, indent));
-            if (items.length > 0) {
-                result.push(items.join(',\n'));
-            }
-            result.push(indentation + ']');
-            return result.join('\n');
-        }
-        if (typeof value == 'string') {
-            return indentation + value;
-        }
-        if (value == Infinity) {
-            return indentation + 'Infinity';
-        }
-        if (value == -Infinity) {
-            return indentation + '-Infinity';
-        }
-        if (isNaN(value)) {
-            return indentation + 'NaN';
-        }
-        return indentation + value.toString();
     }
 };
 
@@ -768,52 +650,6 @@ caffe2.TensorShape = class {
 
     toString() {
         return this._dimensions ? ('[' + this._dimensions.map((dimension) => dimension.toString()).join(',') + ']') : '';
-    }
-};
-
-caffe2.Metadata = class {
-
-    static open(context) {
-        if (caffe2.Metadata._metadata) {
-            return Promise.resolve(caffe2.Metadata._metadata);
-        }
-        return context.request('caffe2-metadata.json', 'utf-8', null).then((data) => {
-            caffe2.Metadata._metadata = new caffe2.Metadata(data);
-            return caffe2.Metadata._metadata;
-        }).catch(() => {
-            caffe2.Metadata._metadata = new caffe2.Metadata(null);
-            return caffe2.Metadata._metadata;
-        });
-    }
-
-    constructor(data) {
-        this._types = new Map();
-        this._attributes = new Map();
-        if (data) {
-            const metadata = JSON.parse(data);
-            this._types = new Map(metadata.map((item) => [ item.name, item ]));
-        }
-    }
-
-    type(name) {
-        if (!this._types.has(name)) {
-            this._types.set(name, { name: name });
-        }
-        return this._types.get(name);
-    }
-
-    attribute(type, name) {
-        const key = type + ':' + name;
-        if (!this._attributes.has(key)) {
-            this._attributes.set(key, null);
-            const metadata = this.type(type);
-            if (metadata && Array.isArray(metadata.attributes)) {
-                for (const attribute of metadata.attributes) {
-                    this._attributes.set(type + ':' + attribute.name, attribute);
-                }
-            }
-        }
-        return this._attributes.get(key);
     }
 };
 
