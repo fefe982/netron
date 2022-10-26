@@ -1,8 +1,8 @@
 
-var rknn = rknn || {};
-var base = base || require('./base');
-var flatbuffers = flatbuffers || require('./flatbuffers');
-var json = json || require('./json');
+var rknn = {};
+var base = require('./base');
+var flatbuffers = require('./flatbuffers');
+var json = require('./json');
 
 rknn.ModelFactory = class {
 
@@ -601,7 +601,7 @@ rknn.Container = class {
                     }
                     this._next = new rknn.Container(stream, data_size);
                     this._next.read();
-                    const value_size = uint64(stream);
+                    const value_size = uint64();
                     this._value = stream.read(value_size);
                     break;
                 }

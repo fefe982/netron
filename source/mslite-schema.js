@@ -387,6 +387,7 @@ $root.mindspore.schema.PrimitiveType = class {
             case 210: return $root.mindspore.schema.GatherD.decode(reader, position);
             case 211: return $root.mindspore.schema.GroupNormFusion.decode(reader, position);
             case 212: return $root.mindspore.schema.Log1p.decode(reader, position);
+            case 213: return $root.mindspore.schema.TensorScatterAdd.decode(reader, position);
             default: return undefined;
         }
     }
@@ -605,6 +606,7 @@ $root.mindspore.schema.PrimitiveType = class {
             case 'GatherD': return $root.mindspore.schema.GatherD.decodeText(reader, json);
             case 'GroupNormFusion': return $root.mindspore.schema.GroupNormFusion.decodeText(reader, json);
             case 'Log1p': return $root.mindspore.schema.Log1p.decodeText(reader, json);
+            case 'TensorScatterAdd': return $root.mindspore.schema.TensorScatterAdd.decodeText(reader, json);
             default: return undefined;
         }
     }
@@ -2796,6 +2798,7 @@ $root.mindspore.schema.QuantDTypeCast = class QuantDTypeCast {
         const $ = new $root.mindspore.schema.QuantDTypeCast();
         $.src_t = reader.int64_(position, 4, 0);
         $.dst_t = reader.int64_(position, 6, 0);
+        $.axis = reader.int64_(position, 8, 0);
         return $;
     }
 
@@ -2803,6 +2806,7 @@ $root.mindspore.schema.QuantDTypeCast = class QuantDTypeCast {
         const $ = new $root.mindspore.schema.QuantDTypeCast();
         $.src_t = reader.value(json.src_t, 0);
         $.dst_t = reader.value(json.dst_t, 0);
+        $.axis = reader.value(json.axis, 0);
         return $;
     }
 };
@@ -4214,6 +4218,19 @@ $root.mindspore.schema.Log1p = class Log1p {
     }
 };
 
+$root.mindspore.schema.TensorScatterAdd = class TensorScatterAdd {
+
+    static decode(/* reader, position */) {
+        const $ = new $root.mindspore.schema.TensorScatterAdd();
+        return $;
+    }
+
+    static decodeText(/* reader, json */) {
+        const $ = new $root.mindspore.schema.TensorScatterAdd();
+        return $;
+    }
+};
+
 $root.mindspore.schema.QuantParam = class QuantParam {
 
     static decode(reader, position) {
@@ -4257,7 +4274,8 @@ $root.mindspore.schema.WeightQuantCompressType = {
     SPARSE: 2,
     FSE: 3,
     BITPACKING: 4,
-    FSE_INT: 5
+    FSE_INT: 5,
+    FSE_INFER: 6
 };
 
 $root.mindspore.schema.ExternalData = class ExternalData {

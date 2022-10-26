@@ -1,6 +1,6 @@
 
-var dlc = dlc || {};
-var text = text || require('./text');
+var dlc = {};
+var text = require('./text');
 
 dlc.ModelFactory = class {
 
@@ -379,18 +379,29 @@ dlc.Container = class {
         if (entries.size > 0) {
             const model = entries.get('model');
             const params = entries.get('model.params');
+            const metadata = entries.get('dlc.metadata');
             if (model || params) {
-                return new dlc.Container(model, params, entries.get('dlc.metadata'));
+                return new dlc.Container(model, params, metadata);
             }
         }
         const stream = context.stream;
-        switch (dlc.Container._idenfitier(stream)) {
-            case 'NETD':
-                return new dlc.Container(stream, null, null);
-            case 'NETP':
-                return new dlc.Container(null, stream, null);
-            default:
-                break;
+        let buffer = null;
+        if (dlc.Container._signature(stream, [ 0xD5, 0x0A, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00 ])) {
+            buffer = stream.peek(16).slice(8, 16);
+        }
+        else if (stream && stream.length > 8) {
+            buffer = stream.peek(8);
+        }
+        if (buffer) {
+            const reader = flatbuffers.BinaryReader.open(buffer);
+            switch (reader.identifier) {
+                case 'NETD':
+                    return new dlc.Container(stream, null, null);
+                case 'NETP':
+                    return new dlc.Container(null, stream, null);
+                default:
+                    break;
+            }
         }
         return null;
     }
@@ -402,27 +413,23 @@ dlc.Container = class {
     }
 
     get model() {
-        if (this._model && this._model.peek) {
-            const stream = this._model;
-            const reader = this._open(stream, 'NETD');
-            stream.seek(0);
+        if (this._model && typeof this._model.peek === 'function') {
+            const reader = this._open(this._model, 'NETD');
             this._model = dlc.schema.NetDef.decode(reader, reader.root);
         }
         return this._model;
     }
 
     get params() {
-        if (this._params && this._params.peek) {
-            const stream = this._params;
-            const reader = this._open(stream, 'NETP');
-            stream.seek(0);
+        if (this._params && typeof this._params.peek === 'function') {
+            const reader = this._open(this._params, 'NETP');
             this._params = dlc.schema.NetParam.decode(reader, reader.root);
         }
         return this._params;
     }
 
     get metadata() {
-        if (this._metadata && this._metadata.peek) {
+        if (this._metadata && typeof this._metadata.peek === 'function') {
             const reader = text.Reader.open(this._metadata);
             const metadata = new Map();
             for (;;) {
@@ -455,21 +462,8 @@ dlc.Container = class {
         if (identifier != reader.identifier) {
             throw new dlc.Error("File contains undocumented '" + reader.identifier + "' data.");
         }
+        stream.seek(0);
         return reader;
-    }
-
-    static _idenfitier(stream) {
-        if (dlc.Container._signature(stream, [ 0xD5, 0x0A, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00 ])) {
-            const buffer = stream.peek(16).slice(8, 16);
-            const reader = flatbuffers.BinaryReader.open(buffer);
-            return reader.identifier;
-        }
-        else if (stream && stream.length > 8) {
-            const buffer = stream.peek(8);
-            const reader = flatbuffers.BinaryReader.open(buffer);
-            return reader.identifier;
-        }
-        return '';
     }
 
     static _signature(stream, signature) {

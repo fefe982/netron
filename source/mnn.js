@@ -1,14 +1,15 @@
 
-var mnn = mnn || {};
-var flatbuffers = flatbuffers || require('./flatbuffers');
+var mnn = {};
+var flatbuffers = require('./flatbuffers');
 
 mnn.ModelFactory = class {
 
     match(context) {
-        const stream = context.stream;
-        if (stream && stream.length >= 4) {
-            const extension = context.identifier.split('.').pop().toLowerCase();
-            if (extension == 'mnn') {
+        const identifier = context.identifier;
+        const extension = identifier.split('.').pop().toLowerCase();
+        if (extension == 'mnn') {
+            const stream = context.stream;
+            if (stream && stream.length >= 4) {
                 const buffer = stream.peek(4);
                 const reader = flatbuffers.BinaryReader.open(buffer);
                 if (reader.root === 0x00000018 || reader.root === 0x0000001C || reader.root === 0x00000020) {
@@ -16,7 +17,7 @@ mnn.ModelFactory = class {
                 }
             }
         }
-        return undefined;
+        return null;
     }
 
     open(context) {

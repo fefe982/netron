@@ -1,7 +1,5 @@
 
 var host = {};
-var view = view || {};
-var base = base || {};
 
 host.BrowserHost = class {
 
@@ -28,6 +26,26 @@ host.BrowserHost = class {
             'date': this._meta.date ? new Date(this._meta.date[0].split(' ').join('T') + 'Z') : new Date(),
         };
         this._telemetry = this._environment.version && this._environment.version !== '0.0.0';
+        this.window.require = (id) => {
+            const name = id.startsWith('./') ? id.substring(2) : id;
+            const value = this.window[name];
+            if (value) {
+                return value;
+            }
+            throw new Error("Module '" + id + "' not found.");
+        };
+        const require = (ids) => {
+            return Promise.all(ids.map((id) => this.require(id)));
+        };
+        require([ 'base', 'text', 'flatbuffers', 'flexbuffers', 'zip',  'tar', 'python', 'dagre' ]).then(() => {
+            return require([ 'json', 'xml', 'protobuf', 'hdf5', 'grapher', 'dialog' ]).then(() => {
+                return require([ 'view' ]).then(() => {
+                    this.window.__view__ = new this.window.view.View(this);
+                });
+            });
+        }).catch((error) => {
+            this._message(error.message);
+        });
     }
 
     get window() {
@@ -121,12 +139,12 @@ host.BrowserHost = class {
                         try {
                             const json = JSON.parse(text);
                             const countries = ['AT', 'BE', 'BG', 'HR', 'CZ', 'CY', 'DK', 'EE', 'FI', 'FR', 'DE', 'EL', 'HU', 'IE', 'IT', 'LV', 'LT', 'LU', 'MT', 'NL', 'NO', 'PL', 'PT', 'SK', 'ES', 'SE', 'GB', 'UK', 'GR', 'EU', 'RO'];
-                            if (json && json.country && !countries.indexOf(json.country) !== -1) {
-                                this._setCookie('consent', Date.now(), 30);
-                                telemetry();
+                            if (json && json.country && countries.indexOf(json.country) >= 0) {
+                                consent();
                             }
                             else {
-                                consent();
+                                this._setCookie('consent', Date.now(), 30);
+                                telemetry();
                             }
                         }
                         catch (err) {
@@ -146,6 +164,11 @@ host.BrowserHost = class {
         });
 
         const params = new URLSearchParams(this.window.location.search);
+
+        const versionLabel = this.document.getElementById('version');
+        if (versionLabel) {
+            versionLabel.innerText = this.version;
+        }
 
         this._menu = new host.Dropdown(this, 'menu-button', 'menu-dropdown');
         this._menu.add({
@@ -222,8 +245,6 @@ host.BrowserHost = class {
             click: () => this._about()
         });
 
-        this.document.getElementById('version').innerText = this.version;
-
         if (this._meta.file) {
             const url = this._meta.file[0];
             if (this._view.accept(url)) {
@@ -259,7 +280,7 @@ host.BrowserHost = class {
                 openFileDialog.value = '';
                 openFileDialog.click();
             });
-            const extensions = new base.Metadata().extensions.map((extension) => '.' + extension);
+            const extensions = new this.window.base.Metadata().extensions.map((extension) => '.' + extension);
             openFileDialog.setAttribute('accept', extensions.join(', '));
             openFileDialog.addEventListener('change', (e) => {
                 if (e.target && e.target.files && e.target.files.length > 0) {
@@ -312,27 +333,24 @@ host.BrowserHost = class {
     }
 
     require(id) {
-        const url = this._url(id + '.js');
-        this.window.__modules__ = this.window.__modules__ || {};
-        if (this.window.__modules__[url]) {
-            return Promise.resolve(this.window.__exports__[url]);
+        const name = id.startsWith('./') ? id.substring(2) : id;
+        const value = this.window[name];
+        if (value) {
+            return Promise.resolve(value);
         }
         return new Promise((resolve, reject) => {
             this.window.module = { exports: {} };
+            const url = this._url(id + '.js');
             const script = document.createElement('script');
             script.setAttribute('id', id);
             script.setAttribute('type', 'text/javascript');
             script.setAttribute('src', url);
-            script.onload = (e) => {
-                if (this.window.module && this.window.module.exports) {
-                    const exports = this.window.module.exports;
+            script.onload = () => {
+                if (!this.window[name]) {
+                    this.window[name] = this.window.module.exports;
                     delete this.window.module;
-                    this.window.__modules__[id] = exports;
-                    resolve(exports);
                 }
-                else {
-                    reject(new Error('The script \'' + e.target.src + '\' has no exports.'));
-                }
+                resolve(this.window[name]);
             };
             script.onerror = (e) => {
                 delete this.window.module;
@@ -366,8 +384,9 @@ host.BrowserHost = class {
 
     exception(error, fatal) {
         if (this._telemetry && this.window.ga && error && error.telemetry !== false) {
-            const description = [];
-            description.push((error && error.name ? (error.name + ': ') : '') + (error && error.message ? error.message : JSON.stringify(error)));
+            const name = error.name ? error.name + ': ' : '';
+            const message = error.message ? error.message : JSON.stringify(error);
+            const description = [ name + message ];
             if (error.stack) {
                 const format = (file, line, column) => {
                     return file.split('\\').join('/').split('/').pop() + ':' + line + ':' + column;
@@ -602,7 +621,13 @@ host.BrowserHost = class {
                 messageButton.onclick = null;
             }
         }
-        this._view.show('welcome message');
+        const page = 'welcome message';
+        if (this._view) {
+            this._view.show(page);
+        }
+        else {
+            this._document.body.setAttribute('class', page);
+        }
     }
 
     _about() {
@@ -964,5 +989,4 @@ if (!('scrollBehavior' in window.document.documentElement.style)) {
 
 window.addEventListener('load', () => {
     window.__host__ = new host.BrowserHost();
-    window.__view__ = new view.View(window.__host__);
 });

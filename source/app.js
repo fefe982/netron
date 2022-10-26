@@ -324,17 +324,19 @@ class Application {
             }
             dialog.removeMenu();
             dialog.excludedFromShownWindowsMenu = true;
-            dialog.webContents.on('new-window', (event, url) => {
+            dialog.webContents.setWindowOpenHandler((detail) => {
+                const url = detail.url;
                 if (url.startsWith('http://') || url.startsWith('https://')) {
-                    event.preventDefault();
                     electron.shell.openExternal(url);
                 }
+                return { action: 'deny' };
             });
-            let content = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf-8');
+            const pathname = path.join(__dirname, 'index.html');
+            let content = fs.readFileSync(pathname, 'utf-8');
+            content = content.replace(/<\s*script[^>]*>[\s\S]*?(<\s*\/script[^>]*>|$)/ig, '');
             content = content.replace('{version}', this._package.version);
             content = content.replace('<title>Netron</title>', '');
             content = content.replace('<body class="welcome spinner">', '<body class="about desktop">');
-            content = content.replace(/<script\b[^<]*(?:(?!<\/script\s*>)<[^<]*)*<\/script\s*>/gi, '');
             content = content.replace(/<link.*>/gi, '');
             dialog.once('ready-to-show', () => {
                 dialog.resizable = false;
@@ -717,11 +719,12 @@ class View {
         this._window.webContents.on('did-finish-load', () => {
             this._didFinishLoad = true;
         });
-        this._window.webContents.on('new-window', (event, url) => {
+        this._window.webContents.setWindowOpenHandler((detail) => {
+            const url = detail.url;
             if (url.startsWith('http://') || url.startsWith('https://')) {
-                event.preventDefault();
                 electron.shell.openExternal(url);
             }
+            return { action: 'deny' };
         });
         this._window.once('ready-to-show', () => {
             this._window.show();
@@ -753,7 +756,7 @@ class View {
     _loadURL() {
         const pathname = path.join(__dirname, 'index.html');
         let content = fs.readFileSync(pathname, 'utf-8');
-        content = content.replace(/<script\b[^<]*(?:(?!<\/script\s*>)<[^<]*)*<\/script\s*>/gi, '');
+        content = content.replace(/<\s*script[^>]*>[\s\S]*?(<\s*\/script[^>]*>|$)/ig, '');
         const data = 'data:text/html;charset=utf-8,' + encodeURIComponent(content);
         const options = {
             baseURLForDataURL: url.pathToFileURL(pathname).toString()

@@ -9011,7 +9011,7 @@
   {
     "name": "ConcatOffset",
     "summary": "Computes offsets of concat inputs within its output.",
-    "description": "For example:\n\n```\n# 'x' is [2, 2, 7]\n# 'y' is [2, 3, 7]\n# 'z' is [2, 5, 7]\nconcat_offset(2, [x, y, z]) => [0, 0, 0], [0, 2, 0], [0, 5, 0]\n```\n\nThis is typically used by gradient computations for a concat operation.",
+    "description": "For example:\n\n>>> x = [2, 2, 7]\n>>> y = [2, 3, 7]\n>>> z = [2, 9, 7]\n>>> offsets = concat_offset(1, [x, y, z])\n>>> [list(off.numpy()) for off in offsets]\n[[0, 0, 0], [0, 2, 0], [0, 5, 0]]\n\nThis is typically used by gradient computations for a concat operation.",
     "attributes": [
       {
         "name": "N",
@@ -9169,6 +9169,13 @@
   {
     "name": "ConfigureAndInitializeGlobalTPU",
     "summary": "An op that sets up the centralized structures for a distributed TPU system.",
+    "attributes": [
+      {
+        "name": "use_tfrt_host_runtime",
+        "type": "boolean",
+        "default": true
+      }
+    ],
     "outputs": [
       {
         "name": "output",
@@ -10007,7 +10014,28 @@
         "type": "string"
       },
       {
-        "name": "source_layout",
+        "name": "T",
+        "type": "type"
+      }
+    ],
+    "inputs": [
+      {
+        "name": "input",
+        "typeAttr": "T"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "output",
+        "typeAttr": "T"
+      }
+    ]
+  },
+  {
+    "name": "CopyToMeshGrad",
+    "attributes": [
+      {
+        "name": "reference_layout",
         "type": "string",
         "default": ""
       },
@@ -10019,6 +10047,10 @@
     "inputs": [
       {
         "name": "input",
+        "typeAttr": "T"
+      },
+      {
+        "name": "forward_input",
         "typeAttr": "T"
       }
     ],
@@ -51574,7 +51606,7 @@
       {
         "name": "T",
         "type": "type",
-        "description": "Must be one of the following: `float32`, `float64`."
+        "description": "Must be one of the following: `float16`, `float32`, `float64`."
       }
     ],
     "inputs": [
@@ -56410,7 +56442,7 @@
   {
     "name": "TensorArrayConcatV3",
     "summary": "Concat the elements from the TensorArray into value `value`.",
-    "description": "Takes `T` elements of shapes\n\n  ```\n  (n0 x d0 x d1 x ...), (n1 x d0 x d1 x ...), ..., (n(T-1) x d0 x d1 x ...)\n  ```\n\nand concatenates them into a Tensor of shape:\n\n  ```(n0 + n1 + ... + n(T-1) x d0 x d1 x ...)```\n\nAll elements must have the same shape (excepting the first dimension).",
+    "description": "Takes `T` elements of shapes\n\n  ```\n  (n0 x d0 x d1 x ...), (n1 x d0 x d1 x ...), ..., (n(T-1) x d0 x d1 x ...)\n  ```\n\nand concatenates them into a Tensor of shape:\n\n  ```\n  (n0 + n1 + ... + n(T-1) x d0 x d1 x ...)\n  ```\n\nAll elements must have the same shape (excepting the first dimension).",
     "attributes": [
       {
         "name": "dtype",
@@ -57068,7 +57100,7 @@
   {
     "name": "TensorArraySplitV3",
     "summary": "Split the data from the input value into TensorArray elements.",
-    "description": "Assuming that `lengths` takes on values\n\n  ```(n0, n1, ..., n(T-1))```\n\nand that `value` has shape\n\n  ```(n0 + n1 + ... + n(T-1) x d0 x d1 x ...)```,\n\nthis splits values into a TensorArray with T tensors.\n\nTensorArray index t will be the subtensor of values with starting position\n\n  ```(n0 + n1 + ... + n(t-1), 0, 0, ...)```\n\nand having size\n\n  ```nt x d0 x d1 x ...```",
+    "description": "Assuming that `lengths` takes on values\n\n  ```\n  (n0, n1, ..., n(T-1))\n  ```\n\nand that `value` has shape\n\n  ```\n  (n0 + n1 + ... + n(T-1) x d0 x d1 x ...),\n  ```\n\nthis splits values into a TensorArray with T tensors.\n\nTensorArray index t will be the subtensor of values with starting position\n\n  ```\n  (n0 + n1 + ... + n(t-1), 0, 0, ...)\n  ```\n\nand having size\n\n  ```\n  nt x d0 x d1 x ...\n  ```",
     "attributes": [
       {
         "name": "T",

@@ -82,10 +82,7 @@ python.Parser = class {
     }
 
     _statement() {
-
-        let node = this._node();
-
-        node = this._eat('id', 'break');
+        let node = this._eat('id', 'break');
         if (node) {
             return node;
         }
@@ -203,9 +200,7 @@ python.Parser = class {
                 node.decorator_list = Array.from(decorator_list);
                 decorator_list = null;
             }
-            if (this._tokenizer.peek().value === '(') {
-                node.bases = this._arguments();
-            }
+            node.bases = this._tokenizer.peek().value === '(' ? this._arguments() : [];
             this._tokenizer.expect(':');
             node.body = this._suite();
             return node;
@@ -1771,6 +1766,7 @@ python.Execution = class {
                 this._handle = state;
             }
         });
+        this.registerType('dnnlib.tflib.network.Network', class {});
         this.registerType('dnnlib.util.EasyDict', class extends dict {});
         this.registerType('haiku._src.data_structures.FlatMapping', class {
             constructor(dict) {
@@ -1816,6 +1812,13 @@ python.Execution = class {
         });
         this.registerType('numpy.dtype', class {
             constructor(obj, align, copy) {
+                if (typeof obj === 'string' && (obj.startsWith('<') || obj.startsWith('>'))) {
+                    this.byteorder = obj[0];
+                    obj = obj.substring(1);
+                }
+                else {
+                    this.byteorder = '=';
+                }
                 switch (obj) {
                     case 'b1': case 'bool': this.itemsize = 1; this.kind = 'b'; break;
                     case 'i1': case 'int8': this.itemsize = 1; this.kind = 'i'; break;
@@ -1854,7 +1857,6 @@ python.Execution = class {
                         }
                         break;
                 }
-                this.byteorder = '=';
                 if (align) {
                     this.align = align;
                 }
@@ -2152,7 +2154,7 @@ python.Execution = class {
                 this.feature_names = list('feature_names', this.max_feature_idx + 1);
                 this.feature_infos = list('feature_infos', this.max_feature_idx + 1);
                 if (key_vals.has('monotone_constraints')) {
-                    this.monotone_constraints = list('monotone_constraints', this.max_feature_idx + 1, true);
+                    this.monotone_constraints = list('monotone_constraints', this.max_feature_idx + 1);
                 }
                 if (key_vals.has('objective')) {
                     this.objective = key_vals.get('objective');
@@ -2560,6 +2562,7 @@ python.Execution = class {
         this.registerType('sklearn.linear_model.sgd_fast.Log', class {});
         this.registerType('sklearn.linear_model.stochastic_gradient.SGDClassifier', class {});
         this.registerType('sklearn.metrics._classification.accuracy_score', class {});
+        this.registerType('sklearn.metrics._regression.mean_squared_error', class {});
         this.registerType('sklearn.metrics._scorer._PredictScorer', class {});
         this.registerType('sklearn.metrics.scorer._PredictScorer', class {});
         this.registerType('sklearn.metrics._scorer._ThresholdScorer', class {});
@@ -3784,6 +3787,7 @@ python.Execution = class {
         });
         this.registerType('torch.ao.quantization.observer._PartialWrapper', class {});
         this.registerType('torch.ao.quantization.observer.HistogramObserver', class {});
+        this.registerType('torch.ao.quantization.observer.MovingAverageMinMaxObserver', class {});
         this.registerType('torch.ao.quantization.observer.PerChannelMinMaxObserver', class {});
         this.registerType('torch.ao.quantization.qconfig.QConfig', class {});
         this.registerType('torch.ao.quantization.stubs.DeQuantStub', class {});
@@ -3801,6 +3805,7 @@ python.Execution = class {
         this.registerType('torch.nn.intrinsic.modules.fused.ConvBnReLU2d', class {});
         this.registerType('torch.nn.intrinsic.modules.fused.ConvReLU2d', class {});
         this.registerType('torch.nn.intrinsic.modules.fused.BNReLU2d', class {});
+        this.registerType('torch.nn.intrinsic.qat.modules.conv_fused.ConvBn2d', class {});
         this.registerType('torch.nn.intrinsic.qat.modules.conv_fused.ConvBnReLU2d', class {});
         this.registerType('torch.nn.intrinsic.qat.modules.conv_fused.ConvReLU2d', class {});
         this.registerType('torch.nn.intrinsic.quantized.modules.conv_relu.ConvReLU2d', class {});
@@ -3961,7 +3966,6 @@ python.Execution = class {
         this.registerType('torch.nn.utils.weight_norm.WeightNorm', class {});
         this.registerType('torch.torch_version.TorchVersion', class extends String {});
         this.registerType('torch.optim.adam.Adam', class {});
-        this.register('torch.optim').Adam = this._registry.get('torch.optim.adam').Adam;
         this.registerType('torch.optim.adamw.AdamW', class {});
         this.registerType('torch.optim.adagrad.Adagrad', class {});
         this.registerType('torch.optim.adadelta.Adadelta', class {});
@@ -4280,15 +4284,18 @@ python.Execution = class {
             return tensor;
         });
         this.registerFunction('torch._utils._rebuild_tensor', function (storage, storage_offset, size, stride) {
+            if (Array.isArray(storage) && storage.length === 5 && storage[0] === 'storage') {
+                const storage_type = storage[1];
+                const size = storage[4];
+                storage = new storage_type(size);
+            }
             const name = storage.__class__.__module__ + '.' + storage.__class__.__name__.replace('Storage', 'Tensor');
             const tensor = self.invoke(name, []);
             tensor.__setstate__([ storage, storage_offset, size, stride ]);
             return tensor;
         });
         this.registerFunction('torch._utils._rebuild_tensor_v2', function (storage, storage_offset, size, stride, requires_grad, backward_hooks) {
-            const name = storage.__class__.__module__ + '.' + storage.__class__.__name__.replace('Storage', 'Tensor');
-            const tensor = self.invoke(name, []);
-            tensor.__setstate__([ storage, storage_offset, size, stride ]);
+            const tensor = execution.invoke('torch._utils._rebuild_tensor', [ storage, storage_offset, size, stride ]);
             tensor.requires_grad = requires_grad;
             tensor.backward_hooks = backward_hooks;
             return tensor;
@@ -4299,12 +4306,8 @@ python.Execution = class {
             return obj;
         });
         this.registerFunction('torch._utils._rebuild_qtensor', function(storage, storage_offset, size, stride, quantizer_params, requires_grad, backward_hooks) {
-            const name = storage.__class__.__module__ + '.' + storage.__class__.__name__.replace('Storage', 'Tensor');
-            const tensor = self.invoke(name, []);
-            tensor.__setstate__([ storage, storage_offset, size, stride ]);
+            const tensor = execution.invoke('torch._utils._rebuild_tensor_v2', [ storage, storage_offset, size, stride, requires_grad, backward_hooks ]);
             tensor.quantizer_params = quantizer_params;
-            tensor.requires_grad = requires_grad;
-            tensor.backward_hooks = backward_hooks;
             return tensor;
         });
         this.registerFunction('torch._set_item', function(dict, key, value) {
@@ -4584,7 +4587,7 @@ python.Execution = class {
                         if (buffer[6] !== 0 && buffer[7] !== 0) {
                             throw new python.Error('Unsigned 64-bit value exceeds 32-bit range.');
                         }
-                        return buffer[0] + (buffer[1] << 8) + (buffer[2] << 16) + (buffer[3] << 24) + (buffer[4] << 32) + (buffer[5] << 40);
+                        return buffer[0] + (buffer[1] << 8) + (buffer[2] << 16) + (buffer[3] << 24) + (buffer[4] * 4294967296) + (buffer[5] * 1099511627776);
                     };
                     for (let i = 0; i < num_tensors; i++) {
                         const args = unpickler.load();
@@ -4627,21 +4630,20 @@ python.Execution = class {
             const module_source_map = new Map();
             const deserialized_objects = new Map();
             unpickler.persistent_load = (saved_id) => {
-                const typename = saved_id.shift();
-                const data = saved_id;
+                const typename = saved_id[0];
                 switch (typename) {
                     case 'module': {
-                        const module = data[0];
-                        const source = data[2];
+                        const module = saved_id[1];
+                        const source = saved_id[3];
                         module_source_map.set(module, source);
-                        return data[0];
+                        return saved_id[1];
                     }
                     case 'storage': {
-                        const storage_type = data.shift();
-                        const root_key = data.shift();
-                        data.shift(); // location
-                        const size = data.shift();
-                        const view_metadata = data.shift();
+                        const storage_type = saved_id[1];
+                        const root_key = saved_id[2];
+                        /// const location = saved_id[3];
+                        const size = saved_id[4];
+                        const view_metadata = saved_id[5];
                         if (!deserialized_objects.has(root_key)) {
                             const obj = new storage_type(size);
                             deserialized_objects.set(root_key, obj);
@@ -5242,6 +5244,9 @@ python.Execution = class {
         this.registerType('torch.BFloat16Tensor', class extends torch.Tensor {});
         this.registerType('torch.cuda.FloatTensor', class extends torch.Tensor {});
         this.registerType('torch.cuda.DoubleTensor', class extends torch.Tensor {});
+        this.register('torch.nn').Module = this.register('torch.nn.modules.module').Module;
+        this.register('torch.optim').Adam = this.register('torch.optim.adam').Adam;
+        this.register('torch.nn').ReLU = this.register('torch.nn.modules.activation').ReLU;
         torch.uint8 = torch.ByteStorage.dtype = new torch.dtype({ type: 0, name: 'uint8', itemsize: 1 });
         torch.int8 = torch.CharStorage.dtype = new torch.dtype({ type: 1, name: 'int8', itemsize: 1 });
         torch.int16 = torch.ShortStorage.dtype = new torch.dtype({ type: 2, name: 'int16', itemsize: 2 });
@@ -5287,7 +5292,7 @@ python.Execution = class {
     }
 
     exec(code , context) {
-        const reader = new python.Parser(code, null, null);
+        const reader = new python.Parser(code, '', null);
         const program = reader.parse();
         if (!program) {
             throw new python.Error("Module '" + '?' + "' parse error.");
@@ -5569,7 +5574,14 @@ python.Execution = class {
                 break;
             }
             case 'class': {
-                const value = this._createType(context.get('__name__') + '.' + statement.name, class {});
+                const bases = statement.bases.map((arg) => this.expression(arg, context));
+                if (bases.length > 1) {
+                    throw new python.Error("Unsupported multiple bases for class '" + statement.name + "'.");
+                }
+                const base = bases.length === 1 ? bases[0] : null;
+                const name = context.get('__name__') + '.' + statement.name;
+                const value = this._createType(name, base ? class extends base {} : class {});
+                value.__bases__ = bases;
                 context.set(statement.name, value);
                 this.block(statement.body.statements, new python.Execution.Context(context.globals, value.prototype));
                 break;
@@ -6330,7 +6342,7 @@ python.Error = class extends Error {
 
     constructor(message) {
         super(message);
-        this.name = 'Error loading Python module.';
+        this.name = 'Python Error';
     }
 };
 
