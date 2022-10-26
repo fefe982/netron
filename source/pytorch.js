@@ -1,9 +1,9 @@
 
 // Experimental
 
-var pytorch = pytorch || {};
-var python = python || require('./python');
-var base = base || require('./base');
+var pytorch = {};
+var python = require('./python');
+var base = require('./base');
 
 pytorch.ModelFactory = class {
 
@@ -400,8 +400,7 @@ pytorch.Node = class {
             }
             const type = Object.assign({}, metadata.type(name) || { name: name });
             type.identifier = type.name;
-            const index = type.name.indexOf(':');
-            type.name = index === -1 ? type.name : type.name.substring(0, index);
+            type.name = type.name.indexOf('::') !== -1 ? type.name.split('::').pop().split('.')[0] : type.name;
             return type;
         };
         if (!item.module && !item.node) {
@@ -856,6 +855,10 @@ pytorch.Container = class {
         if (tar) {
             return tar;
         }
+        const torch_utils = pytorch.Container.torch_utils.open(context);
+        if (torch_utils) {
+            return torch_utils;
+        }
         return null;
     }
 };
@@ -919,7 +922,7 @@ pytorch.Container.Pickle = class {
 
     constructor(stream) {
         this._stream = stream;
-        this._graphs = [ this ];
+        this._graphs = [];
     }
 
     set metadata(value) {
@@ -947,6 +950,43 @@ pytorch.Container.Pickle = class {
     }
 };
 
+pytorch.Container.torch_utils = class {
+
+    static open(context) {
+        const stream = context.stream;
+        if (stream && stream.length > 1) {
+            const buffer = stream.peek(Math.min(1024, stream.length));
+            if (buffer[0] === 0x80) {
+                const content = String.fromCharCode.apply(null, buffer);
+                if (content.indexOf('torch_utils') !== -1) {
+                    const obj = context.open('pkl');
+                    if (obj && Object.entries(obj).some((entry) => pytorch.Utility.isInstance(entry[1], 'torch.nn.modules.module.Module'))) {
+                        return new pytorch.Container.torch_utils(obj);
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    constructor(obj) {
+        this._obj = obj;
+        this._graphs = [];
+    }
+
+    get format() {
+        return 'PyTorch torch_utils';
+    }
+
+    get graphs() {
+        if (this._obj) {
+            this._graphs = pytorch.Utility.find(this._obj);
+            this._obj = null;
+        }
+        return this._graphs;
+    }
+};
+
 pytorch.Container.Zip = class {
 
     static open(entries) {
@@ -954,7 +994,7 @@ pytorch.Container.Zip = class {
             let prefix = [];
             const paths = Array.from(entries.keys()).map((path) => path.split('/').reverse());
             for (;;) {
-                const set = new Set(paths.map((path) => path.length > 0 ? path.pop() : null));
+                const set = new Set(paths.map((path) => path.length > 1 ? path.pop() : null));
                 if (set.size !== 1 || set.keys().next().value === null) {
                     break;
                 }
@@ -1189,20 +1229,20 @@ pytorch.Container.Zip.Script = class {
         const execution = this.execution;
         const unpickler = execution.invoke('pickle.Unpickler', [ data ]);
         unpickler.persistent_load = (saved_id) => {
-            const typename = saved_id.shift();
+            const typename = saved_id[0];
             switch (typename) {
                 case 'storage': {
-                    const storage_type = saved_id.shift();
-                    const root_key = saved_id.shift();
-                    /* const location = */ saved_id.shift();
-                    const size = saved_id.shift();
+                    const storage_type = saved_id[1];
+                    const root_key = saved_id[2];
+                    // const location = saved_id[3];
+                    const size = saved_id[4];
                     if (!loaded_storages.has(root_key)) {
                         const storage = new storage_type(size);
                         storage._set_cdata(storage_map.get(root_key));
                         loaded_storages.set(root_key, storage);
                     }
                     const storage = loaded_storages.get(root_key);
-                    const view_metadata = saved_id.shift();
+                    const view_metadata = saved_id[5];
                     if (view_metadata) {
                         const view_key = view_metadata.shift();
                         view_metadata.shift(); // view_offset
@@ -1589,6 +1629,18 @@ pytorch.Container.Zip.Execution = class extends pytorch.Execution {
     constructor(sources, exceptionCallback, metadata) {
         super(sources, exceptionCallback);
         this._metadata = metadata;
+        this._types = new Map();
+        for (const entry of this._metadata._types) {
+            const name = entry[1].name;
+            if (name.indexOf('::') !== -1) {
+                const index = name.lastIndexOf('.');
+                const key = index === -1 ? name : name.substring(0, index);
+                if (!this._types.has(key)) {
+                    this._types.set(key, []);
+                }
+                this._types.get(key).push(entry[1]);
+            }
+        }
         this.reset();
     }
 
@@ -1679,32 +1731,41 @@ pytorch.Container.Zip.Execution = class extends pytorch.Execution {
                 type = moduleName + '.' + name;
             }
             // https://github.com/pytorch/pytorch/blob/master/aten/src/ATen/native/native_functions.yaml
-            let schemas = this._metadata.type(type);
-            if (!schemas && type.startsWith('ops.')) {
-                const module = this.import(moduleName);
-                if (!module || !module[name]) {
-                    const metadata = {};
-                    metadata.name = type;
-                    metadata.inputs = [];
-                    metadata.outputs = [];
-                    for (let i = 0; i< args.length; i++) {
-                        const input = {};
-                        let argument = args[i];
-                        input.name = i.toString();
-                        if (argument.type === '=' && argument.target && argument.target.type === 'id') {
-                            input.name = this.expression(argument.target, context);
-                            argument = argument.expression;
+            let schemas = null;
+            if (type.startsWith('torch.')) {
+                schemas = this._types.get('aten::' + type.substring(6));
+            }
+            else if (type.startsWith('ops.')) {
+                const path = type.split('.');
+                if (path.length === 3) {
+                    schemas = this._types.get(path[1] + '::' + path[2]);
+                }
+                if (!schemas) {
+                    const module = this.import(moduleName);
+                    if (!module || !module[name]) {
+                        const metadata = {};
+                        metadata.name = type;
+                        metadata.inputs = [];
+                        metadata.outputs = [];
+                        for (let i = 0; i< args.length; i++) {
+                            const input = {};
+                            let argument = args[i];
+                            input.name = i.toString();
+                            if (argument.type === '=' && argument.target && argument.target.type === 'id') {
+                                input.name = this.expression(argument.target, context);
+                                argument = argument.expression;
+                            }
+                            const obj = this.expression(argument, context);
+                            input.type = pytorch.Utility.getType(obj);
+                            metadata.inputs.push(input);
                         }
-                        const obj = this.expression(argument, context);
-                        input.type = pytorch.Utility.getType(obj);
-                        metadata.inputs.push(input);
+                        const count = context.target.length > 0 ? context.target[context.target.length - 1].length : 0;
+                        for (let i = 0; i < count; i++) {
+                            metadata.outputs.push({ name: '', type: '' });
+                        }
+                        this._metadata.add(type, metadata);
+                        schemas = [ metadata ];
                     }
-                    const count = context.target.length > 0 ? context.target[context.target.length - 1].length : 0;
-                    for (let i = 0; i < count; i++) {
-                        metadata.outputs.push({ name: '', type: '' });
-                    }
-                    this._metadata.add(type, metadata);
-                    schemas = [ metadata ];
                 }
             }
             if (schemas) {
@@ -2520,6 +2581,26 @@ pytorch.Utility = class {
         }
     }
 
+    static isSubclass(value, name) {
+        if (value.__module__ && value.__name__) {
+            if (name === value.__module__ + '.' + value.__name__) {
+                return true;
+            }
+        }
+        if (value.__bases__) {
+            for (const base of value.__bases__) {
+                if (pytorch.Utility.isSubclass(base, name)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    static isInstance(value, name) {
+        return value.__class__ ? pytorch.Utility.isSubclass(value.__class__, name) : false;
+    }
+
     static isCall(expression, name, size) {
         if (expression.type === 'call' &&
             expression.arguments.length === size &&
@@ -2595,7 +2676,7 @@ pytorch.Utility = class {
             }
             root = obj;
         }
-        const keys = root && !Array.isArray(root) ? Object.keys(root) : [];
+        const keys = !Array.isArray(root) ? Object.keys(root) : [];
         if (keys.length > 1) {
             keys.splice(0, keys.length);
         }
@@ -3419,18 +3500,11 @@ pytorch.Metadata = class {
     constructor(data) {
         this._types = new Map();
         this._attributes = new Map();
+        this._index = new Map();
         if (data) {
             const items = JSON.parse(data);
             for (const item of items) {
                 this._types.set(item.name, item);
-                const index = item.name.indexOf(':');
-                if (index !== -1) {
-                    const name = item.name.substring(0, index);
-                    if (!this._types.has(name)) {
-                        this._types.set(name, []);
-                    }
-                    this._types.get(name).push(item.name);
-                }
             }
         }
     }
@@ -3440,11 +3514,7 @@ pytorch.Metadata = class {
     }
 
     type(name) {
-        const schema = this._types.get(name);
-        if (schema) {
-            return Array.isArray(schema) ? schema.map((name) => this._types.get(name)) : schema;
-        }
-        return null;
+        return this._types.get(name);
     }
 
     attribute(type, name) {

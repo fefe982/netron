@@ -1,7 +1,7 @@
 
 var ncnn = ncnn || {};
-var text = text || require('./text');
-var base = base || require('./base');
+var text = require('./text');
+var base = require('./base');
 
 // https://github.com/Tencent/ncnn/wiki/param-and-model-file-structure
 // https://github.com/Tencent/ncnn/wiki/operation-param-weight-table
@@ -164,7 +164,7 @@ ncnn.Graph = class {
                                 shape[i] = value.shift();
                             }
                             const type = new ncnn.TensorType('?', new ncnn.TensorShape(shape));
-                            arg(output, type, null);
+                            arg(output, type);
                         }
                         attributes.delete(key);
                     }

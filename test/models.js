@@ -8,10 +8,9 @@ const util = require('util');
 const base = require('../source/base');
 const protobuf = require('../source/protobuf');
 const flatbuffers = require('../source/flatbuffers');
-const sidebar = require('../source/view-sidebar');
+const dialog = require('../source/dialog');
 const view = require('../source/view');
 const zip = require('../source/zip');
-const gzip = require('../source/gzip');
 const tar = require('../source/tar');
 
 global.Int64 = base.Int64;
@@ -312,7 +311,7 @@ class HTMLElement {
     }
 
     get classList() {
-        return new DOMTokenList(this);
+        return new DOMTokenList();
     }
 
     getBBox() {
@@ -360,13 +359,10 @@ const clearLine = () => {
 };
 
 const decompress = (buffer) => {
-    let archive = null;
-    if (buffer.length >= 18 && buffer[0] === 0x1f && buffer[1] === 0x8b) {
-        archive = gzip.Archive.open(buffer);
-        if (archive.entries.size == 1) {
-            const stream = archive.entries.values().next().value;
-            buffer = stream.peek();
-        }
+    let archive = zip.Archive.open(buffer, 'gzip');
+    if (archive && archive.entries.size == 1) {
+        const stream = archive.entries.values().next().value;
+        buffer = stream.peek();
     }
     const formats = [ zip, tar ];
     for (const module of formats) {
@@ -483,7 +479,7 @@ const download = (folder, targets, sources) => {
         if (sourceFiles.length > 0) {
             clearLine();
             process.stdout.write('  decompress...\r');
-            const archive = decompress(data, source.split('?').shift().split('/').pop());
+            const archive = decompress(data);
             clearLine();
             for (const name of sourceFiles) {
                 process.stdout.write('  write ' + name + '\r');
@@ -630,24 +626,22 @@ const loadModel = (target, item) => {
                 }
             }
             for (const node of graph.nodes) {
-                node.type.toString();
-                node.type.length;
-                if (!node.type || typeof node.type.name != 'string') {
+                const type = node.type;
+                if (!type || typeof type.name != 'string') {
                     throw new Error("Invalid node type '" + JSON.stringify(node.type) + "'.");
                 }
-                sidebar.DocumentationSidebar.formatDocumentation(node.type);
+                dialog.DocumentationSidebar.formatDocumentation(type);
                 node.name.toString();
-                node.name.length;
                 node.description;
                 node.attributes.slice();
                 for (const attribute of node.attributes) {
                     attribute.name.toString();
                     attribute.name.length;
-                    let value = new sidebar.Formatter(attribute.value, attribute.type).toString();
+                    let value = new dialog.Formatter(attribute.value, attribute.type).toString();
                     if (value && value.length > 1000) {
                         value = value.substring(0, 1000) + '...';
                     }
-                    value = value.split('<');
+                    /* value = */ value.split('<');
                 }
                 for (const input of node.inputs) {
                     input.name.toString();
@@ -660,43 +654,37 @@ const loadModel = (target, item) => {
                             argument.type.toString();
                         }
                         if (argument.initializer) {
-                            // console.log(argument.name);
                             argument.initializer.type.toString();
-                            const log = (/* message */) => {
-                                // console.log('  ' + message);
-                            };
-                            const tensor = new sidebar.Tensor(argument.initializer);
+                            const tensor = new dialog.Tensor(argument.initializer);
                             if (tensor.layout !== '<' && tensor.layout !== '>' && tensor.layout !== '|' && tensor.layout !== 'sparse' && tensor.layout !== 'sparse.coo') {
-                                log("Tensor layout '" + tensor.layout + "' is not implemented.");
+                                throw new Error("Tensor layout '" + tensor.layout + "' is not implemented.");
                             }
-                            else if (tensor.empty) {
-                                log('Tensor data is empty.');
-                            }
-                            else if (tensor.type && tensor.type.dataType === '?') {
-                                log('Tensor data type is not defined.');
-                            }
-                            else if (tensor.type && !tensor.type.shape) {
-                                log('Tensor shape is not defined.');
-                            }
-                            else {
-                                tensor.toString();
-                                // tensor.value;
-                            }
-                            /*
-                            const python = require('../source/python');
-                            const tensor = argument.initializer;
-                            if (tensor.type && tensor.type.dataType !== '?') {
-                                let data_type = tensor.type.dataType;
-                                switch (data_type) {
-                                    case 'boolean': data_type = 'bool'; break;
+                            if (!tensor.empty) {
+                                if (tensor.type && tensor.type.dataType === '?') {
+                                    throw new Error('Tensor data type is not defined.');
                                 }
-                                const execution = new python.Execution(null);
-                                const bytes = execution.invoke('io.BytesIO', []);
-                                const dtype = execution.invoke('numpy.dtype', [ data_type ]);
-                                const array = execution.invoke('numpy.asarray', [ tensor.value, dtype ]);
-                                execution.invoke('numpy.save', [ bytes, array ]);
+                                else if (tensor.type && !tensor.type.shape) {
+                                    throw new Error('Tensor shape is not defined.');
+                                }
+                                else {
+                                    tensor.toString();
+                                    /*
+                                    const python = require('../source/python');
+                                    const tensor = argument.initializer;
+                                    if (tensor.type && tensor.type.dataType !== '?') {
+                                        let data_type = tensor.type.dataType;
+                                        switch (data_type) {
+                                            case 'boolean': data_type = 'bool'; break;
+                                        }
+                                        const execution = new python.Execution();
+                                        const bytes = execution.invoke('io.BytesIO', []);
+                                        const dtype = execution.invoke('numpy.dtype', [ data_type ]);
+                                        const array = execution.invoke('numpy.asarray', [ tensor.value, dtype ]);
+                                        execution.invoke('numpy.save', [ bytes, array ]);
+                                    }
+                                    */
+                                }
                             }
-                            */
                         }
                     }
                 }
@@ -717,7 +705,7 @@ const loadModel = (target, item) => {
                         chain.name.length;
                     }
                 }
-                // new sidebar.NodeSidebar(host, node);
+                // new dialog.NodeSidebar(host, node);
             }
         }
         if (exceptions.length > 0) {

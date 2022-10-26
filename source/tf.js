@@ -1,11 +1,10 @@
 
 // Experimental
 
-var tf = tf || {};
-var base = base || require('./base');
-var gzip = gzip || require('./gzip');
-var json = json || require('./json');
-var protobuf = protobuf || require('./protobuf');
+var tf = {};
+var base = require('./base');
+var protobuf = require('./protobuf');
+var zip = require('./zip');
 
 tf.ModelFactory = class {
 
@@ -340,13 +339,15 @@ tf.ModelFactory = class {
                         return context.request('pytorch-metadata.json', 'utf-8', null).then((data) => {
                             const metadata = new Map();
                             for (const item of JSON.parse(data)) {
-                                const index = item.name.indexOf(':');
-                                const key = (index !== -1) ? item.name.substring(0, index) : item.name;
-                                const name = key.replace(/^torch\./, 'aten::');
-                                if (!metadata.has(name)) {
-                                    metadata.set(name, []);
+                                const name = item.name;
+                                if (name.indexOf('::') !== -1) {
+                                    const index = name.indexOf('.');
+                                    const key = (index !== -1) ? name.substring(0, index) : name;
+                                    if (!metadata.has(key)) {
+                                        metadata.set(key, []);
+                                    }
+                                    metadata.get(key).push(item);
                                 }
-                                metadata.get(name).push(item);
                             }
                             for (const meta_graph of saved_model.meta_graphs) {
                                 for (const node of meta_graph.graph_def.node) {
@@ -447,7 +448,7 @@ tf.ModelFactory = class {
                                 }
                             }
                         }
-                        return openSavedModel(saved_model, format, producer, null);
+                        return openSavedModel(saved_model, format, producer);
                     };
                     return Promise.all(shards.values()).then((streams) => {
                         for (const key of shards.keys()) {
@@ -459,14 +460,11 @@ tf.ModelFactory = class {
                             try {
                                 for (const key of shards.keys()) {
                                     const stream = shards.get(key);
-                                    const archive = gzip.Archive.open(stream);
-                                    if (archive) {
-                                        const entries = archive.entries;
-                                        if (entries.size === 1) {
-                                            const stream = entries.values().next().value;
-                                            const buffer = stream.peek();
-                                            shards.set(key, buffer);
-                                        }
+                                    const archive = zip.Archive.open(stream, 'gzip');
+                                    if (archive && archive.entries.size === 1) {
+                                        const stream = archive.entries.values().next().value;
+                                        const buffer = stream.peek();
+                                        shards.set(key, buffer);
                                     }
                                 }
                             }
@@ -2107,7 +2105,7 @@ tf.Utility = class {
                 }
                 if (node.op === 'prim::GetAttr' && node.input.length === 1 && node.controlDependencies.length === 0 && node.attr && Object.keys(node.attr).length === 1 && node.attr.attr && node.attr.attr.s) {
                     const value = tf.Utility.decodeText(node.attr.attr.s);
-                    const match = /{\s*name\s*:\s*([A-za-z0-9_]*)\s*}/.exec(value);
+                    const match = /{\s*name\s*:\s*([A-Za-z0-9_]*)\s*}/.exec(value);
                     if (match) {
                         node.value = match[1].trim();
                     }

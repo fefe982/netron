@@ -1974,6 +1974,13 @@
     "link":     "https://github.com/lutzroeder/netron/issues/334"
   },
   {
+    "type":     "hickle",
+    "target":   "googlenet.h5",
+    "source":   "https://github.com/vadimkantorov/metriclearningbench/releases/download/data/googlenet.h5",
+    "format":   "Hickle Weights",
+    "link":     "https://github.com/lutzroeder/netron/issues/998"
+  },
+  {
     "type":     "keras",
     "target":   "5_model_fold_0.h5",
     "source":   "https://github.com/lutzroeder/netron/files/6174822/5_model_fold_0.h5.zip[5_model_fold_0.h5]",
@@ -3197,6 +3204,14 @@
     "link":     "https://nnabla.readthedocs.io/en/latest/python/api/models/imagenet.html"
   },
   {
+    "type":     "nnef",
+    "target":   "squeezenet_v1.0.onnx.nnef.tgz",
+    "source":   "https://sfo2.digitaloceanspaces.com/nnef-public/squeezenet_v1.0.onnx.nnef.tgz",
+    "format":   "NNEF v1.0",
+    "error":    "NNEF v1.0 support not implemented in 'graph.nnef'.",
+    "link":     "https://github.com/lutzroeder/netron/issues/992"
+  },
+  {
     "type":     "numpy",
     "target":   "cifar10-1w-1a.npz",
     "source":   "https://raw.githubusercontent.com/Xilinx/BNN-PYNQ/master/bnn/src/training/cifar10-1w-1a.npz",
@@ -4158,6 +4173,14 @@
     "target":   "complex_tensor.pt",
     "source":   "https://github.com/lutzroeder/netron/files/9108149/complex_tensor.pt.zip[complex_tensor.pt]",
     "format":   "PyTorch v1.6",
+    "link":     "https://github.com/lutzroeder/netron/issues/720"
+  },
+  {
+    "type":     "pytorch",
+    "target":   "data.pkl",
+    "source":   "https://github.com/lutzroeder/netron/files/9795497/data.pkl.zip[data.pkl]",
+    "format":   "Pickle",
+    "error":    "Unknown type name '__torch__.torchvision.models.alexnet.___torch_mangle_30.AlexNet' in 'data.pkl'.",
     "link":     "https://github.com/lutzroeder/netron/issues/720"
   },
   {

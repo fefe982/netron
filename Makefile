@@ -62,6 +62,15 @@ lint: install
 	python -m pip install --upgrade --quiet pylint onnx torch torchvision
 	python -m pylint -sn source/*.py publish/*.py test/*.py tools/*.py
 
+codeql:
+	@[ -d third_party/tools/codeql ] || git clone --depth=1 https://github.com/github/codeql.git ./third_party/tools/codeql
+	rm -rf dist/codeql
+	mkdir -p dist/codeql/netron
+	cp -r publish source test tools dist/codeql/netron/
+	codeql database create dist/codeql/database --source-root dist/codeql/netron --language=javascript --threads=3
+	codeql database analyze dist/codeql/database ./third_party/tools/codeql/javascript/ql/src/codeql-suites/javascript-security-and-quality.qls --format=csv --output=dist/codeql/results.csv --threads=3
+	cat dist/codeql/results.csv
+
 test: install
 	node ./test/models.js
 
@@ -114,7 +123,7 @@ publish_cask:
 	git -C ./dist/homebrew-cask add --all
 	git -C ./dist/homebrew-cask commit -m "Update $$(node -pe "require('./package.json').productName") to $$(node -pe "require('./package.json').version")"
 	git -C ./dist/homebrew-cask push
-	curl -H "Authorization: token $(GITHUB_TOKEN)" https://api.github.com/repos/Homebrew/homebrew-cask/pulls -d "{\"title\":\"Update $$(node -pe "require('./package.json').name") to $$(node -pe "require('./package.json').version")\",\"base\":\"master\",\"head\":\"$(GITHUB_USER):master\",\"body\":\"\"}" 2>&1 > /dev/null
+	curl -H "Authorization: token $(GITHUB_TOKEN)" https://api.github.com/repos/Homebrew/homebrew-cask/pulls -d "{\"title\":\"Update $$(node -pe "require('./package.json').name") to $$(node -pe "require('./package.json').version")\",\"base\":\"master\",\"head\":\"$(GITHUB_USER):master\",\"body\":\"Update version and sha256.\"}" 2>&1 > /dev/null
 	rm -rf ./dist/homebrew-cask
 
 publish_winget:

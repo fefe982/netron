@@ -2241,7 +2241,8 @@
       { "name": "srcT", "type": "int32", "default": 0 },
       { "name": "dstT", "type": "int32", "default": 0 },
       { "name": "src_t", "type": "int64", "default": 0 },
-      { "name": "dst_t", "type": "int64", "default": 0 }
+      { "name": "dst_t", "type": "int64", "default": 0 },
+      { "name": "axis", "type": "int64", "default": 0 }
     ],
     "inputs": [
       { "name": "input" }
@@ -2953,6 +2954,9 @@
       { "name": "num_elements", "type": "int64", "default": 0 },
       { "name": "element_dtype", "type": "int64", "default": 0 }
     ]
+  },
+  {
+    "name": "TensorScatterAdd"
   },
   {
     "name": "TfReduce",
