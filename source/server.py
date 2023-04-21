@@ -21,10 +21,10 @@ class _ContentProvider: # pylint: disable=too-few-public-methods
     data = bytearray()
     base_dir = ''
     base = ''
-    title = ''
+    identifier = ''
     def __init__(self, data, path, file):
         self.data = data if data else bytearray()
-        self.title = os.path.basename(file) if file else ''
+        self.identifier = os.path.basename(file) if file else ''
         if path:
             self.dir = os.path.dirname(path) if os.path.dirname(path) else '.'
             self.base = os.path.basename(path)
@@ -92,10 +92,11 @@ class _HTTPRequestHandler(http.server.BaseHTTPRequestHandler):
                         '<meta name="type" content="Python">',
                         '<meta name="version" content="' + __version__ + '">'
                     ]
-                    if self.content.base:
-                        meta.append('<meta name="file" content="/data/' + self.content.base + '">')
-                        content = re.sub(r'<title>.*</title>', \
-                            '<title>' + self.content.title + '</title>', content)
+                    base = self.content.base
+                    identifier = self.content.identifier
+                    if base and identifier:
+                        meta.append('<meta name="file" content="/data/' + base + '">')
+                        meta.append('<meta name="identifier" content="' + identifier + '">')
                     meta = '\n'.join(meta)
                     content = re.sub(r'<meta name="version" content=".*">', meta, content)
                     content = content.encode('utf-8')
@@ -127,6 +128,7 @@ class _HTTPServerThread(threading.Thread):
         self.url = 'http://' + address[0] + ':' + str(address[1])
         self.server = _ThreadedHTTPServer(address, _HTTPRequestHandler)
         self.server.timeout = 0.25
+        self.server.block_on_close = False
         self.server.RequestHandlerClass.content = content
         self.server.RequestHandlerClass.verbosity = verbosity
         self.terminate_event = threading.Event()
@@ -160,6 +162,7 @@ class _HTTPServerThread(threading.Thread):
 def _open(data):
     registry = dict([
         ('onnx.onnx_ml_pb2.ModelProto', '.onnx'),
+        ('torch.jit._script.ScriptModule', '.pytorch'),
         ('torch.Graph', '.pytorch'),
         ('torch._C.Graph', '.pytorch'),
         ('torch.nn.modules.module.Module', '.pytorch')

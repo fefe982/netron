@@ -49,8 +49,7 @@ openvino.ModelFactory = class {
                 try {
                     const reader = xml.TextReader.open(stream);
                     document = reader.read();
-                }
-                catch (error) {
+                } catch (error) {
                     const message = error && error.message ? error.message : error.toString();
                     throw new openvino.Error('File format is not OpenVINO XML (' + message.replace(/\.$/, '') + ').');
                 }
@@ -185,7 +184,7 @@ openvino.Graph = class {
                 }
             }
         }
-        if (nodesWithNonExistentInputs.size !== 0){
+        if (nodesWithNonExistentInputs.size !== 0) {
             net.disconnectedLayers = Array.from(nodesWithNonExistentInputs).map((node) => node.name);
         }
     }
@@ -209,7 +208,7 @@ openvino.Graph = class {
     _argument(layer, precision, port, map) {
         let id = layer + ':' + port.id;
         if (map) {
-            id = map[id];
+            id = map[id] || '';
         }
         let argument = this._arguments[id];
         if (!argument) {
@@ -239,7 +238,7 @@ openvino.Graph = class {
                         // we had a argument with id: 0:1  - meaning from layer "0" and its port "1"
                         // now as we rename all internal nodes to have an id of the TI included
                         // e.g. internal layer with id "0" and TI with id "14" results in internal layer to get id "14_0"
-                        if (input_argument.name){
+                        if (input_argument.name) {
                             input_argument._name = singleTensorIteratorNodeId + '_' + input_argument.name;
                         }
                     }
@@ -250,7 +249,7 @@ openvino.Graph = class {
                         // we had a argument with id: 1:1  - meaning from me with id "1" and my port "1"
                         // now as we rename all internal nodes to have an id of the TI included
                         // e.g. my layer with id "1" and TI with id "14" results in internal layer to get id "14_1"
-                        if (output_argument.name){
+                        if (output_argument.name) {
                             output_argument._name = singleTensorIteratorNodeId + '_' + output_argument.name;
                         }
                     }
@@ -281,13 +280,12 @@ openvino.Graph = class {
                         });
                         if (inputWithoutId) {
                             const argumentWithoutId = inputWithoutId.arguments.find((argument) => !argument.name);
-                            if (argumentWithoutId){
+                            if (argumentWithoutId) {
                                 argumentWithoutId._name = potentialParentInput.arguments[0].name;
                             }
                         }
-                    }
-                    else {
-                        if (!nestedNode._inputs){
+                    } else {
+                        if (!nestedNode._inputs) {
                             throw new openvino.Error("Tensor Iterator node with name '" + nestedNode._id + "' does not have inputs.");
                         }
 
@@ -297,11 +295,10 @@ openvino.Graph = class {
                         });
                         if (inputWithoutId) {
                             const argumentWithoutId = inputWithoutId._arguments.find((argument) => !argument._name);
-                            if (argumentWithoutId){
+                            if (argumentWithoutId) {
                                 argumentWithoutId._name = newId;
                             }
-                        }
-                        else {
+                        } else {
                             // TODO: no tensor information in the new argument - passed as null for now
                             nestedNode._inputs.push(new openvino.Parameter((nestedNode._inputs.length + 1).toString(), [
                                 new openvino.Argument(newId, null, null)
@@ -318,7 +315,7 @@ openvino.Graph = class {
                 for (const candidate_edge of candidate_edges) {
                     const childLayerID = candidate_edge.split(':')[0];
                     const child = this._nodes.find((layer) => layer._id === childLayerID);
-                    if (!child._inputs || (child._inputs && child._inputs.length === 0)){
+                    if (!child._inputs || (child._inputs && child._inputs.length === 0)) {
                         continue;
                     }
                     for (const child_input of child._inputs) {
@@ -350,7 +347,6 @@ openvino.Graph = class {
     }
 
     _const(layers, edges, back_edges, omitConstLayers) {
-        const results = [];
         back_edges = back_edges || {};
         layers = layers.slice();
         for (const layer of layers) {
@@ -387,8 +383,8 @@ openvino.Graph = class {
                 constMap.set(from, { layer: layer, counter: 0 });
             }
         }
-        for (const to of Object.keys(edges)) {
-            const from = edges[to];
+        for (const entry of Object.entries(edges)) {
+            const from = entry[1];
             if (constMap.has(from)) {
                 constMap.get(from).counter++;
             }
@@ -457,18 +453,15 @@ openvino.Graph = class {
             }
         }
 
-        while (layers.length > 0) {
-            const layer = layers.shift();
+        return layers.filter((layer) => {
             if (layer.type === 'Const' && layer.inputs.length === 0 && layer.outputs.length === 1) {
                 const from = layer.id + ':' + layer.outputs[0].id;
                 if (constMap.has(from) && constMap.get(from).delete) {
-                    continue;
+                    return false;
                 }
             }
-            results.push(layer);
-        }
-
-        return results;
+            return true;
+        });
     }
 };
 
@@ -483,14 +476,14 @@ openvino.Node = class {
         const type = layer.type;
         this._type = metadata.type(type) || { name: type };
         const precision = layer.precision;
-        for (let i = 0; i < inputs.length; ) {
+        for (let i = 0; i < inputs.length;) {
             const input = this._type && this._type.inputs && i < this._type.inputs.length ? this._type.inputs[i] : inputs.length === 1 ? { name: 'input' } : { name: i.toString() };
             const count = input.list ? inputs.length - i : 1;
             const list = inputs.slice(i, i + count);
             this._inputs.push(new openvino.Parameter(input.name, list));
             i += count;
         }
-        for (let i = 0; i < outputs.length; ) {
+        for (let i = 0; i < outputs.length;) {
             const output = this._type && this._type.outputs && i < this._type.outputs.length ? this._type.outputs[i] : outputs.length === 1 ? { name: 'output' } : { name: i.toString() };
             const count = output.list ? outputs.length - i : 1;
             const list = outputs.slice(i, i + count);
@@ -657,9 +650,9 @@ openvino.Parameter = class {
 openvino.Argument = class {
 
     constructor(name, type, initializer) {
-        // if (typeof name !== 'string') {
-        //     throw new openvino.Error("Invalid argument identifier '" + JSON.stringify(name) + "'.");
-        // }
+        if (typeof name !== 'string') {
+            throw new openvino.Error("Invalid argument identifier '" + JSON.stringify(name) + "'.");
+        }
         this._name = name;
         this._type = type || null;
         this._initializer = initializer || null;
@@ -729,8 +722,7 @@ openvino.Attribute = class {
                                 const intValue = Number.parseInt(item, 10);
                                 if (Number.isNaN(item - intValue)) {
                                     ints = null;
-                                }
-                                else if (ints != null) {
+                                } else if (ints != null) {
                                     ints.push(intValue);
                                 }
                             }
@@ -747,8 +739,7 @@ openvino.Attribute = class {
                                 const floatValue = Number.parseFloat(item);
                                 if (Number.isNaN(item - floatValue)) {
                                     floats = null;
-                                }
-                                else if (floats != null) {
+                                } else if (floats != null) {
                                     floats.push(floatValue);
                                 }
                             }
@@ -763,13 +754,11 @@ openvino.Attribute = class {
             }
             if (Object.prototype.hasOwnProperty.call(schema, 'visible') && schema.visible == false) {
                 this._visible = false;
-            }
-            else if (Object.prototype.hasOwnProperty.call(schema, 'default')) {
+            } else if (Object.prototype.hasOwnProperty.call(schema, 'default')) {
                 let defaultValue = schema.default;
                 if (this._value == defaultValue) {
                     this._visible = false;
-                }
-                else if (Array.isArray(this._value) && Array.isArray(defaultValue)) {
+                } else if (Array.isArray(this._value) && Array.isArray(defaultValue)) {
                     defaultValue = defaultValue.slice(0, defaultValue.length);
                     if (defaultValue.length > 1 && defaultValue[defaultValue.length - 1] == null) {
                         defaultValue.pop();
@@ -936,7 +925,7 @@ openvino.XmlReader = class {
                         type: element.getAttribute('type'),
                         precision: element.getAttribute('precision'),
                         data: !data ? [] : Array.from(data.attributes).map((attribute) => {
-                            return { name: attribute.localName, value: attribute.value};
+                            return { name: attribute.localName, value: attribute.value };
                         }),
                         blobs: !blobs ? [] : Array.from(blobs.childNodes).filter((node) => node.nodeType === 1).map((blob) => {
                             return {

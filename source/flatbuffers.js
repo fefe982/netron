@@ -2,11 +2,12 @@
 var flatbuffers = {};
 
 flatbuffers.get = (name) => {
-    flatbuffers._map = flatbuffers._map || new Map();
-    if (!flatbuffers._map.has(name)) {
-        flatbuffers._map.set(name, {});
+    flatbuffers._roots = flatbuffers._roots || new Map();
+    const roots = flatbuffers._roots;
+    if (!roots.has(name)) {
+        roots.set(name, {});
     }
-    return flatbuffers._map.get(name);
+    return roots.get(name);
 };
 
 flatbuffers.BinaryReader = class {
@@ -150,18 +151,15 @@ flatbuffers.BinaryReader = class {
             const a = this.uint8(offset + i++);
             if (a < 0xC0) {
                 codePoint = a;
-            }
-            else {
+            } else {
                 const b = this.uint8(offset + i++);
                 if (a < 0xE0) {
                     codePoint = ((a & 0x1F) << 6) | (b & 0x3F);
-                }
-                else {
+                } else {
                     const c = this.uint8(offset + i++);
                     if (a < 0xF0) {
                         codePoint = ((a & 0x0F) << 12) | ((b & 0x3F) << 6) | (c & 0x3F);
-                    }
-                    else {
+                    } else {
                         const d = this.uint8(offset + i++);
                         codePoint = ((a & 0x07) << 18) | ((b & 0x3F) << 12) | ((c & 0x3F) << 6) | (d & 0x3F);
                     }
@@ -170,8 +168,7 @@ flatbuffers.BinaryReader = class {
             // Encode UTF-16
             if (codePoint < 0x10000) {
                 result += String.fromCharCode(codePoint);
-            }
-            else {
+            } else {
                 codePoint -= 0x10000;
                 result += String.fromCharCode((codePoint >> 10) + 0xD800, (codePoint & ((1 << 10) - 1)) + 0xDC00);
             }
@@ -264,15 +261,15 @@ flatbuffers.BinaryReader = class {
     }
 
     unionArray(/* position, offset, decode */) {
-        throw new flatbuffers.Error('Not implemented.');
+        return new flatbuffers.Error('Not implemented.');
     }
 
-    structArray(position, offset, size, decode) {
+    structArray(position, offset, decode) {
         offset = this._offset(position, offset);
         const length = offset ? this._length(position + offset) : 0;
         const list = new Array(length);
         for (let i = 0; i < length; i++) {
-            list[i] = decode(this, this._indirect(this._vector(position + offset) + i * 4));
+            list[i] = decode(this, this._vector(position + offset) + i * 8);
         }
         return list;
     }

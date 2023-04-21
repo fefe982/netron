@@ -1436,6 +1436,9 @@ $root.tensorflow.TensorProto = class TensorProto {
                 case 17:
                     message.uint64_val = reader.array(message.uint64_val, () => reader.uint64(), tag);
                     break;
+                case 18:
+                    message.float8_val = reader.bytes();
+                    break;
                 default:
                     reader.skipType(tag & 7);
                     break;
@@ -1501,6 +1504,9 @@ $root.tensorflow.TensorProto = class TensorProto {
                 case "uint64_val":
                     reader.array(message.uint64_val, () => reader.uint64());
                     break;
+                case "float8_val":
+                    message.float8_val = reader.bytes();
+                    break;
                 default:
                     reader.field(tag, message);
                     break;
@@ -1514,6 +1520,7 @@ $root.tensorflow.TensorProto.prototype.dtype = 0;
 $root.tensorflow.TensorProto.prototype.tensor_shape = null;
 $root.tensorflow.TensorProto.prototype.version_number = 0;
 $root.tensorflow.TensorProto.prototype.tensor_content = new Uint8Array([]);
+$root.tensorflow.TensorProto.prototype.float8_val = new Uint8Array([]);
 
 $root.tensorflow.VariantTensorDataProto = class VariantTensorDataProto {
 
@@ -1820,6 +1827,8 @@ $root.tensorflow.DataType = {
     "DT_VARIANT": 21,
     "DT_UINT32": 22,
     "DT_UINT64": 23,
+    "DT_FLOAT8_E5M2": 24,
+    "DT_FLOAT8_E4M3FN": 25,
     "DT_FLOAT_REF": 101,
     "DT_DOUBLE_REF": 102,
     "DT_INT32_REF": 103,
@@ -1842,7 +1851,9 @@ $root.tensorflow.DataType = {
     "DT_RESOURCE_REF": 120,
     "DT_VARIANT_REF": 121,
     "DT_UINT32_REF": 122,
-    "DT_UINT64_REF": 123
+    "DT_UINT64_REF": 123,
+    "DT_FLOAT8_E5M2_REF": 124,
+    "DT_FLOAT8_E4M3FN_REF": 125
 };
 
 $root.tensorflow.SerializedDType = class SerializedDType {
@@ -2032,6 +2043,7 @@ $root.tensorflow.FullTypeId = {
     "TFT_OPTIONAL": 1002,
     "TFT_LITERAL": 1003,
     "TFT_ENCODED": 1004,
+    "TFT_SHAPE_TENSOR": 1005,
     "TFT_BOOL": 200,
     "TFT_UINT8": 201,
     "TFT_UINT16": 202,
@@ -3549,7 +3561,7 @@ $root.tensorflow.StructuredValue = class StructuredValue {
     }
 
     get kind() {
-        $root.tensorflow.StructuredValue.kindSet = $root.tensorflow.StructuredValue.kindSet || new Set([ "none_value", "float64_value", "int64_value", "string_value", "bool_value", "tensor_shape_value", "tensor_dtype_value", "tensor_spec_value", "type_spec_value", "bounded_tensor_spec_value", "list_value", "tuple_value", "dict_value", "named_tuple_value"]);
+        $root.tensorflow.StructuredValue.kindSet = $root.tensorflow.StructuredValue.kindSet || new Set([ "none_value", "float64_value", "int64_value", "string_value", "bool_value", "tensor_shape_value", "tensor_dtype_value", "tensor_spec_value", "type_spec_value", "bounded_tensor_spec_value", "list_value", "tuple_value", "dict_value", "named_tuple_value", "tensor_value"]);
         return Object.keys(this).find((key) => $root.tensorflow.StructuredValue.kindSet.has(key) && this[key] != null);
     }
 
@@ -3600,6 +3612,9 @@ $root.tensorflow.StructuredValue = class StructuredValue {
                     break;
                 case 54:
                     message.named_tuple_value = $root.tensorflow.NamedTupleValue.decode(reader, reader.uint32());
+                    break;
+                case 55:
+                    message.tensor_value = $root.tensorflow.TensorProto.decode(reader, reader.uint32());
                     break;
                 default:
                     reader.skipType(tag & 7);
@@ -3656,6 +3671,9 @@ $root.tensorflow.StructuredValue = class StructuredValue {
                     break;
                 case "named_tuple_value":
                     message.named_tuple_value = $root.tensorflow.NamedTupleValue.decodeText(reader);
+                    break;
+                case "tensor_value":
+                    message.tensor_value = $root.tensorflow.TensorProto.decodeText(reader);
                     break;
                 default:
                     reader.field(tag, message);
@@ -5036,6 +5054,9 @@ $root.tensorflow.Event = class Event {
                 case 9:
                     message.meta_graph_def = reader.bytes();
                     break;
+                case 10:
+                    message.source_metadata = $root.tensorflow.SourceMetadata.decode(reader, reader.uint32());
+                    break;
                 default:
                     reader.skipType(tag & 7);
                     break;
@@ -5077,6 +5098,9 @@ $root.tensorflow.Event = class Event {
                 case "meta_graph_def":
                     message.meta_graph_def = reader.bytes();
                     break;
+                case "source_metadata":
+                    message.source_metadata = $root.tensorflow.SourceMetadata.decodeText(reader);
+                    break;
                 default:
                     reader.field(tag, message);
                     break;
@@ -5088,6 +5112,49 @@ $root.tensorflow.Event = class Event {
 
 $root.tensorflow.Event.prototype.wall_time = 0;
 $root.tensorflow.Event.prototype.step = protobuf.Int64.create(0);
+$root.tensorflow.Event.prototype.source_metadata = null;
+
+$root.tensorflow.SourceMetadata = class SourceMetadata {
+
+    constructor() {
+    }
+
+    static decode(reader, length) {
+        const message = new $root.tensorflow.SourceMetadata();
+        const end = length !== undefined ? reader.position + length : reader.length;
+        while (reader.position < end) {
+            const tag = reader.uint32();
+            switch (tag >>> 3) {
+                case 1:
+                    message.writer = reader.string();
+                    break;
+                default:
+                    reader.skipType(tag & 7);
+                    break;
+            }
+        }
+        return message;
+    }
+
+    static decodeText(reader) {
+        const message = new $root.tensorflow.SourceMetadata();
+        reader.start();
+        while (!reader.end()) {
+            const tag = reader.tag();
+            switch (tag) {
+                case "writer":
+                    message.writer = reader.string();
+                    break;
+                default:
+                    reader.field(tag, message);
+                    break;
+            }
+        }
+        return message;
+    }
+};
+
+$root.tensorflow.SourceMetadata.prototype.writer = "";
 
 $root.tensorflow.LogMessage = class LogMessage {
 
@@ -6128,6 +6195,12 @@ $root.tensorflow.GPUOptions.Experimental = class Experimental {
                 case 12:
                     message.disallow_retry_on_allocation_failure = reader.bool();
                     break;
+                case 13:
+                    message.gpu_host_mem_limit_in_mb = reader.float();
+                    break;
+                case 14:
+                    message.gpu_host_mem_disallow_growth = reader.bool();
+                    break;
                 default:
                     reader.skipType(tag & 7);
                     break;
@@ -6175,6 +6248,12 @@ $root.tensorflow.GPUOptions.Experimental = class Experimental {
                 case "disallow_retry_on_allocation_failure":
                     message.disallow_retry_on_allocation_failure = reader.bool();
                     break;
+                case "gpu_host_mem_limit_in_mb":
+                    message.gpu_host_mem_limit_in_mb = reader.float();
+                    break;
+                case "gpu_host_mem_disallow_growth":
+                    message.gpu_host_mem_disallow_growth = reader.bool();
+                    break;
                 default:
                     reader.field(tag, message);
                     break;
@@ -6194,6 +6273,8 @@ $root.tensorflow.GPUOptions.Experimental.prototype.kernel_tracker_max_pending = 
 $root.tensorflow.GPUOptions.Experimental.prototype.internal_fragmentation_fraction = 0;
 $root.tensorflow.GPUOptions.Experimental.prototype.use_cuda_malloc_async = false;
 $root.tensorflow.GPUOptions.Experimental.prototype.disallow_retry_on_allocation_failure = false;
+$root.tensorflow.GPUOptions.Experimental.prototype.gpu_host_mem_limit_in_mb = 0;
+$root.tensorflow.GPUOptions.Experimental.prototype.gpu_host_mem_disallow_growth = false;
 
 $root.tensorflow.GPUOptions.Experimental.VirtualDevices = class VirtualDevices {
 
@@ -6493,83 +6574,6 @@ $root.tensorflow.ThreadPoolOptionProto = class ThreadPoolOptionProto {
 $root.tensorflow.ThreadPoolOptionProto.prototype.num_threads = 0;
 $root.tensorflow.ThreadPoolOptionProto.prototype.global_name = "";
 
-$root.tensorflow.RPCOptions = class RPCOptions {
-
-    constructor() {
-    }
-
-    static decode(reader, length) {
-        const message = new $root.tensorflow.RPCOptions();
-        const end = length !== undefined ? reader.position + length : reader.length;
-        while (reader.position < end) {
-            const tag = reader.uint32();
-            switch (tag >>> 3) {
-                case 1:
-                    message.use_rpc_for_inprocess_master = reader.bool();
-                    break;
-                case 2:
-                    message.compression_algorithm = reader.string();
-                    break;
-                case 3:
-                    message.compression_level = reader.int32();
-                    break;
-                case 4:
-                    message.cache_rpc_response = reader.bool();
-                    break;
-                case 5:
-                    message.disable_session_connection_sharing = reader.bool();
-                    break;
-                case 6:
-                    message.num_channels_per_target = reader.int32();
-                    break;
-                default:
-                    reader.skipType(tag & 7);
-                    break;
-            }
-        }
-        return message;
-    }
-
-    static decodeText(reader) {
-        const message = new $root.tensorflow.RPCOptions();
-        reader.start();
-        while (!reader.end()) {
-            const tag = reader.tag();
-            switch (tag) {
-                case "use_rpc_for_inprocess_master":
-                    message.use_rpc_for_inprocess_master = reader.bool();
-                    break;
-                case "compression_algorithm":
-                    message.compression_algorithm = reader.string();
-                    break;
-                case "compression_level":
-                    message.compression_level = reader.int32();
-                    break;
-                case "cache_rpc_response":
-                    message.cache_rpc_response = reader.bool();
-                    break;
-                case "disable_session_connection_sharing":
-                    message.disable_session_connection_sharing = reader.bool();
-                    break;
-                case "num_channels_per_target":
-                    message.num_channels_per_target = reader.int32();
-                    break;
-                default:
-                    reader.field(tag, message);
-                    break;
-            }
-        }
-        return message;
-    }
-};
-
-$root.tensorflow.RPCOptions.prototype.use_rpc_for_inprocess_master = false;
-$root.tensorflow.RPCOptions.prototype.compression_algorithm = "";
-$root.tensorflow.RPCOptions.prototype.compression_level = 0;
-$root.tensorflow.RPCOptions.prototype.cache_rpc_response = false;
-$root.tensorflow.RPCOptions.prototype.disable_session_connection_sharing = false;
-$root.tensorflow.RPCOptions.prototype.num_channels_per_target = 0;
-
 $root.tensorflow.SessionMetadata = class SessionMetadata {
 
     constructor() {
@@ -6844,6 +6848,9 @@ $root.tensorflow.ConfigProto.Experimental = class Experimental {
                 case 23:
                     message.coordination_config = $root.tensorflow.CoordinationServiceConfig.decode(reader, reader.uint32());
                     break;
+                case 24:
+                    message.disable_optimize_for_static_graph = reader.bool();
+                    break;
                 default:
                     reader.skipType(tag & 7);
                     break;
@@ -6918,6 +6925,9 @@ $root.tensorflow.ConfigProto.Experimental = class Experimental {
                 case "coordination_config":
                     message.coordination_config = $root.tensorflow.CoordinationServiceConfig.decodeText(reader);
                     break;
+                case "disable_optimize_for_static_graph":
+                    message.disable_optimize_for_static_graph = reader.bool();
+                    break;
                 default:
                     reader.field(tag, message);
                     break;
@@ -6947,13 +6957,12 @@ $root.tensorflow.ConfigProto.Experimental.prototype.use_tfrt = false;
 $root.tensorflow.ConfigProto.Experimental.prototype.disable_functional_ops_lowering = false;
 $root.tensorflow.ConfigProto.Experimental.prototype.xla_prefer_single_graph_cluster = false;
 $root.tensorflow.ConfigProto.Experimental.prototype.coordination_config = null;
+$root.tensorflow.ConfigProto.Experimental.prototype.disable_optimize_for_static_graph = false;
 
 $root.tensorflow.ConfigProto.Experimental.MlirBridgeRollout = {
     "MLIR_BRIDGE_ROLLOUT_UNSPECIFIED": 0,
     "MLIR_BRIDGE_ROLLOUT_ENABLED": 1,
-    "MLIR_BRIDGE_ROLLOUT_DISABLED": 2,
-    "MLIR_BRIDGE_ROLLOUT_SAFE_MODE_ENABLED": 3,
-    "MLIR_BRIDGE_ROLLOUT_SAFE_MODE_FALLBACK_ENABLED": 4
+    "MLIR_BRIDGE_ROLLOUT_DISABLED": 2
 };
 
 $root.tensorflow.RunOptions = class RunOptions {
@@ -8493,153 +8502,6 @@ $root.tensorflow.ClusterDef = class ClusterDef {
     }
 };
 
-$root.tensorflow.CoordinatedJob = class CoordinatedJob {
-
-    constructor() {
-    }
-
-    static decode(reader, length) {
-        const message = new $root.tensorflow.CoordinatedJob();
-        const end = length !== undefined ? reader.position + length : reader.length;
-        while (reader.position < end) {
-            const tag = reader.uint32();
-            switch (tag >>> 3) {
-                case 1:
-                    message.name = reader.string();
-                    break;
-                case 2:
-                    message.num_tasks = reader.int32();
-                    break;
-                default:
-                    reader.skipType(tag & 7);
-                    break;
-            }
-        }
-        return message;
-    }
-
-    static decodeText(reader) {
-        const message = new $root.tensorflow.CoordinatedJob();
-        reader.start();
-        while (!reader.end()) {
-            const tag = reader.tag();
-            switch (tag) {
-                case "name":
-                    message.name = reader.string();
-                    break;
-                case "num_tasks":
-                    message.num_tasks = reader.int32();
-                    break;
-                default:
-                    reader.field(tag, message);
-                    break;
-            }
-        }
-        return message;
-    }
-};
-
-$root.tensorflow.CoordinatedJob.prototype.name = "";
-$root.tensorflow.CoordinatedJob.prototype.num_tasks = 0;
-
-$root.tensorflow.CoordinationServiceConfig = class CoordinationServiceConfig {
-
-    constructor() {
-        this.coordinated_job_list = [];
-        this.recoverable_jobs = [];
-    }
-
-    static decode(reader, length) {
-        const message = new $root.tensorflow.CoordinationServiceConfig();
-        const end = length !== undefined ? reader.position + length : reader.length;
-        while (reader.position < end) {
-            const tag = reader.uint32();
-            switch (tag >>> 3) {
-                case 1:
-                    message.service_type = reader.string();
-                    break;
-                case 2:
-                    message.service_leader = reader.string();
-                    break;
-                case 3:
-                    message.enable_health_check = reader.bool();
-                    break;
-                case 4:
-                    message.cluster_register_timeout_in_ms = reader.int64();
-                    break;
-                case 5:
-                    message.heartbeat_timeout_in_ms = reader.int64();
-                    break;
-                case 10:
-                    message.coordinated_job_list.push($root.tensorflow.CoordinatedJob.decode(reader, reader.uint32()));
-                    break;
-                case 7:
-                    message.shutdown_barrier_timeout_in_ms = reader.int64();
-                    break;
-                case 8:
-                    message.agent_destruction_without_shutdown = reader.bool();
-                    break;
-                case 9:
-                    message.recoverable_jobs.push(reader.string());
-                    break;
-                default:
-                    reader.skipType(tag & 7);
-                    break;
-            }
-        }
-        return message;
-    }
-
-    static decodeText(reader) {
-        const message = new $root.tensorflow.CoordinationServiceConfig();
-        reader.start();
-        while (!reader.end()) {
-            const tag = reader.tag();
-            switch (tag) {
-                case "service_type":
-                    message.service_type = reader.string();
-                    break;
-                case "service_leader":
-                    message.service_leader = reader.string();
-                    break;
-                case "enable_health_check":
-                    message.enable_health_check = reader.bool();
-                    break;
-                case "cluster_register_timeout_in_ms":
-                    message.cluster_register_timeout_in_ms = reader.int64();
-                    break;
-                case "heartbeat_timeout_in_ms":
-                    message.heartbeat_timeout_in_ms = reader.int64();
-                    break;
-                case "coordinated_job_list":
-                    message.coordinated_job_list.push($root.tensorflow.CoordinatedJob.decodeText(reader));
-                    break;
-                case "shutdown_barrier_timeout_in_ms":
-                    message.shutdown_barrier_timeout_in_ms = reader.int64();
-                    break;
-                case "agent_destruction_without_shutdown":
-                    message.agent_destruction_without_shutdown = reader.bool();
-                    break;
-                case "recoverable_jobs":
-                    reader.array(message.recoverable_jobs, () => reader.string());
-                    break;
-                default:
-                    reader.field(tag, message);
-                    break;
-            }
-        }
-        return message;
-    }
-};
-
-$root.tensorflow.CoordinationServiceConfig.prototype.service_type = "";
-$root.tensorflow.CoordinationServiceConfig.prototype.service_leader = "";
-$root.tensorflow.CoordinationServiceConfig.prototype.enable_health_check = false;
-$root.tensorflow.CoordinationServiceConfig.prototype.cluster_register_timeout_in_ms = protobuf.Int64.create(0);
-$root.tensorflow.CoordinationServiceConfig.prototype.heartbeat_timeout_in_ms = protobuf.Int64.create(0);
-$root.tensorflow.CoordinationServiceConfig.prototype.shutdown_barrier_timeout_in_ms = protobuf.Int64.create(0);
-$root.tensorflow.CoordinationServiceConfig.prototype.agent_destruction_without_shutdown = false;
-
 $root.tensorflow.DebugTensorWatch = class DebugTensorWatch {
 
     constructor() {
@@ -9388,6 +9250,239 @@ $root.tensorflow.VerifierConfig.Toggle = {
     "ON": 1,
     "OFF": 2
 };
+
+$root.tensorflow.dummy = {};
+
+$root.tensorflow.RPCOptions = class RPCOptions {
+
+    constructor() {
+    }
+
+    static decode(reader, length) {
+        const message = new $root.tensorflow.RPCOptions();
+        const end = length !== undefined ? reader.position + length : reader.length;
+        while (reader.position < end) {
+            const tag = reader.uint32();
+            switch (tag >>> 3) {
+                case 1:
+                    message.use_rpc_for_inprocess_master = reader.bool();
+                    break;
+                case 2:
+                    message.compression_algorithm = reader.string();
+                    break;
+                case 3:
+                    message.compression_level = reader.int32();
+                    break;
+                case 4:
+                    message.cache_rpc_response = reader.bool();
+                    break;
+                case 5:
+                    message.disable_session_connection_sharing = reader.bool();
+                    break;
+                case 6:
+                    message.num_channels_per_target = reader.int32();
+                    break;
+                default:
+                    reader.skipType(tag & 7);
+                    break;
+            }
+        }
+        return message;
+    }
+
+    static decodeText(reader) {
+        const message = new $root.tensorflow.RPCOptions();
+        reader.start();
+        while (!reader.end()) {
+            const tag = reader.tag();
+            switch (tag) {
+                case "use_rpc_for_inprocess_master":
+                    message.use_rpc_for_inprocess_master = reader.bool();
+                    break;
+                case "compression_algorithm":
+                    message.compression_algorithm = reader.string();
+                    break;
+                case "compression_level":
+                    message.compression_level = reader.int32();
+                    break;
+                case "cache_rpc_response":
+                    message.cache_rpc_response = reader.bool();
+                    break;
+                case "disable_session_connection_sharing":
+                    message.disable_session_connection_sharing = reader.bool();
+                    break;
+                case "num_channels_per_target":
+                    message.num_channels_per_target = reader.int32();
+                    break;
+                default:
+                    reader.field(tag, message);
+                    break;
+            }
+        }
+        return message;
+    }
+};
+
+$root.tensorflow.RPCOptions.prototype.use_rpc_for_inprocess_master = false;
+$root.tensorflow.RPCOptions.prototype.compression_algorithm = "";
+$root.tensorflow.RPCOptions.prototype.compression_level = 0;
+$root.tensorflow.RPCOptions.prototype.cache_rpc_response = false;
+$root.tensorflow.RPCOptions.prototype.disable_session_connection_sharing = false;
+$root.tensorflow.RPCOptions.prototype.num_channels_per_target = 0;
+
+$root.tensorflow.CoordinatedJob = class CoordinatedJob {
+
+    constructor() {
+    }
+
+    static decode(reader, length) {
+        const message = new $root.tensorflow.CoordinatedJob();
+        const end = length !== undefined ? reader.position + length : reader.length;
+        while (reader.position < end) {
+            const tag = reader.uint32();
+            switch (tag >>> 3) {
+                case 1:
+                    message.name = reader.string();
+                    break;
+                case 2:
+                    message.num_tasks = reader.int32();
+                    break;
+                default:
+                    reader.skipType(tag & 7);
+                    break;
+            }
+        }
+        return message;
+    }
+
+    static decodeText(reader) {
+        const message = new $root.tensorflow.CoordinatedJob();
+        reader.start();
+        while (!reader.end()) {
+            const tag = reader.tag();
+            switch (tag) {
+                case "name":
+                    message.name = reader.string();
+                    break;
+                case "num_tasks":
+                    message.num_tasks = reader.int32();
+                    break;
+                default:
+                    reader.field(tag, message);
+                    break;
+            }
+        }
+        return message;
+    }
+};
+
+$root.tensorflow.CoordinatedJob.prototype.name = "";
+$root.tensorflow.CoordinatedJob.prototype.num_tasks = 0;
+
+$root.tensorflow.CoordinationServiceConfig = class CoordinationServiceConfig {
+
+    constructor() {
+        this.coordinated_job_list = [];
+        this.recoverable_jobs = [];
+    }
+
+    static decode(reader, length) {
+        const message = new $root.tensorflow.CoordinationServiceConfig();
+        const end = length !== undefined ? reader.position + length : reader.length;
+        while (reader.position < end) {
+            const tag = reader.uint32();
+            switch (tag >>> 3) {
+                case 1:
+                    message.service_type = reader.string();
+                    break;
+                case 2:
+                    message.service_leader = reader.string();
+                    break;
+                case 3:
+                    message.enable_health_check = reader.bool();
+                    break;
+                case 4:
+                    message.cluster_register_timeout_in_ms = reader.int64();
+                    break;
+                case 5:
+                    message.heartbeat_timeout_in_ms = reader.int64();
+                    break;
+                case 10:
+                    message.coordinated_job_list.push($root.tensorflow.CoordinatedJob.decode(reader, reader.uint32()));
+                    break;
+                case 7:
+                    message.shutdown_barrier_timeout_in_ms = reader.int64();
+                    break;
+                case 8:
+                    message.agent_destruction_without_shutdown = reader.bool();
+                    break;
+                case 9:
+                    message.recoverable_jobs.push(reader.string());
+                    break;
+                case 11:
+                    message.allow_new_incarnation_to_reconnect = reader.bool();
+                    break;
+                default:
+                    reader.skipType(tag & 7);
+                    break;
+            }
+        }
+        return message;
+    }
+
+    static decodeText(reader) {
+        const message = new $root.tensorflow.CoordinationServiceConfig();
+        reader.start();
+        while (!reader.end()) {
+            const tag = reader.tag();
+            switch (tag) {
+                case "service_type":
+                    message.service_type = reader.string();
+                    break;
+                case "service_leader":
+                    message.service_leader = reader.string();
+                    break;
+                case "enable_health_check":
+                    message.enable_health_check = reader.bool();
+                    break;
+                case "cluster_register_timeout_in_ms":
+                    message.cluster_register_timeout_in_ms = reader.int64();
+                    break;
+                case "heartbeat_timeout_in_ms":
+                    message.heartbeat_timeout_in_ms = reader.int64();
+                    break;
+                case "coordinated_job_list":
+                    message.coordinated_job_list.push($root.tensorflow.CoordinatedJob.decodeText(reader));
+                    break;
+                case "shutdown_barrier_timeout_in_ms":
+                    message.shutdown_barrier_timeout_in_ms = reader.int64();
+                    break;
+                case "agent_destruction_without_shutdown":
+                    message.agent_destruction_without_shutdown = reader.bool();
+                    break;
+                case "recoverable_jobs":
+                    reader.array(message.recoverable_jobs, () => reader.string());
+                    break;
+                case "allow_new_incarnation_to_reconnect":
+                    message.allow_new_incarnation_to_reconnect = reader.bool();
+                    break;
+                default:
+                    reader.field(tag, message);
+                    break;
+            }
+        }
+        return message;
+    }
+};
+
+$root.tensorflow.CoordinationServiceConfig.prototype.service_type = "";
+$root.tensorflow.CoordinationServiceConfig.prototype.service_leader = "";
+$root.tensorflow.CoordinationServiceConfig.prototype.enable_health_check = false;
+$root.tensorflow.CoordinationServiceConfig.prototype.cluster_register_timeout_in_ms = protobuf.Int64.create(0);
+$root.tensorflow.CoordinationServiceConfig.prototype.heartbeat_timeout_in_ms = protobuf.Int64.create(0);
+$root.tensorflow.CoordinationServiceConfig.prototype.shutdown_barrier_timeout_in_ms = protobuf.Int64.create(0);
+$root.tensorflow.CoordinationServiceConfig.prototype.agent_destruction_without_shutdown = false;
+$root.tensorflow.CoordinationServiceConfig.prototype.allow_new_incarnation_to_reconnect = false;
 
 $root.tensorflow.MemmappedFileSystemDirectoryElement = class MemmappedFileSystemDirectoryElement {
 

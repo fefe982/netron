@@ -25,7 +25,7 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: 16
+          node-version: latest
 
       - name: Install Python
         uses: actions/setup-python@v4
@@ -33,10 +33,10 @@ jobs:
           python-version: '3.10'
 
       - name: Install npm packages 
-        run: make install
+        run: npm install
 
       - name: Lint
-        run: make lint
+        run: npm run lint
 
       - name: Publish Electron
         shell: bash
@@ -48,7 +48,9 @@ jobs:
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
           WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
           WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
         run: |
+          npx electron-builder install-app-deps
           case "${{ matrix.os }}" in
             macos*)
               mkdir -p ~/.private_keys
@@ -57,9 +59,6 @@ jobs:
               ;;
             ubuntu*)
               sudo snap install snapcraft --classic
-              mkdir -p ~/.private_keys
-              echo '${{ secrets.SNAPCRAFT_TOKEN }}' > ~/.private_keys/snapcraft_token.txt
-              snapcraft login --with ~/.private_keys/snapcraft_token.txt
               npx electron-builder --linux appimage --x64 --publish always
               npx electron-builder --linux snap --x64 --publish always
               ;;
@@ -75,25 +74,25 @@ jobs:
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.pypi_api_token }}
-        run: make publish_python
+        run: npm run publish python
 
       - if: startsWith(matrix.os, 'ubuntu')
         name: Publish Web
         env:
           GITHUB_TOKEN: ${{ secrets.PUBLISH_GITHUB_TOKEN }}
           GITHUB_USER: ${{ secrets.PUBLISH_GITHUB_USER }}
-        run: make publish_web
+        run: npm run publish web
 
       - if: startsWith(matrix.os, 'macos')
         name: Publish cask
         env:
           GITHUB_TOKEN: ${{ secrets.PUBLISH_GITHUB_TOKEN }}
           GITHUB_USER: ${{ secrets.PUBLISH_GITHUB_USER }}
-        run: make publish_cask
+        run: npm run publish cask
 
       - if: startsWith(matrix.os, 'windows')
         name: Publish winget
         env:
           GITHUB_TOKEN: ${{ secrets.PUBLISH_GITHUB_TOKEN }}
           GITHUB_USER: ${{ secrets.PUBLISH_GITHUB_USER }}
-        run: make publish_winget
+        run: npm run publish winget

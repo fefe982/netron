@@ -346,6 +346,7 @@ kmodel.Reader = class {
                         layer.offset = offset;
                         offset += layer.body_size;
                     }
+                    /* eslint-disable space-in-parens */
                     register(   -1, 'DUMMY');
                     register(    0, 'INVALID');
                     register(    1, 'ADD');
@@ -571,6 +572,7 @@ kmodel.Reader = class {
                         layer.inputs[0].arguments[0].shape = shape;
                         layer.outputs[0].arguments[0].shape = shape;
                     });
+                    /* eslint-enable space-in-parens */
                     for (const layer of layers) {
                         const type = types.get(layer.type);
                         if (!type) {
@@ -640,6 +642,7 @@ kmodel.Reader = class {
                         layer.offset = offset;
                         offset += layer.body_size;
                     }
+                    /* eslint-disable space-in-parens */
                     register(  0x00, 'binary', '', (layer, reader) => {
                         layer.inputs = [
                             reader.parameter('a'),
@@ -793,7 +796,34 @@ kmodel.Reader = class {
                         layer.outputs = [ reader.parameter('output') ];
                         layer.unary_op = reader.unary_op_t();
                     });
-                    register(  0x0F, 'quantized_conv2d', 'Layer');
+                    register(  0x0F, 'quantized_conv2d', 'Layer', (layer, reader) => {
+                        layer.inputs = [ reader.parameter('input') ];
+                        layer.outputs = [ reader.parameter('output') ];
+                        layer.inputs[0].arguments[0].shape = reader.runtime_shape_t();
+                        layer.groups = layer.int32();
+                        layer.out_channels = layer.int32();
+                        layer.padding_h = reader.padding();
+                        layer.padding_w = reader.padding();
+                        layer.filter_h = layer.int32();
+                        layer.filter_w = layer.int32();
+                        layer.stride_h = layer.int32();
+                        layer.stride_w = layer.int32();
+                        layer.dilation_h = layer.int32();
+                        layer.dilation_w = layer.int32();
+                        layer.input_offset = layer.int32();
+                        layer.filter_offset = layer.int32();
+                        layer.output_mul = layer.int32();
+                        layer.output_shift = layer.int32();
+                        layer.output_offset = layer.int32();
+                        const bias = reader.span('int32', [ layer.out_channels ]);
+                        if (bias) {
+                            layer.inputs.push({ name: 'bias', arguments: [ bias ] });
+                        }
+                        const weights = reader.span('uint8', [ layer.out_channels, layer.inputs[0].arguments[0].shape[1] / layer.groups, layer.filter_h, layer.filter_w]);
+                        if (weights) {
+                            layer.inputs.push({ name: 'weights', arguments: [ weights ] });
+                        }
+                    });
                     register(  0x10, 'quantized_matmul', '', (layer, reader) => {
                         layer.inputs = [
                             reader.parameter('a'),
@@ -809,12 +839,9 @@ kmodel.Reader = class {
                         layer.output_mul = reader.int32();
                         layer.output_shift = reader.int32();
                         layer.output_offset = reader.int32();
-                        const bias = reader.read(4 * layer.b_cols);
-                        if (!bias.every((value) => value === 0)) {
-                            layer.inputs.push({
-                                name: 'bias',
-                                arguments: [ { name: 'const', datatype: 'int32', shape: [ layer.b_cols ], data: bias } ]
-                            });
+                        const bias = reader.span('int32', [ layer.b_cols ]);
+                        if (bias) {
+                            layer.inputs.push({ name: 'bias', arguments: [ bias ] });
                         }
                     });
                     register(  0x11, 'quantized_binary', '', (layer, reader) => {
@@ -884,7 +911,6 @@ kmodel.Reader = class {
                         const oc = layer.image_channel_num.o_ch_num + 1;
                         const filter = [ 1, 3 ][layer.kernel_pool_type_cfg.kernel_type];
                         const weights_shape = layer.interrupt_enabe.depth_wise_layer ? [ oc, filter, filter ] : [ ic, oc, filter, filter ];
-                        const weights_size = weights_shape.reduce((a, b) => a * b);
                         reader.skip(layer.kernel_pool_type_cfg.bwsx_base_addr);
                         delete layer.kernel_pool_type_cfg.bwsx_base_addr;
                         const batch_norm = {
@@ -904,16 +930,12 @@ kmodel.Reader = class {
                         layer.chain.push(activation);
                         reader.skip(layer.kernel_load_cfg.para_start_addr);
                         delete layer.kernel_load_cfg.para_start_addr;
-                        layer.inputs.push({
-                            name: 'weights',
-                            arguments: [ {
-                                name: 'const',
-                                datatype: 'uint8',
-                                shape: weights_shape,
-                                data: reader.read(weights_size)
-                            } ]
-                        });
+                        const weights = reader.span('uint8', weights_shape);
+                        if (weights) {
+                            layer.inputs.push({ name: 'weights', arguments: [ weights ] });
+                        }
                     });
+                    /* eslint-enable space-in-parens */
                     for (const layer of layers) {
                         const type = types.get(layer.opcode);
                         if (!type) {
@@ -1230,6 +1252,21 @@ kmodel.BinaryReader.v4 = class extends kmodel.BinaryReader {
 
     constants(size) {
         this._constants = this.read(size);
+    }
+
+    span(datatype, shape) {
+        const size = shape.reduce((a, b) => a * b, 1);
+        const itemsize = { 'int32': 4, 'uint8': 1 };
+        const buffer = this.read(itemsize[datatype] * size);
+        if (!buffer.every((value) => value === 0)) {
+            const argument = {};
+            argument.name = 'const';
+            argument.datatype = datatype;
+            argument.shape = shape;
+            argument.data = buffer;
+            return argument;
+        }
+        return null;
     }
 };
 

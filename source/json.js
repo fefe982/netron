@@ -1,5 +1,6 @@
 
 var json = {};
+var bson = {};
 var text = require('./text');
 
 json.TextReader = class {
@@ -25,17 +26,13 @@ json.TextReader = class {
                 case 'start':
                     if (c === '#') {
                         state = 'comment';
-                    }
-                    else if (c === '[') {
+                    } else if (c === '[') {
                         state = 'list';
-                    }
-                    else if (c === '{') {
+                    } else if (c === '{') {
                         state = 'object';
-                    }
-                    else if (c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z') {
+                    } else if (c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z') {
                         state = '';
-                    }
-                    else {
+                    } else {
                         return null;
                     }
                     break;
@@ -55,20 +52,19 @@ json.TextReader = class {
                     break;
             }
         }
-        return new json.TextReader(data);
+        return new json.TextReader(decoder);
     }
 
-    constructor(data) {
-        this._data = data;
+    constructor(decoder) {
+        this._decoder = decoder;
         this._escape = { '"': '"', '\\': '\\', '/': '/', b: '\b', f: '\f', n: '\n', r: '\r', t: '\t' };
     }
 
     read() {
-        const decoder = text.Decoder.open(this._data);
         const stack = [];
-        this._decoder = decoder;
+        this._decoder.position = 0;
         this._position = 0;
-        this._char = decoder.decode();
+        this._char = this._decoder.decode();
         this._whitespace();
         let obj = undefined;
         let first = true;
@@ -122,8 +118,7 @@ json.TextReader = class {
                         break;
                     }
                 }
-            }
-            else if (obj instanceof Object) {
+            } else if (obj instanceof Object) {
                 this._whitespace();
                 let c = this._char;
                 if (c === '}') {
@@ -193,8 +188,7 @@ json.TextReader = class {
                     continue;
                 }
                 this._unexpected();
-            }
-            else {
+            } else {
                 const c = this._char;
                 switch (c) {
                     case '{': {
@@ -333,19 +327,15 @@ json.TextReader = class {
                         uffff = uffff * 16 + hex;
                     }
                     value += String.fromCharCode(uffff);
-                }
-                else if (this._escape[this._char]) {
+                } else if (this._escape[this._char]) {
                     value += this._escape[this._char];
                     this._next();
-                }
-                else {
+                } else {
                     this._unexpected();
                 }
-            }
-            else if (this._char < ' ') {
+            } else if (this._char < ' ') {
                 this._unexpected();
-            }
-            else {
+            } else {
                 value += this._char;
                 this._next();
             }
@@ -367,14 +357,11 @@ json.TextReader = class {
         let c = this._char;
         if (c === undefined) {
             throw new json.Error('Unexpected end of JSON input.');
-        }
-        else if (c === '"') {
+        } else if (c === '"') {
             c = 'string';
-        }
-        else if ((c >= '0' && c <= '9') || c === '-') {
+        } else if ((c >= '0' && c <= '9') || c === '-') {
             c = 'number';
-        }
-        else {
+        } else {
             if (c < ' ' || c > '\x7F') {
                 const name = Object.keys(this._escape).filter((key) => this._escape[key] === c);
                 c = (name.length === 1) ? '\\' + name : '\\u' + ('000' + c.charCodeAt(0).toString(16)).slice(-4);
@@ -397,8 +384,7 @@ json.TextReader = class {
             if (c === '\n') {
                 line++;
                 column = 1;
-            }
-            else {
+            } else {
                 column++;
             }
         }
@@ -427,7 +413,7 @@ json.BinaryReader = class {
         const skip = (offset) => {
             position += offset;
             if (position > length) {
-                throw new json.Error('Expected ' + (position + length) + ' more bytes. The file might be corrupted. Unexpected end of file.', true);
+                throw new bson.Error('Expected ' + (position + length) + ' more bytes. The file might be corrupted. Unexpected end of file.');
             }
         };
         const header = () => {
@@ -435,7 +421,7 @@ json.BinaryReader = class {
             skip(4);
             const size = view.getInt32(start, 4);
             if (size < 5 || start + size > length || buffer[start + size - 1] != 0x00) {
-                throw new json.Error('Invalid file size.', true);
+                throw new bson.Error('Invalid file size.');
             }
         };
         header();
@@ -469,7 +455,7 @@ json.BinaryReader = class {
                     skip(size);
                     value = utf8Decoder.decode(buffer.subarray(start, position - 1));
                     if (buffer[position - 1] != '0x00') {
-                        throw new json.Error('String missing terminal 0.', true);
+                        throw new bson.Error('String missing terminal 0.');
                     }
                     break;
                 }
@@ -489,7 +475,7 @@ json.BinaryReader = class {
                     const size = view.getInt32(start, true);
                     const subtype = buffer[start + 4];
                     if (subtype !== 0x00) {
-                        throw new json.Error("Unsupported binary subtype '" + subtype + "'.", true);
+                        throw new bson.Error("Unsupported binary subtype '" + subtype + "'.");
                     }
                     skip(size);
                     value = buffer.subarray(start + 5, position);
@@ -499,7 +485,7 @@ json.BinaryReader = class {
                     skip(1);
                     value = buffer[position - 1];
                     if (value > 1) {
-                        throw new json.Error("Invalid boolean value '" + value + "'.", true);
+                        throw new bson.Error("Invalid boolean value '" + value + "'.");
                     }
                     value = value === 1 ? true : false;
                     break;
@@ -526,21 +512,20 @@ json.BinaryReader = class {
                     break;
                 }
                 default: {
-                    throw new json.Error("Unsupported value type '" + type + "'.", true);
+                    throw new bson.Error("Unsupported value type '" + type + "'.");
                 }
             }
             if (Array.isArray(obj))  {
                 if (obj.length !== parseInt(key, 10)) {
-                    throw new json.Error("Invalid array index '" + key + "'.", true);
+                    throw new bson.Error("Invalid array index '" + key + "'.");
                 }
                 obj.push(value);
-            }
-            else {
+            } else {
                 switch (key) {
                     case '__proto__':
                     case 'constructor':
                     case 'prototype':
-                        throw new json.Error("Invalid key '" + key + "' at " + position.toString() + "'.", true);
+                        throw new bson.Error("Invalid key '" + key + "' at " + position.toString() + "'.");
                     default:
                         break;
                 }
@@ -552,7 +537,7 @@ json.BinaryReader = class {
             }
         }
         if (position !== length) {
-            throw new json.Error("Unexpected data at '" + position.toString() + "'.", true);
+            throw new bson.Error("Unexpected data at '" + position.toString() + "'.");
         }
         return obj;
     }
@@ -560,9 +545,17 @@ json.BinaryReader = class {
 
 json.Error = class extends Error {
 
-    constructor(message, binary) {
+    constructor(message) {
         super(message);
-        this.name = binary ? 'BSON Error' : 'JSON Error';
+        this.name = 'JSON Error';
+    }
+};
+
+bson.Error = class extends Error {
+
+    constructor(message) {
+        super(message);
+        this.name = 'BSON Error';
     }
 };
 

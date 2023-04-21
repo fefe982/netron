@@ -402,7 +402,10 @@ $root.tflite.BuiltinOperator = {
     UNSORTED_SEGMENT_SUM: 155,
     ATAN2: 156,
     UNSORTED_SEGMENT_MIN: 157,
-    SIGN: 158
+    SIGN: 158,
+    BITCAST: 159,
+    BITWISE_XOR: 160,
+    RIGHT_SHIFT: 161
 };
 
 $root.tflite.BuiltinOptions = class {
@@ -532,6 +535,9 @@ $root.tflite.BuiltinOptions = class {
             case 121: return $root.tflite.UnsortedSegmentSumOptions.decode(reader, position);
             case 122: return $root.tflite.ATan2Options.decode(reader, position);
             case 123: return $root.tflite.SignOptions.decode(reader, position);
+            case 124: return $root.tflite.BitcastOptions.decode(reader, position);
+            case 125: return $root.tflite.BitwiseXorOptions.decode(reader, position);
+            case 126: return $root.tflite.RightShiftOptions.decode(reader, position);
             default: return undefined;
         }
     }
@@ -661,6 +667,9 @@ $root.tflite.BuiltinOptions = class {
             case 'UnsortedSegmentSumOptions': return $root.tflite.UnsortedSegmentSumOptions.decodeText(reader, json);
             case 'ATan2Options': return $root.tflite.ATan2Options.decodeText(reader, json);
             case 'SignOptions': return $root.tflite.SignOptions.decodeText(reader, json);
+            case 'BitcastOptions': return $root.tflite.BitcastOptions.decodeText(reader, json);
+            case 'BitwiseXorOptions': return $root.tflite.BitwiseXorOptions.decodeText(reader, json);
+            case 'RightShiftOptions': return $root.tflite.RightShiftOptions.decodeText(reader, json);
             default: return undefined;
         }
     }
@@ -1065,6 +1074,7 @@ $root.tflite.UnidirectionalSequenceLSTMOptions = class UnidirectionalSequenceLST
         $.proj_clip = reader.float32_(position, 8, 0);
         $.time_major = reader.bool_(position, 10, false);
         $.asymmetric_quantize_inputs = reader.bool_(position, 12, false);
+        $.diagonal_recurrent_tensors = reader.bool_(position, 14, false);
         return $;
     }
 
@@ -1075,6 +1085,7 @@ $root.tflite.UnidirectionalSequenceLSTMOptions = class UnidirectionalSequenceLST
         $.proj_clip = reader.value(json.proj_clip, 0);
         $.time_major = reader.value(json.time_major, false);
         $.asymmetric_quantize_inputs = reader.value(json.asymmetric_quantize_inputs, false);
+        $.diagonal_recurrent_tensors = reader.value(json.diagonal_recurrent_tensors, false);
         return $;
     }
 };
@@ -1675,6 +1686,7 @@ $root.tflite.TransposeConvOptions = class TransposeConvOptions {
         $.padding = reader.int8_(position, 4, 0);
         $.stride_w = reader.int32_(position, 6, 0);
         $.stride_h = reader.int32_(position, 8, 0);
+        $.fused_activation_function = reader.int8_(position, 10, 0);
         return $;
     }
 
@@ -1683,6 +1695,7 @@ $root.tflite.TransposeConvOptions = class TransposeConvOptions {
         $.padding = $root.tflite.Padding[json.padding];
         $.stride_w = reader.value(json.stride_w, 0);
         $.stride_h = reader.value(json.stride_h, 0);
+        $.fused_activation_function = $root.tflite.ActivationFunctionType[json.fused_activation_function];
         return $;
     }
 };
@@ -2594,6 +2607,45 @@ $root.tflite.SignOptions = class SignOptions {
     }
 };
 
+$root.tflite.BitcastOptions = class BitcastOptions {
+
+    static decode(/* reader, position */) {
+        const $ = new $root.tflite.BitcastOptions();
+        return $;
+    }
+
+    static decodeText(/* reader, json */) {
+        const $ = new $root.tflite.BitcastOptions();
+        return $;
+    }
+};
+
+$root.tflite.BitwiseXorOptions = class BitwiseXorOptions {
+
+    static decode(/* reader, position */) {
+        const $ = new $root.tflite.BitwiseXorOptions();
+        return $;
+    }
+
+    static decodeText(/* reader, json */) {
+        const $ = new $root.tflite.BitwiseXorOptions();
+        return $;
+    }
+};
+
+$root.tflite.RightShiftOptions = class RightShiftOptions {
+
+    static decode(/* reader, position */) {
+        const $ = new $root.tflite.RightShiftOptions();
+        return $;
+    }
+
+    static decodeText(/* reader, json */) {
+        const $ = new $root.tflite.RightShiftOptions();
+        return $;
+    }
+};
+
 $root.tflite.OperatorCode = class OperatorCode {
 
     static decode(reader, position) {
@@ -2888,16 +2940,6 @@ $root.tflite.ContentProperties = class {
             default: return undefined;
         }
     }
-
-    static decodeText(reader, json, type) {
-        switch (type) {
-            case 'FeatureProperties': return $root.tflite.FeatureProperties.decodeText(reader, json);
-            case 'ImageProperties': return $root.tflite.ImageProperties.decodeText(reader, json);
-            case 'BoundingBoxProperties': return $root.tflite.BoundingBoxProperties.decodeText(reader, json);
-            case 'AudioProperties': return $root.tflite.AudioProperties.decodeText(reader, json);
-            default: return undefined;
-        }
-    }
 };
 
 $root.tflite.ValueRange = class ValueRange {
@@ -2994,18 +3036,6 @@ $root.tflite.ProcessUnitOptions = class {
             case 4: return $root.tflite.BertTokenizerOptions.decode(reader, position);
             case 5: return $root.tflite.SentencePieceTokenizerOptions.decode(reader, position);
             case 6: return $root.tflite.RegexTokenizerOptions.decode(reader, position);
-            default: return undefined;
-        }
-    }
-
-    static decodeText(reader, json, type) {
-        switch (type) {
-            case 'NormalizationOptions': return $root.tflite.NormalizationOptions.decodeText(reader, json);
-            case 'ScoreCalibrationOptions': return $root.tflite.ScoreCalibrationOptions.decodeText(reader, json);
-            case 'ScoreThresholdingOptions': return $root.tflite.ScoreThresholdingOptions.decodeText(reader, json);
-            case 'BertTokenizerOptions': return $root.tflite.BertTokenizerOptions.decodeText(reader, json);
-            case 'SentencePieceTokenizerOptions': return $root.tflite.SentencePieceTokenizerOptions.decodeText(reader, json);
-            case 'RegexTokenizerOptions': return $root.tflite.RegexTokenizerOptions.decodeText(reader, json);
             default: return undefined;
         }
     }

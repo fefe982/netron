@@ -139,7 +139,7 @@ tengine.Node = class {
 
     constructor(metadata, node, tensors) {
         this._name = node.name;
-        const type = node.type; + (node.version && node.version !== 1 ? ':' + node.version.toString() : '');
+        const type = node.type;
         const version = node.version;
         this._inputs = [];
         this._outputs = [];
@@ -147,9 +147,9 @@ tengine.Node = class {
         this._type = metadata.type(type, version) || { name: type };
 
         for (let i = 0; i < node.params.length; i++) {
-            const attributeSchema = (this._type && this._type.attributes && i < this._type.attributes.length) ? this._type.attributes[i] : null;
-            const attributeName = attributeSchema ? attributeSchema.name : i.toString();
-            this._attributes.push(new tengine.Attribute(attributeSchema, attributeName, node.params[i]));
+            const metadata = (this._type && this._type.attributes && i < this._type.attributes.length) ? this._type.attributes[i] : null;
+            const name = metadata ? metadata.name : i.toString();
+            this._attributes.push(new tengine.Attribute(metadata, name, node.params[i]));
         }
 
         const inputs = node.inputs;
@@ -163,8 +163,7 @@ tengine.Node = class {
                     inputIndex += inputCount;
                 }
             }
-        }
-        else {
+        } else {
             this._inputs.push(...inputs.slice(inputIndex).map((id, index) => {
                 const inputName = ((inputIndex + index) == 0) ? 'input' : (inputIndex + index).toString();
                 return new tengine.Parameter(inputName, true, [ tensors[id] ]);
@@ -182,8 +181,7 @@ tengine.Node = class {
                     outputIndex += outputCount;
                 }
             }
-        }
-        else {
+        } else {
             this._outputs.push(...outputs.slice(outputIndex).map((id, index) => {
                 const outputName = ((outputIndex + index) == 0) ? 'output' : (outputIndex + index).toString();
                 return new tengine.Parameter(outputName, true, [ tensors[id] ]);
@@ -225,8 +223,7 @@ tengine.Attribute = class {
             }
             if (Object.prototype.hasOwnProperty.call(schema, 'visible') && !schema.visible) {
                 this._visible = false;
-            }
-            else if (Object.prototype.hasOwnProperty.call(schema, 'default')) {
+            } else if (Object.prototype.hasOwnProperty.call(schema, 'default')) {
                 if (this._value == schema.default || (this._value && this._value.toString() == schema.default.toString())) {
                     this._visible = false;
                 }
@@ -400,6 +397,7 @@ tengine.Reader = class {
                 }
                 return null;
             };
+            /* eslint-disable space-in-parens */
             register( 0, 0, 'Accuracy', []);
             register( 1, 0, 'BatchNormalization', [ 'f', 'f', 'i' ]);
             register( 2, 0, 'BilinearResize', [ 'f', 'f', 'i' ]);
@@ -505,6 +503,7 @@ tengine.Reader = class {
             register(101, 0, 'L2Normalization', []);
             register(102, 0, 'PackModel', ['i','i']);
             register(103, 0, 'Num', []);
+            /* eslint-enable space-in-parens */
 
             const buffer = this._stream.peek();
             const reader = new tengine.BinaryReader(buffer);
@@ -712,7 +711,7 @@ tengine.BinaryReader = class extends base.BinaryReader {
             this.seek(position);
             const size = this.uint32();
             this.seek(this.uint32());
-            for(let i = 0; i < size - 1; i++) {
+            for (let i = 0; i < size - 1; i++) {
                 content += String.fromCharCode(this._buffer[this._position++]);
             }
             this.seek(next);

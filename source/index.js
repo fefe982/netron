@@ -4,12 +4,9 @@ var host = {};
 host.BrowserHost = class {
 
     constructor() {
-        this._document = window.document;
         this._window = window;
-        this._navigator = navigator;
-        if (this._window.location.hostname.endsWith('.github.io')) {
-            this._window.location.replace('https://netron.app');
-        }
+        this._navigator = window.navigator;
+        this._document = window.document;
         this._window.eval = () => {
             throw new Error('window.eval() not supported.');
         };
@@ -21,30 +18,31 @@ host.BrowserHost = class {
             }
         }
         this._environment = {
-            'type': this._meta.type ? this._meta.type[0] : 'Browser',
-            'version': this._meta.version ? this._meta.version[0] : null,
-            'date': this._meta.date ? new Date(this._meta.date[0].split(' ').join('T') + 'Z') : new Date(),
+            name: this._document.title,
+            type: this._meta.type ? this._meta.type[0] : 'Browser',
+            version: this._meta.version ? this._meta.version[0] : null,
+            date: Array.isArray(this._meta.date) && this._meta.date.length > 0 && this._meta.date[0] ? new Date(this._meta.date[0].split(' ').join('T') + 'Z') : new Date(),
+            platform: /(Mac|iPhone|iPod|iPad)/i.test(this._navigator.platform) ? 'darwin' : undefined,
+            agent: this._navigator.userAgent.toLowerCase().indexOf('safari') !== -1 && this._navigator.userAgent.toLowerCase().indexOf('chrome') === -1 ? 'safari' : '',
+            repository: this._document.getElementById('logo-github').getAttribute('href'),
+            menu: true
         };
-        this._telemetry = this._environment.version && this._environment.version !== '0.0.0';
-        this.window.require = (id) => {
-            const name = id.startsWith('./') ? id.substring(2) : id;
-            const value = this.window[name];
-            if (value) {
-                return value;
-            }
-            throw new Error("Module '" + id + "' not found.");
+        if (!/^\d\.\d\.\d$/.test(this.version)) {
+            throw new Error('Invalid version.');
+        }
+    }
+
+    static create() {
+        const value = new host.BrowserHost();
+        const preload = (ids) => {
+            return Promise.all(ids.map((id) => value.require(id)));
         };
-        const require = (ids) => {
-            return Promise.all(ids.map((id) => this.require(id)));
-        };
-        require([ 'base', 'text', 'flatbuffers', 'flexbuffers', 'zip',  'tar', 'python', 'dagre' ]).then(() => {
-            return require([ 'json', 'xml', 'protobuf', 'hdf5', 'grapher', 'dialog' ]).then(() => {
-                return require([ 'view' ]).then(() => {
-                    this.window.__view__ = new this.window.view.View(this);
-                });
+        return preload([ 'base', 'text', 'flatbuffers', 'flexbuffers', 'zip',  'tar', 'python', 'dagre' ]).then(() => {
+            return preload([ 'json', 'xml', 'protobuf', 'hdf5', 'grapher' ]).then(() => {
+                return preload([ 'view' ]).then(() => value);
             });
         }).catch((error) => {
-            this._message(error.message);
+            value._message(error.message);
         });
     }
 
@@ -64,191 +62,144 @@ host.BrowserHost = class {
         return this._environment.type;
     }
 
-    get agent() {
-        const userAgent = this._navigator.userAgent.toLowerCase();
-        if (userAgent.indexOf('safari') !== -1 && userAgent.indexOf('chrome') === -1) {
-            return 'safari';
-        }
-        return 'any';
+    view(view) {
+        this._view = view;
+        return this._age().then(() => this._consent()).then(() => this._telemetry()).then(() => this._capabilities());
     }
 
-    initialize(view) {
-        this._view = view;
-        return new Promise((resolve /*, reject */) => {
-            const age = (new Date() - new Date(this._environment.date)) / ( 24 * 60 * 60 * 1000);
-            if (age > 180) {
-                this._message('Please update to the newest version.', 'Download', () => {
-                    const link = this.document.getElementById('logo-github').href;
-                    this.openURL(link);
-                }, true);
-            }
-            else {
-                const features = () => {
-                    const features = [ 'TextDecoder', 'TextEncoder', 'fetch', 'URLSearchParams', 'HTMLCanvasElement.prototype.toBlob' ];
-                    const supported = features.filter((feature) => {
-                        const path = feature.split('.').reverse();
-                        let item = this.window[path.pop()];
-                        while (item && path.length > 0) {
-                            item = item[path.pop()];
-                        }
-                        return !item;
-                    });
-                    if (supported.length > 0) {
-                        for (const feature of features) {
-                            this.event('Host', 'Browser', feature, 1);
-                        }
-                        this._message('Your browser is not supported.');
-                    }
-                    else {
-                        resolve();
-                    }
-                };
-                const telemetry = () => {
-                    if (this._telemetry) {
-                        const script = this.document.createElement('script');
-                        script.setAttribute('type', 'text/javascript');
-                        script.setAttribute('src', 'https://www.google-analytics.com/analytics.js');
-                        script.onload = () => {
-                            if (this.window.ga) {
-                                this.window.ga.l = 1 * new Date();
-                                this.window.ga('create', 'UA-54146-13', 'auto');
-                                this.window.ga('set', 'anonymizeIp', true);
-                            }
-                            features();
-                        };
-                        script.onerror = () => {
-                            features();
-                        };
-                        this.document.body.appendChild(script);
-                    }
-                    else {
-                        features();
-                    }
-                };
-                const consent = () => {
-                    this._message('This app uses cookies to report errors and anonymous usage information.', 'Accept', () => {
-                        this._setCookie('consent', 'yes', 30);
-                        telemetry();
-                    });
-                };
-                if (this._getCookie('consent')) {
-                    telemetry();
+    _age() {
+        const age = (new Date() - new Date(this._environment.date)) / (24 * 60 * 60 * 1000);
+        if (age <= 180) {
+            return Promise.resolve();
+        }
+        const callback = () => {
+            const link = this.document.getElementById('logo-github').href;
+            this.openURL(link);
+        };
+        this.document.body.classList.remove('spinner');
+        this._message('Please update to the newest version.', 'Download', callback, true);
+        return new Promise(() => {});
+    }
+
+    _consent() {
+        if (this._getCookie('consent') || this._getCookie('_ga')) {
+            return Promise.resolve();
+        }
+        const consent = () => {
+            return new Promise((resolve) => {
+                this.document.body.classList.remove('spinner');
+                this._message('This app uses cookies to report errors and anonymous usage information.', 'Accept', () => {
+                    this._setCookie('consent', Date.now().toString(), 30);
+                    resolve();
+                });
+            });
+        };
+        return this._request('https://ipinfo.io/json', { 'Content-Type': 'application/json' }, 'utf-8', null, 2000).then((text) => {
+            try {
+                const json = JSON.parse(text);
+                const countries = ['AT', 'BE', 'BG', 'HR', 'CZ', 'CY', 'DK', 'EE', 'FI', 'FR', 'DE', 'EL', 'HU', 'IE', 'IT', 'LV', 'LT', 'LU', 'MT', 'NL', 'NO', 'PL', 'PT', 'SK', 'ES', 'SE', 'GB', 'UK', 'GR', 'EU', 'RO'];
+                if (json && json.country && countries.indexOf(json.country) === -1) {
+                    this._setCookie('consent', Date.now().toString(), 30);
+                    return Promise.resolve();
                 }
-                else {
-                    this._request('https://ipinfo.io/json', { 'Content-Type': 'application/json' }, 'utf-8', null, 2000).then((text) => {
-                        try {
-                            const json = JSON.parse(text);
-                            const countries = ['AT', 'BE', 'BG', 'HR', 'CZ', 'CY', 'DK', 'EE', 'FI', 'FR', 'DE', 'EL', 'HU', 'IE', 'IT', 'LV', 'LT', 'LU', 'MT', 'NL', 'NO', 'PL', 'PT', 'SK', 'ES', 'SE', 'GB', 'UK', 'GR', 'EU', 'RO'];
-                            if (json && json.country && countries.indexOf(json.country) >= 0) {
-                                consent();
-                            }
-                            else {
-                                this._setCookie('consent', Date.now(), 30);
-                                telemetry();
-                            }
-                        }
-                        catch (err) {
-                            consent();
-                        }
-                    }).catch(() => {
-                        consent();
-                    });
-                }
+                return consent();
+            } catch (err) {
+                return consent();
             }
+        }).catch(() => {
+            return consent();
         });
+    }
+
+    _telemetry() {
+        if (this._environment.version && this._environment.version !== '0.0.0') {
+            const ga4 = () => {
+                const base = this.window.base;
+                const measurement_id = '848W2NVWVH';
+                const user = this._getCookie('_ga').replace(/^(GA1\.\d\.)*/, '');
+                const session = this._getCookie('_ga' + measurement_id);
+                this._telemetry_ga4 = new base.Telemetry(this._window, 'G-' + measurement_id, user, session);
+                return this._telemetry_ga4.start().then(() => {
+                    this._telemetry_ga4.set('page_location', this._document.location && this._document.location.href ? this._document.location.href : null);
+                    this._telemetry_ga4.set('page_title', this._document.title ? this._document.title : null);
+                    this._telemetry_ga4.set('page_referrer', this._document.referrer ? this._document.referrer : null);
+                    this._telemetry_ga4.send('page_view', {
+                        app_name: this.type,
+                        app_version: this.version,
+                    });
+                    this._telemetry_ga4.send('scroll', {
+                        percent_scrolled: 90,
+                        app_name: this.type,
+                        app_version: this.version
+                    });
+                    this._setCookie('_ga', 'GA1.2.' + this._telemetry_ga4.get('client_id'), 1200);
+                    this._setCookie('_ga' + measurement_id, 'GS1.1.' + this._telemetry_ga4.session, 1200);
+                });
+            };
+            const ua = () => {
+                return new Promise((resolve) => {
+                    this._telemetry_ua = true;
+                    const script = this.document.createElement('script');
+                    script.setAttribute('type', 'text/javascript');
+                    script.setAttribute('src', 'https://www.google-analytics.com/analytics.js');
+                    script.onload = () => {
+                        if (this.window.ga) {
+                            this.window.ga.l = 1 * new Date();
+                            this.window.ga('create', 'UA-54146-13', 'auto');
+                            this.window.ga('set', 'anonymizeIp', true);
+                        }
+                        resolve();
+                    };
+                    script.onerror = () => {
+                        resolve();
+                    };
+                    this.document.body.appendChild(script);
+                });
+            };
+            return ga4().then(() => ua());
+        }
+        return Promise.resolve();
+    }
+
+    _capabilities() {
+        const list = [
+            'TextDecoder', 'TextEncoder',
+            'fetch', 'URLSearchParams',
+            'HTMLCanvasElement.prototype.toBlob'
+        ];
+        const capabilities = list.filter((capability) => {
+            const path = capability.split('.').reverse();
+            let obj = this.window[path.pop()];
+            while (obj && path.length > 0) {
+                obj = obj[path.pop()];
+            }
+            return obj;
+        });
+        this.event('browser_open', {
+            browser_capabilities: capabilities.map((capability) => capability.split('.').pop()).join(',')
+        });
+        if (capabilities.length < list.length) {
+            this._message('Your browser is not supported.');
+            return new Promise(() => {});
+        }
+        return Promise.resolve();
     }
 
     start() {
-        this.window.addEventListener('error', (e) => {
-            this.exception(new Error(e ? e.message : JSON.stringify(e)), true);
+        this.window.addEventListener('error', (event) => {
+            const error = event instanceof ErrorEvent && event.error && event.error instanceof Error ? event.error : new Error(event && event.message ? event.message : JSON.stringify(event));
+            this.exception(error, true);
         });
 
-        const params = new URLSearchParams(this.window.location.search);
+        const hash = this.window.location.hash ? this.window.location.hash.replace(/^#/, '') : '';
+        const search = this.window.location.search;
+        const params = new URLSearchParams(search + (hash ? '&' + hash : ''));
 
-        const versionLabel = this.document.getElementById('version');
-        if (versionLabel) {
-            versionLabel.innerText = this.version;
-        }
-
-        this._menu = new host.Dropdown(this, 'menu-button', 'menu-dropdown');
-        this._menu.add({
-            label: 'Properties...',
-            accelerator: 'CmdOrCtrl+Enter',
-            click: () => this._view.showModelProperties()
-        });
-        this._menu.add({});
-        this._menu.add({
-            label: 'Find...',
-            accelerator: 'CmdOrCtrl+F',
-            click: () => this._view.find()
-        });
-        this._menu.add({});
-        this._menu.add({
-            label: () => this._view.options.attributes ? 'Hide Attributes' : 'Show Attributes',
-            accelerator: 'CmdOrCtrl+D',
-            click: () => this._view.toggle('attributes')
-        });
-        this._menu.add({
-            label: () => this._view.options.initializers ? 'Hide Initializers' : 'Show Initializers',
-            accelerator: 'CmdOrCtrl+I',
-            click: () => this._view.toggle('initializers')
-        });
-        this._menu.add({
-            label: () => this._view.options.names ? 'Hide Names' : 'Show Names',
-            accelerator: 'CmdOrCtrl+U',
-            click: () => this._view.toggle('names')
-        });
-        this._menu.add({
-            label: () => this._view.options.direction === 'vertical' ? 'Show Horizontal' : 'Show Vertical',
-            accelerator: 'CmdOrCtrl+K',
-            click: () => this._view.toggle('direction')
-        });
-        this._menu.add({
-            label: () => this._view.options.mousewheel === 'scroll' ? 'Mouse Wheel: Zoom' : 'Mouse Wheel: Scroll',
-            accelerator: 'CmdOrCtrl+M',
-            click: () => this._view.toggle('mousewheel')
-        });
-        this._menu.add({});
-        this._menu.add({
-            label: 'Zoom In',
-            accelerator: 'Shift+Up',
-            click: () => this.document.getElementById('zoom-in-button').click()
-        });
-        this._menu.add({
-            label: 'Zoom Out',
-            accelerator: 'Shift+Down',
-            click: () => this.document.getElementById('zoom-out-button').click()
-        });
-        this._menu.add({
-            label: 'Actual Size',
-            accelerator: 'Shift+Backspace',
-            click: () => this._view.resetZoom()
-        });
-        this._menu.add({});
-        this._menu.add({
-            label: 'Export as PNG',
-            accelerator: 'CmdOrCtrl+Shift+E',
-            click: () => this._view.export(document.title + '.png')
-        });
-        this._menu.add({
-            label: 'Export as SVG',
-            accelerator: 'CmdOrCtrl+Alt+E',
-            click: () => this._view.export(document.title + '.svg')
-        });
-        this.document.getElementById('menu-button').addEventListener('click', (e) => {
-            this._menu.toggle();
-            e.preventDefault();
-        });
-        this._menu.add({});
-        this._menu.add({
-            label: 'About ' + this.document.title,
-            click: () => this._about()
-        });
-
-        if (this._meta.file) {
+        if (this._meta.file && this._meta.identifier) {
             const url = this._meta.file[0];
             if (this._view.accept(url)) {
                 this._openModel(this._url(url), null);
+                this._document.title = this._meta.identifier;
                 return;
             }
         }
@@ -277,27 +228,21 @@ host.BrowserHost = class {
         const openFileDialog = this.document.getElementById('open-file-dialog');
         if (openFileButton && openFileDialog) {
             openFileButton.addEventListener('click', () => {
-                openFileDialog.value = '';
-                openFileDialog.click();
+                this.execute('open');
             });
-            const extensions = new this.window.base.Metadata().extensions.map((extension) => '.' + extension);
-            openFileDialog.setAttribute('accept', extensions.join(', '));
+            const mobileSafari = this.environment('platform') === 'darwin' && navigator.maxTouchPoints && navigator.maxTouchPoints > 1;
+            if (!mobileSafari) {
+                const extensions = new this.window.base.Metadata().extensions.map((extension) => '.' + extension);
+                openFileDialog.setAttribute('accept', extensions.join(', '));
+            }
             openFileDialog.addEventListener('change', (e) => {
                 if (e.target && e.target.files && e.target.files.length > 0) {
                     const files = Array.from(e.target.files);
-                    const file = files.find((file) => this._view.accept(file.name));
+                    const file = files.find((file) => this._view.accept(file.name, file.size));
                     if (file) {
                         this._open(file, files);
                     }
                 }
-            });
-        }
-        const githubButton = this.document.getElementById('github-button');
-        const githubLink = this.document.getElementById('logo-github');
-        if (githubButton && githubLink) {
-            githubButton.style.opacity = 1;
-            githubButton.addEventListener('click', () => {
-                this.openURL(githubLink.href);
             });
         }
         this.document.addEventListener('dragover', (e) => {
@@ -310,7 +255,7 @@ host.BrowserHost = class {
             e.preventDefault();
             if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
                 const files = Array.from(e.dataTransfer.files);
-                const file = files.find((file) => this._view.accept(file.name));
+                const file = files.find((file) => this._view.accept(file.name, file.size));
                 if (file) {
                     this._open(file, files);
                 }
@@ -324,8 +269,11 @@ host.BrowserHost = class {
         return this._environment[name];
     }
 
-    error(message, detail) {
+    error(message, detail, url) {
         alert((message == 'Error' ? '' : message + ' ') + detail);
+        if (url) {
+            this.openURL(url);
+        }
     }
 
     confirm(message, detail) {
@@ -338,24 +286,33 @@ host.BrowserHost = class {
         if (value) {
             return Promise.resolve(value);
         }
+        this.window.module = { exports: {} };
+        const url = this._url(id + '.js');
+        const script = document.createElement('script');
+        script.setAttribute('id', id);
+        script.setAttribute('type', 'text/javascript');
         return new Promise((resolve, reject) => {
-            this.window.module = { exports: {} };
-            const url = this._url(id + '.js');
-            const script = document.createElement('script');
-            script.setAttribute('id', id);
-            script.setAttribute('type', 'text/javascript');
-            script.setAttribute('src', url);
-            script.onload = () => {
-                if (!this.window[name]) {
-                    this.window[name] = this.window.module.exports;
-                    delete this.window.module;
+            const load = () => {
+                script.removeEventListener('load', load);
+                script.removeEventListener('error', error);
+                let module = this.window[name];
+                if (!module) {
+                    module = this.window.module.exports;
+                    this.window[name] = module;
                 }
-                resolve(this.window[name]);
+                delete this.window.module;
+                resolve(module);
             };
-            script.onerror = (e) => {
+            const error = (e) => {
+                script.removeEventListener('load', load);
+                script.removeEventListener('error', error);
+                this.document.head.removeChild(script);
                 delete this.window.module;
                 reject(new Error('The script \'' + e.target.src + '\' failed to load.'));
             };
+            script.addEventListener('load', load, false);
+            script.addEventListener('error', error, false);
+            script.setAttribute('src', url);
             this.document.head.appendChild(script);
         });
     }
@@ -373,6 +330,30 @@ host.BrowserHost = class {
         this.document.body.removeChild(element);
     }
 
+    execute(name /*, value */) {
+        switch (name) {
+            case 'open': {
+                const openFileDialog = this.document.getElementById('open-file-dialog');
+                if (openFileDialog) {
+                    openFileDialog.value = '';
+                    openFileDialog.click();
+                }
+                break;
+            }
+            case 'report-issue': {
+                this.openURL(this.environment('repository') + '/issues/new');
+                break;
+            }
+            case 'about': {
+                this._view.about();
+                break;
+            }
+            default: {
+                break;
+            }
+        }
+    }
+
     request(file, encoding, base) {
         const url = base ? (base + '/' + file) : this._url(file);
         return this._request(url, null, encoding);
@@ -383,62 +364,68 @@ host.BrowserHost = class {
     }
 
     exception(error, fatal) {
-        if (this._telemetry && this.window.ga && error && error.telemetry !== false) {
+        if ((this._telemetry_ua || this._telemetry_ga4) && error) {
             const name = error.name ? error.name + ': ' : '';
             const message = error.message ? error.message : JSON.stringify(error);
-            const description = [ name + message ];
+            const description = name + message;
+            let context = '';
+            let stack = '';
             if (error.stack) {
                 const format = (file, line, column) => {
                     return file.split('\\').join('/').split('/').pop() + ':' + line + ':' + column;
                 };
                 const match = error.stack.match(/\n {4}at (.*) \((.*):(\d*):(\d*)\)/);
                 if (match) {
-                    description.push(match[1] + ' (' + format(match[2], match[3], match[4]) + ')');
-                }
-                else {
+                    stack = match[1] + ' (' + format(match[2], match[3], match[4]) + ')';
+                } else {
                     const match = error.stack.match(/\n {4}at (.*):(\d*):(\d*)/);
                     if (match) {
-                        description.push('(' + format(match[1], match[2], match[3]) + ')');
-                    }
-                    else {
+                        stack = '(' + format(match[1], match[2], match[3]) + ')';
+                    } else {
                         const match = error.stack.match(/\n {4}at (.*)\((.*)\)/);
                         if (match) {
-                            description.push('(' + format(match[1], match[2], match[3]) + ')');
-                        }
-                        else {
+                            stack = '(' + format(match[1], match[2], match[3]) + ')';
+                        } else {
                             const match = error.stack.match(/\s*@\s*(.*):(.*):(.*)/);
                             if (match) {
-                                description.push('(' + format(match[1], match[2], match[3]) + ')');
-                            }
-                            else {
+                                stack = '(' + format(match[1], match[2], match[3]) + ')';
+                            } else {
                                 const match = error.stack.match(/.*\n\s*(.*)\s*/);
-                                description.push(match ? match[1] : error.stack.split('\n').shift());
+                                if (match) {
+                                    stack = match[1];
+                                }
                             }
                         }
                     }
                 }
             }
-            this.window.ga('send', 'exception', {
-                exDescription: description.join(' @ '),
-                exFatal: fatal,
-                appName: this.type,
-                appVersion: this.version
-            });
+            if (error.context) {
+                context = typeof error.context === 'string' ? error.context : JSON.stringify(error.context);
+            }
+            if (this._telemetry_ua && this.window.ga) {
+                this.window.ga('send', 'exception', {
+                    exDescription: stack ? description + ' @ ' + stack : description,
+                    exFatal: fatal,
+                    appName: this.type,
+                    appVersion: this.version
+                });
+            }
+            if (this._telemetry_ga4) {
+                this._telemetry_ga4.send('exception', {
+                    app_name: this.type,
+                    app_version: this.version,
+                    error_name: name,
+                    error_message: message,
+                    error_context: context,
+                    error_stack: stack,
+                    error_fatal: fatal ? true : false
+                });
+            }
         }
     }
 
-    screen(name) {
-        if (this._telemetry && this.window.ga) {
-            this.window.ga('send', 'screenview', {
-                screenName: name,
-                appName: this.type,
-                appVersion: this.version
-            });
-        }
-    }
-
-    event(category, action, label, value) {
-        if (this._telemetry && this.window.ga) {
+    event_ua(category, action, label, value) {
+        if (this._telemetry_ua && this.window.ga && category && action && label) {
             this.window.ga('send', 'event', {
                 eventCategory: category,
                 eventAction: action,
@@ -447,6 +434,14 @@ host.BrowserHost = class {
                 appName: this.type,
                 appVersion: this.version
             });
+        }
+    }
+
+    event(name, params) {
+        if (this._telemetry_ga4 && name && params) {
+            params.app_name = this.type,
+            params.app_version = this.version,
+            this._telemetry_ga4.send(name, params);
         }
     }
 
@@ -474,13 +469,14 @@ host.BrowserHost = class {
                 progress(0);
                 if (request.status == 200) {
                     if (request.responseType == 'arraybuffer') {
-                        resolve(new host.BrowserHost.BinaryStream(new Uint8Array(request.response)));
-                    }
-                    else {
+                        const base = this.window.base;
+                        const buffer = new Uint8Array(request.response);
+                        const stream = new base.BinaryStream(buffer);
+                        resolve(stream);
+                    } else {
                         resolve(request.responseText);
                     }
-                }
-                else {
+                } else {
                     reject(error(request.status));
                 }
             };
@@ -523,13 +519,16 @@ host.BrowserHost = class {
     }
 
     _openModel(url, identifier) {
-        url = url + ((/\?/).test(url) ? '&' : '?') + 'cb=' + (new Date()).getTime();
+        url = url.startsWith('data:') ? url : url + ((/\?/).test(url) ? '&' : '?') + 'cb=' + (new Date()).getTime();
         this._view.show('welcome spinner');
         const progress = (value) => {
             this._view.progress(value);
         };
         return this._request(url, null, null, progress).then((stream) => {
-            const context = new host.BrowserHost.BrowserContext(this, url, identifier, stream);
+            const context = new host.BrowserHost.Context(this, url, identifier, stream);
+            if (this._telemetry_ga4) {
+                this._telemetry_ga4.set('session_engaged', 1);
+            }
             return this._view.open(context).then(() => {
                 return identifier || context.identifier;
             }).catch((err) => {
@@ -547,6 +546,9 @@ host.BrowserHost = class {
         this._view.show('welcome spinner');
         const context = new host.BrowserHost.BrowserFileContext(this, file, files);
         context.open().then(() => {
+            if (this._telemetry_ga4) {
+                this._telemetry_ga4.set('session_engaged', 1);
+            }
             return this._view.open(context).then((model) => {
                 this._view.show(null);
                 this.document.title = files[0].name;
@@ -571,12 +573,16 @@ host.BrowserHost = class {
                 this.error('Error while loading Gist.', 'Gist does not contain a model file.');
                 return;
             }
+            const base = this.window.base;
             const file = json.files[key];
             const identifier = file.filename;
             const encoder = new TextEncoder();
             const buffer = encoder.encode(file.content);
-            const stream = new host.BrowserHost.BinaryStream(buffer);
-            const context = new host.BrowserHost.BrowserContext(this, '', identifier, stream);
+            const stream = new base.BinaryStream(buffer);
+            const context = new host.BrowserHost.Context(this, '', identifier, stream);
+            if (this._telemetry_ga4) {
+                this._telemetry_ga4.set('session_engaged', 1);
+            }
             this._view.open(context).then(() => {
                 this.document.title = identifier;
             }).catch((error) => {
@@ -590,244 +596,47 @@ host.BrowserHost = class {
     }
 
     _setCookie(name, value, days) {
+        this.document.cookie = name + '=; Max-Age=0';
+        const location = this.window.location;
+        const domain = location && location.hostname && location.hostname.indexOf('.') !== -1 ? ';domain=.' + location.hostname.split('.').slice(-2).join('.') : '';
         const date = new Date();
-        date.setTime(date.getTime() + ((typeof days !== "number" ? 365 : days) * 24 * 60 * 60 * 1000));
-        document.cookie = name + "=" + value + ";path=/;expires=" + date.toUTCString();
+        date.setTime(date.getTime() + (days * 24 * 60 * 60 * 1000));
+        this.document.cookie = name + "=" + value + domain + ";path=/;expires=" + date.toUTCString();
     }
 
     _getCookie(name) {
-        const cookie = '; ' + document.cookie;
-        const parts = cookie.split('; ' + name + '=');
-        return parts.length < 2 ? undefined : parts.pop().split(';').shift();
+        for (const cookie of this.document.cookie.split(';')) {
+            const entry = cookie.split('=');
+            if (entry[0].trim() === name) {
+                return entry[1].trim();
+            }
+        }
+        return '';
     }
 
-    _message(message, button, callback) {
-        const messageText = this.document.getElementById('message');
-        if (messageText) {
-            messageText.innerText = message;
+    _message(message, action, callback, modal) {
+        const text = this.document.getElementById('message-text');
+        if (text) {
+            text.innerText = message;
         }
-        const messageButton = this.document.getElementById('message-button');
-        if (messageButton) {
-            if (button && callback) {
-                messageButton.style.removeProperty('display');
-                messageButton.innerText = button;
-                messageButton.onclick = () => {
-                    messageButton.onclick = null;
+        const button = this.document.getElementById('message-button');
+        if (button) {
+            if (action && callback) {
+                button.style.removeProperty('display');
+                button.innerText = action;
+                button.onclick = () => {
+                    if (!modal) {
+                        this._document.body.classList.remove('message');
+                        button.onclick = null;
+                    }
                     callback();
                 };
-            }
-            else {
-                messageButton.style.display = 'none';
-                messageButton.onclick = null;
-            }
-        }
-        const page = 'welcome message';
-        if (this._view) {
-            this._view.show(page);
-        }
-        else {
-            this._document.body.setAttribute('class', page);
-        }
-    }
-
-    _about() {
-        const self = this;
-        const eventHandler = () => {
-            this.window.removeEventListener('keydown', eventHandler);
-            self.document.body.removeEventListener('click', eventHandler);
-            self._view.show('default');
-        };
-        this.window.addEventListener('keydown', eventHandler);
-        this.document.body.addEventListener('click', eventHandler);
-        this._view.show('about');
-    }
-};
-
-host.Dropdown = class {
-
-    constructor(host, button, dropdown) {
-        this._host = host;
-        this._dropdown = this._host.document.getElementById(dropdown);
-        this._button = this._host.document.getElementById(button);
-        this._items = [];
-        this._apple = /(Mac|iPhone|iPod|iPad)/i.test(navigator.platform);
-        this._acceleratorMap = {};
-        this._host.window.addEventListener('keydown', (e) => {
-            let code = e.keyCode;
-            code |= ((e.ctrlKey && !this._apple) || (e.metaKey && this._apple)) ? 0x0400 : 0;
-            code |= e.altKey ? 0x0200 : 0;
-            code |= e.shiftKey ? 0x0100 : 0;
-            if (code == 0x001b) { // Escape
-                this.close();
-                return;
-            }
-            const item = this._acceleratorMap[code.toString()];
-            if (item) {
-                item.click();
-                e.preventDefault();
-            }
-        });
-        this._host.document.body.addEventListener('click', (e) => {
-            if (!this._button.contains(e.target)) {
-                this.close();
-            }
-        });
-    }
-
-    add(item) {
-        const accelerator = item.accelerator;
-        if (accelerator) {
-            let cmdOrCtrl = false;
-            let alt = false;
-            let shift = false;
-            let key = '';
-            for (const part of item.accelerator.split('+')) {
-                switch (part) {
-                    case 'CmdOrCtrl': cmdOrCtrl = true; break;
-                    case 'Alt': alt = true; break;
-                    case 'Shift': shift = true; break;
-                    default: key = part; break;
-                }
-            }
-            if (key !== '') {
-                item.accelerator = {};
-                item.accelerator.text = '';
-                if (this._apple) {
-                    item.accelerator.text += alt ? '&#x2325;' : '';
-                    item.accelerator.text += shift ? '&#x21e7;' : '';
-                    item.accelerator.text += cmdOrCtrl ? '&#x2318;' : '';
-                    const keyTable = { 'Enter': '&#x23ce;', 'Up': '&#x2191;', 'Down': '&#x2193;', 'Backspace': '&#x232B;' };
-                    item.accelerator.text += keyTable[key] ? keyTable[key] : key;
-                }
-                else {
-                    const list = [];
-                    if (cmdOrCtrl) {
-                        list.push('Ctrl');
-                    }
-                    if (alt) {
-                        list.push('Alt');
-                    }
-                    if (shift) {
-                        list.push('Shift');
-                    }
-                    list.push(key);
-                    item.accelerator.text = list.join('+');
-                }
-                let code = 0;
-                switch (key) {
-                    case 'Backspace': code = 0x08; break;
-                    case 'Enter': code = 0x0D; break;
-                    case 'Up': code = 0x26; break;
-                    case 'Down': code = 0x28; break;
-                    default: code = key.charCodeAt(0); break;
-                }
-                code |= cmdOrCtrl ? 0x0400 : 0;
-                code |= alt ? 0x0200 : 0;
-                code |= shift ? 0x0100 : 0;
-                this._acceleratorMap[code.toString()] = item;
+            } else {
+                button.style.display = 'none';
+                button.onclick = null;
             }
         }
-        this._items.push(item);
-    }
-
-    toggle() {
-
-        if (this._dropdown.style.display === 'block') {
-            this.close();
-            return;
-        }
-
-        while (this._dropdown.lastChild) {
-            this._dropdown.removeChild(this._dropdown.lastChild);
-        }
-
-        for (const item of this._items) {
-            if (Object.keys(item).length > 0) {
-                const button = this._host.document.createElement('button');
-                button.innerText = (typeof item.label == 'function') ? item.label() : item.label;
-                button.addEventListener('click', () => {
-                    this.close();
-                    setTimeout(() => {
-                        item.click();
-                    }, 10);
-                });
-                this._dropdown.appendChild(button);
-                if (item.accelerator) {
-                    const accelerator = this._host.document.createElement('span');
-                    accelerator.style.float = 'right';
-                    accelerator.innerHTML = item.accelerator.text;
-                    button.appendChild(accelerator);
-                }
-            }
-            else {
-                const separator = this._host.document.createElement('div');
-                separator.setAttribute('class', 'separator');
-                this._dropdown.appendChild(separator);
-            }
-        }
-
-        this._dropdown.style.display = 'block';
-    }
-
-    close() {
-        this._dropdown.style.display = 'none';
-    }
-};
-
-host.BrowserHost.BinaryStream = class {
-
-    constructor(buffer) {
-        this._buffer = buffer;
-        this._length = buffer.length;
-        this._position = 0;
-    }
-
-    get position() {
-        return this._position;
-    }
-
-    get length() {
-        return this._length;
-    }
-
-    stream(length) {
-        const buffer = this.read(length);
-        return new host.BrowserHost.BinaryStream(buffer.slice(0));
-    }
-
-    seek(position) {
-        this._position = position >= 0 ? position : this._length + position;
-    }
-
-    skip(offset) {
-        this._position += offset;
-    }
-
-    peek(length) {
-        if (this._position === 0 && length === undefined) {
-            return this._buffer;
-        }
-        const position = this._position;
-        this.skip(length !== undefined ? length : this._length - this._position);
-        const end = this._position;
-        this.seek(position);
-        return this._buffer.subarray(position, end);
-    }
-
-    read(length) {
-        if (this._position === 0 && length === undefined) {
-            this._position = this._length;
-            return this._buffer;
-        }
-        const position = this._position;
-        this.skip(length !== undefined ? length : this._length - this._position);
-        return this._buffer.subarray(position, this._position);
-    }
-
-    byte() {
-        const position = this._position;
-        this.skip(1);
-        return this._buffer[position];
+        this._document.body.classList.add('message');
     }
 };
 
@@ -850,9 +659,9 @@ host.BrowserHost.BrowserFileContext = class {
         return this._stream;
     }
 
-    request(file, encoding, base) {
-        if (base !== undefined) {
-            return this._host.request(file, encoding, base);
+    request(file, encoding, basename) {
+        if (basename !== undefined) {
+            return this._host.request(file, encoding, basename);
         }
         const blob = this._blobs[file];
         if (!blob) {
@@ -861,13 +670,20 @@ host.BrowserHost.BrowserFileContext = class {
         return new Promise((resolve, reject) => {
             const reader = new FileReader();
             reader.onload = (e) => {
-                resolve(encoding ? e.target.result : new host.BrowserHost.BinaryStream(new Uint8Array(e.target.result)));
+                if (encoding) {
+                    resolve(e.target.result);
+                } else {
+                    const base = this._host.window.base;
+                    const buffer = new Uint8Array(e.target.result);
+                    const stream = new base.BinaryStream(buffer);
+                    resolve(stream);
+                }
             };
             reader.onerror = (e) => {
                 e = e || this.window.event;
                 let message = '';
                 const error = e.target.error;
-                switch(error.code) {
+                switch (error.code) {
                     case error.NOT_FOUND_ERR:
                         message = "File not found '" + file + "'.";
                         break;
@@ -885,8 +701,7 @@ host.BrowserHost.BrowserFileContext = class {
             };
             if (encoding === 'utf-8') {
                 reader.readAsText(blob, encoding);
-            }
-            else {
+            } else {
                 reader.readAsArrayBuffer(blob);
             }
         });
@@ -907,7 +722,7 @@ host.BrowserHost.BrowserFileContext = class {
     }
 };
 
-host.BrowserHost.BrowserContext = class {
+host.BrowserHost.Context = class {
 
     constructor(host, url, identifier, stream) {
         this._host = host;
@@ -918,8 +733,7 @@ host.BrowserHost.BrowserContext = class {
             if (this._base.endsWith('/')) {
                 this._base.substring(0, this._base.length - 1);
             }
-        }
-        else {
+        } else {
             const parts = url.split('?')[0].split('/');
             this._identifier = parts.pop();
             this._base = parts.join('/');
@@ -987,6 +801,21 @@ if (!('scrollBehavior' in window.document.documentElement.style)) {
     };
 }
 
-window.addEventListener('load', () => {
-    window.__host__ = new host.BrowserHost();
-});
+if (window.location.hostname.endsWith('.github.io')) {
+    window.location.replace('https://netron.app');
+} else {
+    window.require = (id) => {
+        const name = id.startsWith('./') ? id.substring(2) : id;
+        const value = window[name];
+        if (value) {
+            return value;
+        }
+        throw new Error("Module '" + id + "' not found.");
+    };
+    window.addEventListener('load', () => {
+        host.BrowserHost.create().then((host) => {
+            const view = require('./view');
+            window.__view__ = new view.View(host);
+        });
+    });
+}

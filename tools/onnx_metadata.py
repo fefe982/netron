@@ -4,9 +4,8 @@ import collections
 import json
 import os
 import re
-import sys
-import onnx.backend.test.case
-import onnx.defs
+import onnx.backend.test.case # pylint: disable=import-error
+import onnx.defs # pylint: disable=import-error
 
 def _read(path):
     with open(path, 'r', encoding='utf-8') as file:
@@ -49,13 +48,6 @@ categories = {
     'Flatten': 'Shape',
     'Reshape': 'Shape',
     'Tile': 'Shape',
-    'Xor': 'Logic',
-    'Not': 'Logic',
-    'Or': 'Logic',
-    'Less': 'Logic',
-    'And': 'Logic',
-    'Greater': 'Logic',
-    'Equal': 'Logic',
     'AveragePool': 'Pool',
     'GlobalAveragePool': 'Pool',
     'GlobalLpPool': 'Pool',
@@ -141,7 +133,7 @@ def _update_inputs(json_schema, inputs):
     for _ in inputs:
         json_input = {}
         json_input['name'] = _.name
-        json_input['type'] = _.typeStr
+        json_input['type'] = _.type_str
         if _.option == onnx.defs.OpSchema.FormalParameterOption.Optional:
             json_input['option'] = 'optional'
         elif _.option == onnx.defs.OpSchema.FormalParameterOption.Variadic:
@@ -154,7 +146,7 @@ def _update_outputs(json_schema, outputs):
     for _ in outputs:
         json_output = {}
         json_output['name'] = _.name
-        json_output['type'] = _.typeStr
+        json_output['type'] = _.type_str
         if _.option == onnx.defs.OpSchema.FormalParameterOption.Optional:
             json_output['option'] = 'optional'
         elif _.option == onnx.defs.OpSchema.FormalParameterOption.Variadic:
@@ -189,7 +181,9 @@ def _format_range(value):
 
 def _metadata():
     json_root = []
-    snippets = onnx.backend.test.case.collect_snippets()
+    numpy = __import__('numpy')
+    with numpy.errstate(over='ignore'):
+        snippets = onnx.backend.test.case.collect_snippets()
     all_schemas_with_history = onnx.defs.get_all_schemas_with_history()
     for schema in all_schemas_with_history:
         json_schema = {}
@@ -232,9 +226,7 @@ def _metadata():
     _write(json_file, json.dumps(json_root, indent=2))
 
 def main(): # pylint: disable=missing-function-docstring
-    table = { 'metadata': _metadata }
-    for command in sys.argv[1:]:
-        table[command]()
+    _metadata()
 
 if __name__ == '__main__':
     main()
