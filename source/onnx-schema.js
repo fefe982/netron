@@ -126,8 +126,8 @@ $root.onnxruntime.fbs.NodeEdge = class NodeEdge {
     static decode(reader, position) {
         const $ = new $root.onnxruntime.fbs.NodeEdge();
         $.node_index = reader.uint32_(position, 4, 0);
-        $.input_edges = reader.structArray(position, 6, undefined,$root.onnxruntime.fbs.EdgeEnd.decode);
-        $.output_edges = reader.structArray(position, 8, undefined,$root.onnxruntime.fbs.EdgeEnd.decode);
+        $.input_edges = reader.structArray(position, 6, $root.onnxruntime.fbs.EdgeEnd.decode);
+        $.output_edges = reader.structArray(position, 8, $root.onnxruntime.fbs.EdgeEnd.decode);
         return $;
     }
 };
@@ -171,15 +171,6 @@ $root.onnxruntime.fbs.TypeInfoValue = class {
             case 1: return $root.onnxruntime.fbs.TensorTypeAndShape.decode(reader, position);
             case 2: return $root.onnxruntime.fbs.SequenceType.decode(reader, position);
             case 3: return $root.onnxruntime.fbs.MapType.decode(reader, position);
-            default: return undefined;
-        }
-    }
-
-    static decodeText(reader, json, type) {
-        switch (type) {
-            case 'TensorTypeAndShape': return $root.onnxruntime.fbs.TensorTypeAndShape.decodeText(reader, json);
-            case 'SequenceType': return $root.onnxruntime.fbs.SequenceType.decodeText(reader, json);
-            case 'MapType': return $root.onnxruntime.fbs.MapType.decodeText(reader, json);
             default: return undefined;
         }
     }

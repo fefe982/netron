@@ -7,12 +7,12 @@
             "request": "launch",
             "runtimeExecutable": "${workspaceRoot}/node_modules/.bin/electron",
             "windows": {
-              "runtimeExecutable": "${workspaceRoot}/node_modules/.bin/electron.cmd"
+                "runtimeExecutable": "${workspaceRoot}/node_modules/.bin/electron.cmd"
             },
             "runtimeArgs": [
-              "${workspaceRoot}",
-              "--enable-logging",
-              "--remote-debugging-port=9222"
+                "${workspaceRoot}",
+                "--enable-logging",
+                "--remote-debugging-port=9222"
             ],
             "webRoot": "${workspaceRoot}"
         },
@@ -30,11 +30,9 @@
             "name": "Python Server",
             "type": "python",
             "request": "launch",
-            "program": "${workspaceFolder}/publish/python.py",
+            "program": "${workspaceFolder}/package.py",
+            "args": [ "build", "start" ],
             "justMyCode": true,
-            "args": [
-                "build", "start"
-            ],
             "pathMappings": [
                 {
                     "localRoot": "${workspaceFolder}/source",
@@ -53,6 +51,7 @@
             "type": "node",
             "request": "launch",
             "program": "${workspaceFolder}/test/models.js",
+            "args": [],
             "console": "integratedTerminal",
         },
         {
@@ -60,8 +59,32 @@
             "type": "python",
             "request": "launch",
             "program": "${workspaceFolder}/test/backend.py",
+            "args": [],
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "serverReadyAction": {
+                "action": "debugWithChrome",
+                "pattern": "Serving .*at http://localhost:([0-9]+)",
+                "uriFormat": "http://localhost:%s",
+                "webRoot": "${workspaceFolder}/source",
+            },
+        },
+        {
+            "name": "Tools Python",
+            "type": "python",
+            "request": "launch",
+            "program": "${file}",
+            "args": [],
             "console": "integratedTerminal",
             "justMyCode": false
-        }
+        },
+        {
+            "name": "Package.js",
+            "type": "node",
+            "request": "launch",
+            "program": "${workspaceFolder}/package.js",
+            "args": [],
+            "console": "integratedTerminal",
+        },
     ]
 }

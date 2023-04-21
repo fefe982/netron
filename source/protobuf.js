@@ -4,11 +4,12 @@ var base = require('./base');
 var text = require('./text');
 
 protobuf.get = (name) => {
-    protobuf._map = protobuf._map || new Map();
-    if (!protobuf._map.has(name)) {
-        protobuf._map.set(name, {});
+    protobuf._roots = protobuf._roots || new Map();
+    const roots = protobuf._roots;
+    if (!roots.has(name)) {
+        roots.set(name, {});
     }
-    return protobuf._map.get(name);
+    return roots.get(name);
 };
 
 protobuf.BinaryReader = class {
@@ -50,8 +51,7 @@ protobuf.BinaryReader = class {
                     }
                 }
             }
-        }
-        catch (err) {
+        } catch (err) {
             tags.clear();
         }
         this._position = 0;
@@ -102,11 +102,9 @@ protobuf.BinaryReader = class {
                                 }
                                 if (inner === 2) {
                                     tags[field] = inner;
-                                }
-                                else if (!type) {
+                                } else if (!type) {
                                     tags[field] = inner;
-                                }
-                                else {
+                                } else {
                                     for (const pair of Object.entries(inner)) {
                                         if (type[pair[0]] === 2 && pair[1] !== 2) {
                                             continue;
@@ -126,8 +124,7 @@ protobuf.BinaryReader = class {
                     if (this.position === end) {
                         return tags;
                     }
-                }
-                catch (err) {
+                } catch (err) {
                     // continue regardless of error
                 }
                 this.seek(end);
@@ -155,11 +152,9 @@ protobuf.BinaryReader = class {
                                 }
                                 if (inner === 2) {
                                     tags[field] = inner;
-                                }
-                                else if (!type) {
+                                } else if (!type) {
                                     tags[field] = inner;
-                                }
-                                else {
+                                } else {
                                     for (const pair of Object.entries(inner)) {
                                         if (type[pair[0]] === 2 && pair[1] !== 2) {
                                             continue;
@@ -178,8 +173,7 @@ protobuf.BinaryReader = class {
                     }
                 }
             }
-        }
-        catch (err) {
+        } catch (err) {
             tags = {};
         }
         this._position = 0;
@@ -316,8 +310,7 @@ protobuf.BinaryReader = class {
             while (this._position < end) {
                 obj.push(item());
             }
-        }
-        else {
+        } else {
             obj.push(item());
         }
         return obj;
@@ -341,11 +334,9 @@ protobuf.BinaryReader = class {
                 position += 4;
             }
             this._position = end;
-        }
-        else if (obj !== undefined && obj.length < 1000000) {
+        } else if (obj !== undefined && obj.length < 1000000) {
             obj.push(this.float());
-        }
-        else {
+        } else {
             obj = undefined;
             this.float();
         }
@@ -370,11 +361,9 @@ protobuf.BinaryReader = class {
                 position += 8;
             }
             this._position = end;
-        }
-        else if (obj !== undefined && obj.length < 1000000) {
+        } else if (obj !== undefined && obj.length < 1000000) {
             obj.push(this.double());
-        }
-        else {
+        } else {
             obj = undefined;
             this.double();
         }
@@ -554,8 +543,7 @@ protobuf.BinaryReader = class {
                 return bits;
             }
             i = 0;
-        }
-        else {
+        } else {
             for (; i < 3; i++) {
                 if (this._position >= this._length) {
                     this._unexpected();
@@ -575,8 +563,7 @@ protobuf.BinaryReader = class {
                     return bits;
                 }
             }
-        }
-        else {
+        } else {
             for (; i < 5; ++i) {
                 if (this._position >= this._length) {
                     this._unexpected();
@@ -665,14 +652,12 @@ protobuf.TextReader = class {
                         this.skip();
                         this.match(',');
                     }
-                }
-                else {
+                } else {
                     this.skip();
                     tags.set(tag, true);
                 }
             }
-        }
-        catch (err) {
+        } catch (err) {
             // continue regardless of error
         }
         this.reset();
@@ -855,8 +840,7 @@ protobuf.TextReader = class {
         let value;
         if (Object.prototype.hasOwnProperty.call(type, token)) {
             value = type[token];
-        }
-        else {
+        } else {
             value = Number.parseInt(token, 10);
             if (Number.isNaN(token - value)) {
                 throw new protobuf.Error("Couldn't parse enum '" + (token === undefined ? '' : token) + "'" + this.location());
@@ -879,8 +863,7 @@ protobuf.TextReader = class {
             if (!this.end()) {
                 this.expect('}');
             }
-        }
-        else {
+        } else {
             while (!this.end()) {
                 const tag = this.tag();
                 switch (tag) {
@@ -915,8 +898,7 @@ protobuf.TextReader = class {
                 }
                 this.expect('[');
             }
-        }
-        else {
+        } else {
             const message = type();
             while (!this.end()) {
                 const tag = this.tag();
@@ -971,8 +953,7 @@ protobuf.TextReader = class {
                         break;
                 }
             }
-        }
-        else {
+        } else {
             obj.push(item());
         }
     }
@@ -1015,8 +996,7 @@ protobuf.TextReader = class {
                 while (!this.end() || depth < this._depth) {
                     if (this._token === '{') {
                         this.start();
-                    }
-                    else if (this._token !== '}') {
+                    } else if (this._token !== '}') {
                         this.next();
                         this.match(';');
                     }
@@ -1030,8 +1010,7 @@ protobuf.TextReader = class {
                     this.next();
                     if (this._token === '[') {
                         this.first();
-                    }
-                    else if (this._token === undefined) {
+                    } else if (this._token === undefined) {
                         this.handle(this._token);
                     }
                 }
@@ -1222,8 +1201,7 @@ protobuf.TextReader = class {
                         }
                         content += c;
                         continue;
-                    }
-                    else {
+                    } else {
                         content += c;
                         if (c === quote) {
                             break;
@@ -1294,8 +1272,7 @@ protobuf.TextReader = class {
             if (c === '\n') {
                 line++;
                 column = 1;
-            }
-            else {
+            } else {
                 column++;
             }
         }
@@ -1323,7 +1300,7 @@ protobuf.LongBits = class {
     zzDecode() {
         const mask = -(this.lo & 1);
         this.lo  = ((this.lo >>> 1 | this.hi << 31) ^ mask) >>> 0;
-        this.hi  = ( this.hi >>> 1                  ^ mask) >>> 0;
+        this.hi  =  (this.hi >>> 1                  ^ mask) >>> 0;
         return this;
     }
 

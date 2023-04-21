@@ -21,10 +21,12 @@ mslite.ModelFactory = class {
             const stream = context.stream;
             const reader = flatbuffers.BinaryReader.open(stream);
             switch (reader.identifier) {
-                case '':
-                    throw new mslite.Error('MSL0 format is deprecated.', false);
-                case 'MSL1':
-                    throw new mslite.Error('MSL1 format is deprecated.', false);
+                case '': {
+                    throw new mslite.Error('MSL0 format is deprecated.');
+                }
+                case 'MSL1': {
+                    throw new mslite.Error('MSL1 format is deprecated.');
+                }
                 case 'MSL2':
                     break;
                 default:
@@ -34,8 +36,7 @@ mslite.ModelFactory = class {
             try {
                 mslite.schema = flatbuffers.get('mslite').mindspore.schema;
                 model = mslite.schema.MetaGraph.create(reader);
-            }
-            catch (error) {
+            } catch (error) {
                 const message = error && error.message ? error.message : error.toString();
                 throw new mslite.Error('File format is not mslite.MetaGraph (' + message.replace(/\.$/, '') + ').');
             }
@@ -50,20 +51,15 @@ mslite.Model = class {
 
     constructor(metadata, model) {
         this._name = model.name || '';
-        this._format = model.version || '';
         this._graphs = [];
-        const format = 'MindSpore Lite ';
-        if (this._format.startsWith(format)) {
-            const version = this._format.substring(format.length).replace(/^v/, '');
-            this._format = format + 'v' + version;
-        }
+        const version = model.version ? model.version.match(/^.*(\d\.\d\.\d)$/) : null;
+        this._format = 'MindSpore Lite' + (version ? ' v' + version[1] : '');
         const subgraphs = model.subGraph;
         if (Array.isArray(subgraphs)) {
             for (const subgraph of subgraphs) {
                 this._graphs.push(new mslite.Graph(metadata, subgraph, model));
             }
-        }
-        else {
+        } else {
             this._graphs.push(new mslite.Graph(metadata, model, model));
         }
     }
@@ -107,8 +103,7 @@ mslite.Graph = class {
             for (let i = 0; i < subgraph.nodes.length; i++) {
                 this._nodes.push(new mslite.Node(metadata, subgraph.nodes[i], args));
             }
-        }
-        else {
+        } else {
             for (let i = 0; i < subgraph.inputIndices.length; i++) {
                 const index = subgraph.inputIndices[i];
                 this._inputs.push(new mslite.Parameter(i.toString(), true, [args[index]]));
@@ -159,7 +154,7 @@ mslite.Node = class {
 
         const input_num = op.inputIndex.length;
         let i = 0;
-        if (this._type && this._type.inputs){
+        if (this._type && this._type.inputs) {
             for (const input of this._type.inputs) {
                 if (i >= input_num) {
                     break;
@@ -176,7 +171,7 @@ mslite.Node = class {
 
         const output_num = op.outputIndex.length;
         i = 0;
-        if (this._type && this._type.outputs){
+        if (this._type && this._type.outputs) {
             for (const output of this._type.outputs) {
                 if (i >= output_num) {
                     break;
@@ -280,7 +275,20 @@ mslite.Argument = class {
             for (let i = 0; i < tensor.quantParams.length; i++) {
                 const param = tensor.quantParams[i];
                 if (param.scale !== 0 || param.zeroPoint !== 0) {
-                    list.push((param.scale !== 1 ? param.scale.toString() + ' * ' : '') + 'q' + (param.zeroPoint !== 0 ? ' + ' + param.zeroPoint.toString() : ''));
+                    const scale = param.scale;
+                    const zeroPoint = param.zeroPoint;
+                    let quantization = '';
+                    if (scale !== 1) {
+                        quantization += scale.toString() + ' * ';
+                    }
+                    if (zeroPoint === 0) {
+                        quantization += 'q';
+                    } else if (zeroPoint < 0) {
+                        quantization += '(q + ' + -zeroPoint + ')';
+                    } else if (zeroPoint > 0) {
+                        quantization += '(q - ' + zeroPoint + ')';
+                    }
+                    list.push(quantization);
                 }
             }
             if (list.length > 0 && !list.every((value) => value === 'q')) {
@@ -461,10 +469,9 @@ mslite.Utility = class {
 
 mslite.Error = class extends Error {
 
-    constructor(message, context) {
+    constructor(message) {
         super(message);
         this.name = 'Error loading MindSpore Lite model.';
-        this.context = context === false ? false : true;
     }
 };
 

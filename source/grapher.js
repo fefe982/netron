@@ -23,8 +23,7 @@ grapher.Graph = class {
         const value = this._nodes.get(key);
         if (value) {
             value.label = node;
-        }
-        else {
+        } else {
             this._nodes.set(key, { v: key, label: node });
             if (this._isCompound) {
                 this._parent[key] = '\x00';
@@ -96,11 +95,9 @@ grapher.Graph = class {
             if (children) {
                 return Object.keys(children);
             }
-        }
-        else if (key === '\x00') {
+        } else if (key === '\x00') {
             return this.nodes.keys();
-        }
-        else if (this.hasNode(key)) {
+        } else if (this.hasNode(key)) {
             return [];
         }
         return null;
@@ -138,16 +135,16 @@ grapher.Graph = class {
             element.appendChild(markerPath);
             return element;
         };
-        edgePathGroupDefs.appendChild(marker("arrowhead-vee"));
-        edgePathGroupDefs.appendChild(marker("arrowhead-vee-select"));
+        edgePathGroupDefs.appendChild(marker("arrowhead"));
+        edgePathGroupDefs.appendChild(marker("arrowhead-select"));
+        edgePathGroupDefs.appendChild(marker("arrowhead-hover"));
 
         for (const nodeId of this.nodes.keys()) {
             const node = this.node(nodeId);
             if (this.children(nodeId).length == 0) {
                 // node
                 node.label.build(document, nodeGroup);
-            }
-            else {
+            } else {
                 // cluster
                 node.label.rectangle = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
                 if (node.label.rx) {
@@ -175,13 +172,12 @@ grapher.Graph = class {
             if (this.children(nodeId).length == 0) {
                 // node
                 node.label.update();
-            }
-            else {
+            } else {
                 // cluster
                 const node = this.node(nodeId);
                 node.label.element.setAttribute('transform', 'translate(' + node.label.x + ',' + node.label.y + ')');
                 node.label.rectangle.setAttribute('x', - node.label.width / 2);
-                node.label.rectangle.setAttribute('y', - node.label.height / 2 );
+                node.label.rectangle.setAttribute('y', - node.label.height / 2);
                 node.label.rectangle.setAttribute('width', node.label.width);
                 node.label.rectangle.setAttribute('height', node.label.height);
             }
@@ -314,8 +310,7 @@ grapher.Node.Header = class {
             const entry = this._entries[i];
             if (i == 0) {
                 entry.width = entry.width + dx;
-            }
-            else {
+            } else {
                 entry.x = entry.x + dx;
                 entry.tx = entry.tx + dx;
             }
@@ -362,17 +357,17 @@ grapher.Node.Header.Entry = class {
         this.content = content;
         this.tooltip = tooltip;
         this.handler = handler;
-        this.events = {};
+        this._events = {};
     }
 
     on(event, callback) {
-        this.events[event] = this.events[event] || [];
-        this.events[event].push(callback);
+        this._events[event] = this._events[event] || [];
+        this._events[event].push(callback);
     }
 
-    raise(event, data) {
-        if (this.events && this.events[event]) {
-            for (const callback of this.events[event]) {
+    emit(event, data) {
+        if (this._events && this._events[event]) {
+            for (const callback of this._events[event]) {
                 callback(this, data);
             }
         }
@@ -395,8 +390,8 @@ grapher.Node.Header.Entry = class {
         if (this.id) {
             this.element.setAttribute('id', this.id);
         }
-        if (this.events.click) {
-            this.element.addEventListener('click', () => this.raise('click'));
+        if (this._events.click) {
+            this.element.addEventListener('click', () => this.emit('click'));
         }
         if (this.tooltip) {
             const titleElement = document.createElementNS('http://www.w3.org/2000/svg', 'title');
@@ -418,7 +413,7 @@ grapher.Node.List = class {
 
     constructor() {
         this._items = [];
-        this.events = {};
+        this._events = {};
     }
 
     add(id, name, value, tooltip, separator) {
@@ -428,13 +423,13 @@ grapher.Node.List = class {
     }
 
     on(event, callback) {
-        this.events[event] = this.events[event] || [];
-        this.events[event].push(callback);
+        this._events[event] = this._events[event] || [];
+        this._events[event].push(callback);
     }
 
-    raise(event, data) {
-        if (this.events && this.events[event]) {
-            for (const callback of this.events[event]) {
+    emit(event, data) {
+        if (this._events && this._events[event]) {
+            for (const callback of this._events[event]) {
                 callback(this, data);
             }
         }
@@ -448,8 +443,8 @@ grapher.Node.List = class {
         const y = 0;
         this.element = document.createElementNS('http://www.w3.org/2000/svg', 'g');
         this.element.setAttribute('class', 'node-attribute');
-        if (this.events.click) {
-            this.element.addEventListener('click', () => this.raise('click'));
+        if (this._events.click) {
+            this.element.addEventListener('click', () => this.emit('click'));
         }
         this.element.setAttribute('transform', 'translate(' + x + ',' + y + ')');
         this.background = document.createElementNS('http://www.w3.org/2000/svg', 'path');
@@ -539,14 +534,13 @@ grapher.Edge = class {
         this.to = to;
     }
 
-    get arrowhead() {
-        return 'vee';
-    }
-
     build(document, edgePathGroupElement, edgeLabelGroupElement) {
         const createElement = (name) => {
             return document.createElementNS('http://www.w3.org/2000/svg', name);
         };
+        this.hitTestElement = createElement('path');
+        this.hitTestElement.setAttribute('class', 'edge-path-hover');
+        edgePathGroupElement.appendChild(this.hitTestElement);
         this.element = createElement('path');
         if (this.id) {
             this.element.setAttribute('id', this.id);
@@ -600,6 +594,7 @@ grapher.Edge = class {
         };
         const edgePath = curvePath(this, this.from, this.to);
         this.element.setAttribute('d', edgePath);
+        this.hitTestElement.setAttribute('d', edgePath);
         if (this.labelElement) {
             this.labelElement.setAttribute('transform', 'translate(' + (this.x - (this.width / 2)) + ',' + (this.y - (this.height / 2)) + ')');
             this.labelElement.style.opacity = 1;
@@ -651,8 +646,7 @@ grapher.Edge.Curve = class {
                 this._state = 1;
                 if (this._line) {
                     this._path.lineTo(x, y);
-                }
-                else {
+                } else {
                     this._path.moveTo(x, y);
                 }
                 break;
