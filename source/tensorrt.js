@@ -9,8 +9,8 @@ tensorrt.ModelFactory = class {
         return tensorrt.Engine.open(stream) || tensorrt.Container.open(stream);
     }
 
-    open(context, match) {
-        return Promise.resolve().then(() => new tensorrt.Model(null, match));
+    async open(context, target) {
+        return new tensorrt.Model(null, target);
     }
 };
 
@@ -54,9 +54,17 @@ tensorrt.Graph = class {
 tensorrt.Engine = class {
 
     static open(stream) {
-        const signature = [ 0x70, 0x74, 0x72, 0x74 ]; // ptrt
-        if (stream && stream.length >= 24 && stream.peek(4).every((value, index) => value === signature[index])) {
-            return new tensorrt.Engine(stream);
+        if (stream && stream.length >= 24) {
+            const signatures = [
+                [ 0x70, 0x74, 0x72, 0x74 ], // ptrt
+                [ 0x66, 0x74, 0x72, 0x74 ]  // ftrt
+            ];
+            const buffer = stream.peek(4);
+            for (const signature of signatures) {
+                if (buffer.every((value, index) => value === signature[index])) {
+                    return new tensorrt.Engine(stream);
+                }
+            }
         }
         return null;
     }
@@ -72,24 +80,24 @@ tensorrt.Engine = class {
 
     _read() {
         if (this._stream) {
-            let buffer = this._stream.peek(24);
+            const buffer = this._stream.peek(24);
             const reader = new base.BinaryReader(buffer);
             reader.skip(4);
             const version = reader.uint32();
             reader.uint32();
-            let size = 0;
+            // let size = 0;
             switch (version) {
                 case 0x0000:
                 case 0x002B: {
                     reader.uint32();
-                    size = reader.uint64();
+                    /* size = */ reader.uint64();
                     break;
                 }
                 case 0x0057:
                 case 0x0059:
                 case 0x0060:
                 case 0x0061: {
-                    size = reader.uint64();
+                    /* size = */ reader.uint64();
                     reader.uint32();
                     break;
                 }
@@ -98,10 +106,10 @@ tensorrt.Engine = class {
                     throw new tensorrt.Error("Unsupported TensorRT engine signature (" + content.substring(8) + ").");
                 }
             }
-            const content = Array.from(buffer).map((c) => (c < 16 ? '0' : '') + c.toString(16)).join('');
-            buffer = this._stream.read(24 + size);
-            /* reader = */ new tensorrt.BinaryReader(buffer);
-            throw new tensorrt.Error("Invalid file content. File contains undocumented TensorRT engine data (" + content.substring(8) + ").");
+            // const content = Array.from(buffer).map((c) => (c < 16 ? '0' : '') + c.toString(16)).join('');
+            // buffer = this._stream.read(24 + size);
+            // reader = new tensorrt.BinaryReader(buffer);
+            throw new tensorrt.Error('Invalid file content. File contains undocumented TensorRT engine data.');
         }
     }
 };

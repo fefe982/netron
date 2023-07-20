@@ -2369,7 +2369,7 @@
       {
         "name": "T",
         "type": "type",
-        "description": "Must be one of the following: `float32`, `float64`, `int32`, `uint8`, `int16`, `int8`, `int64`, `bfloat16`, `uint16`, `float16`, `uint32`, `uint64`, `complex64`, `complex128`, `bool`, `variant`."
+        "description": "Must be one of the following: `float32`, `float64`, `int32`, `uint8`, `int16`, `int8`, `int64`, `bfloat16`, `uint16`, `float16`, `uint32`, `uint64`, `complex64`, `complex128`, `bool`, `variant`, `string`."
       },
       {
         "name": "precision",
@@ -3816,6 +3816,26 @@
         "name": "batching_queue",
         "type": "string",
         "default": ""
+      },
+      {
+        "name": "low_priority_max_batch_size",
+        "type": "int64",
+        "default": 0
+      },
+      {
+        "name": "low_priority_batch_timeout_micros",
+        "type": "int64",
+        "default": 0
+      },
+      {
+        "name": "low_priority_allowed_batch_sizes",
+        "type": "int64[]",
+        "default": []
+      },
+      {
+        "name": "low_priority_max_enqueued_batches",
+        "type": "int64",
+        "default": 0
       },
       {
         "name": "Tin",
@@ -9163,6 +9183,15 @@
         "name": "N",
         "type": "int64",
         "minimum": 2
+      },
+      {
+        "name": "shape_type",
+        "type": "type",
+        "description": "Must be one of the following: `int32`, `int64`.",
+        "default": {
+          "type": "type",
+          "value": 3
+        }
       }
     ],
     "inputs": [
@@ -9173,17 +9202,17 @@
       },
       {
         "name": "shape",
-        "description": "The `N` int32 vectors representing shape of tensors being concatenated.",
+        "description": "The `N` int32 or int64 vectors representing shape of tensors being concatenated.",
         "numberAttr": "N",
-        "type": 3
+        "typeAttr": "shape_type"
       }
     ],
     "outputs": [
       {
         "name": "offset",
-        "description": "The `N` int32 vectors representing the starting offset\nof input tensors within the concatenated output.",
+        "description": "The `N` vectors representing the starting offset\nof input tensors within the concatenated output with type matching `shape`.",
         "numberAttr": "N",
-        "type": 3
+        "typeAttr": "shape_type"
       }
     ]
   },
@@ -9557,6 +9586,77 @@
     "name": "ControlTrigger",
     "summary": "Does nothing. Serves as a control trigger for scheduling.",
     "description": "Only useful as a placeholder for control edges."
+  },
+  {
+    "name": "Conv",
+    "summary": "Computes a N-D convolution given (N+2)-D `input` and `filter` tensors.",
+    "description": "General function for computing a N-D convolution. It is required that\n`1 <= N <= 3`.",
+    "attributes": [
+      {
+        "name": "T",
+        "type": "type",
+        "description": "Must be one of the following: `float16`, `bfloat16`, `float32`, `float64`, `int32`."
+      },
+      {
+        "name": "strides",
+        "type": "int64[]",
+        "description": "1-D tensor of length `N+2`. The stride of the sliding window for each\ndimension of `input`. Must have `strides[0] = strides[N+1] = 1`."
+      },
+      {
+        "name": "padding",
+        "type": "string",
+        "description": "The type of padding algorithm to use. Must be one of the following: `SAME`, `VALID`, `EXPLICIT`."
+      },
+      {
+        "name": "explicit_paddings",
+        "type": "int64[]",
+        "description": "If `padding` is `\"EXPLICIT\"`, the list of explicit padding amounts. For the ith\ndimension, the amount of padding inserted before and after the dimension is\n`explicit_paddings[2 * i]` and `explicit_paddings[2 * i + 1]`, respectively. If\n`padding` is not `\"EXPLICIT\"`, `explicit_paddings` must be empty.",
+        "default": []
+      },
+      {
+        "name": "data_format",
+        "type": "string",
+        "description": "Used to set the data format. By default `CHANNELS_FIRST`, uses \n`NHWC (2D) / NDHWC (3D)` or if `CHANNELS_LAST`, uses `NCHW (2D) / NCDHW (3D)`. Must be one of the following: `CHANNELS_FIRST`, `CHANNELS_LAST`.",
+        "default": "CHANNELS_LAST"
+      },
+      {
+        "name": "dilations",
+        "type": "int64[]",
+        "description": "1-D tensor of length `N+2`. The dilation factor for each dimension of\n`input`. If set to `k > 1`, there will be `k-1` skipped cells between each\nfilter element on that dimension. The dimension order is determined by the\nvalue of `channels_last_format`, see above for details. Dilations in the batch\nand depth dimensions must be 1.",
+        "default": []
+      },
+      {
+        "name": "batch_dims",
+        "type": "int64",
+        "description": "A positive integer specifying the number of batch dimensions for the input\ntensor. Should be less than the rank of the input tensor.",
+        "default": 1
+      },
+      {
+        "name": "groups",
+        "type": "int64",
+        "description": "A positive integer specifying the number of groups in which the input is split\nalong the channel axis. Each group is convolved separately with\n`filters / groups` filters. The output is the concatenation of all the groups\nresults along the channel axis. Input channels and filters must both be\ndivisible by groups.",
+        "default": 1
+      }
+    ],
+    "inputs": [
+      {
+        "name": "input",
+        "description": "Tensor of type T and shape `batch_shape + spatial_shape + [in_channels]` in the\ncase that `channels_last_format = true` or shape\n`batch_shape + [in_channels] + spatial_shape` if `channels_last_format = false`.\nspatial_shape is N-dimensional with `N=2` or `N=3`.\nAlso note that `batch_shape` is dictated by the parameter `batch_dims`\nand defaults to 1.",
+        "typeAttr": "T"
+      },
+      {
+        "name": "filter",
+        "description": "An `(N+2)-D` Tensor with the same type as `input` and shape\n`spatial_filter_shape + [in_channels, out_channels]`, where spatial_filter_shape\nis N-dimensional with `N=2` or `N=3`.\n",
+        "typeAttr": "T"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "output",
+        "description": "A 4-D tensor. The dimension order is determined by the value of\n`channels_last_format`, see below for details.",
+        "typeAttr": "T"
+      }
+    ]
   },
   {
     "name": "Conv2D",
@@ -12684,6 +12784,72 @@
         "name": "tfdbg_run_id",
         "type": "string",
         "default": ""
+      }
+    ],
+    "inputs": [
+      {
+        "name": "input",
+        "description": "Input tensor, non-Reference type",
+        "typeAttr": "T"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "output",
+        "typeAttr": "T"
+      }
+    ]
+  },
+  {
+    "name": "DebugIdentityV3",
+    "summary": "Provides an identity mapping of the non-Ref type input tensor for debugging.",
+    "description": "Provides an identity mapping of the non-Ref type input tensor for debugging.",
+    "attributes": [
+      {
+        "name": "T",
+        "type": "type"
+      },
+      {
+        "name": "device_name",
+        "type": "string",
+        "description": "Name of the device on which the tensor resides.",
+        "default": ""
+      },
+      {
+        "name": "tensor_name",
+        "type": "string",
+        "description": "Name of the input tensor.",
+        "default": ""
+      },
+      {
+        "name": "io_of_node",
+        "type": "string",
+        "description": "Name of the node of which the tensor is an input or output.",
+        "default": ""
+      },
+      {
+        "name": "is_input",
+        "type": "boolean",
+        "description": "If true, the tensor is an input of the node; otherwise the output.",
+        "default": false
+      },
+      {
+        "name": "io_index",
+        "type": "int64",
+        "description": "The index of which the tensor is an input or output of the node.",
+        "default": -1
+      },
+      {
+        "name": "debug_urls",
+        "type": "string[]",
+        "description": "List of URLs to debug targets, e.g.,\n  file:///foo/tfdbg_dump, grpc:://localhost:11011",
+        "default": []
+      },
+      {
+        "name": "gated_grpc",
+        "type": "boolean",
+        "description": "Whether this op will be gated. If any of the debug_urls of this\n  debug node is of the grpc:// scheme, when the value of this attribute is set\n  to True, the data will not actually be sent via the grpc stream unless this\n  debug op has been enabled at the debug_url. If all of the debug_urls of this\n  debug node are of the grpc:// scheme and the debug op is enabled at none of\n  them, the output will be an empty Tensor.",
+        "default": false
       }
     ],
     "inputs": [
@@ -19865,7 +20031,7 @@
       {
         "name": "T",
         "type": "type",
-        "description": "Must be one of the following: `float16`, `float32`, `float64`."
+        "description": "Must be one of the following: `float16`, `bfloat16`, `float32`, `float64`."
       },
       {
         "name": "mode",
@@ -39465,10 +39631,14 @@
     ]
   },
   {
-    "name": "RelayoutGrad",
+    "name": "RelayoutLike",
     "attributes": [
       {
         "name": "T",
+        "type": "type"
+      },
+      {
+        "name": "U",
         "type": "type"
       }
     ],
@@ -39478,8 +39648,8 @@
         "typeAttr": "T"
       },
       {
-        "name": "forward_input",
-        "typeAttr": "T"
+        "name": "layout_input",
+        "typeAttr": "U"
       }
     ],
     "outputs": [
@@ -47711,7 +47881,7 @@
   {
     "name": "SetSize",
     "summary": "Number of unique elements along last dimension of input `set`.",
-    "description": "Input `set` is a `SparseTensor` represented by `set_indices`, `set_values`,\nand `set_shape`. The last dimension contains values in a set, duplicates are\nallowed but ignored.\n\nIf `validate_indices` is `True`, this op validates the order and range of `set`\nindices.",
+    "description": "Input `set` is a `SparseTensor` represented by `set_indices`, `set_values`,\nand `set_shape`. The last dimension contains values in a set, duplicates are\nallowed but ignored.\n\nIf `validate_indices` is `True`, this op validates the order and range of `set`\nindices. Setting is to `False` while passing invalid arguments results in\nundefined behavior.",
     "attributes": [
       {
         "name": "validate_indices",
@@ -51824,6 +51994,68 @@
     ]
   },
   {
+    "name": "SparseSegmentMeanGradV2",
+    "summary": "Computes gradients for SparseSegmentMean.",
+    "description": "Returns tensor \"output\" with same shape as grad, except for dimension 0 whose\nvalue is the number of unique indexes in \"indices\". Also returns vector\n\"sorted_unique_indices\" containing the corresponding indexes from \"indices\".",
+    "attributes": [
+      {
+        "name": "T",
+        "type": "type",
+        "description": "Must be one of the following: `bfloat16`, `float16`, `float32`, `float64`."
+      },
+      {
+        "name": "Tidx",
+        "type": "type",
+        "description": "Must be one of the following: `int32`, `int64`.",
+        "default": {
+          "type": "type",
+          "value": 3
+        }
+      },
+      {
+        "name": "Tsegmentids",
+        "type": "type",
+        "description": "Must be one of the following: `int32`, `int64`.",
+        "default": {
+          "type": "type",
+          "value": 3
+        }
+      }
+    ],
+    "inputs": [
+      {
+        "name": "grad",
+        "description": "gradient propagated to the SparseSegmentMean op.",
+        "typeAttr": "T"
+      },
+      {
+        "name": "indices",
+        "description": "indices passed to the corresponding SparseSegmentMean op.",
+        "typeAttr": "Tidx"
+      },
+      {
+        "name": "segment_ids",
+        "description": "segment_ids passed to the corresponding SparseSegmentMean op.",
+        "typeAttr": "Tsegmentids"
+      },
+      {
+        "name": "dense_output_dim0",
+        "description": "dimension 0 of \"data\" passed to SparseSegmentMean op.",
+        "type": 3
+      }
+    ],
+    "outputs": [
+      {
+        "name": "output",
+        "typeAttr": "T"
+      },
+      {
+        "name": "sorted_unique_indices",
+        "typeAttr": "Tidx"
+      }
+    ]
+  },
+  {
     "name": "SparseSegmentMeanWithNumSegments",
     "summary": "Computes the mean along sparse segments of a tensor.",
     "description": "Like `SparseSegmentMean`, but allows missing ids in `segment_ids`. If an id is\nmissing, the `output` tensor at that position will be zeroed.\n\nRead\n[the section on segmentation](https://tensorflow.org/api_docs/python/tf/math#Segmentation)\nfor an explanation of segments.",
@@ -52002,6 +52234,68 @@
     ]
   },
   {
+    "name": "SparseSegmentSqrtNGradV2",
+    "summary": "Computes gradients for SparseSegmentSqrtN.",
+    "description": "Returns tensor \"output\" with same shape as grad, except for dimension 0 whose\nvalue is the number of unique indexes in \"indices\". Also returns vector\n\"sorted_unique_indices\" containing the corresponding indexes from \"indices\".",
+    "attributes": [
+      {
+        "name": "T",
+        "type": "type",
+        "description": "Must be one of the following: `bfloat16`, `float16`, `float32`, `float64`."
+      },
+      {
+        "name": "Tidx",
+        "type": "type",
+        "description": "Must be one of the following: `int32`, `int64`.",
+        "default": {
+          "type": "type",
+          "value": 3
+        }
+      },
+      {
+        "name": "Tsegmentids",
+        "type": "type",
+        "description": "Must be one of the following: `int32`, `int64`.",
+        "default": {
+          "type": "type",
+          "value": 3
+        }
+      }
+    ],
+    "inputs": [
+      {
+        "name": "grad",
+        "description": "gradient propagated to the SparseSegmentSqrtN op.",
+        "typeAttr": "T"
+      },
+      {
+        "name": "indices",
+        "description": "indices passed to the corresponding SparseSegmentSqrtN op.",
+        "typeAttr": "Tidx"
+      },
+      {
+        "name": "segment_ids",
+        "description": "segment_ids passed to the corresponding SparseSegmentSqrtN op.",
+        "typeAttr": "Tsegmentids"
+      },
+      {
+        "name": "dense_output_dim0",
+        "description": "dimension 0 of \"data\" passed to SparseSegmentSqrtN op.",
+        "type": 3
+      }
+    ],
+    "outputs": [
+      {
+        "name": "output",
+        "typeAttr": "T"
+      },
+      {
+        "name": "sorted_unique_indices",
+        "typeAttr": "Tidx"
+      }
+    ]
+  },
+  {
     "name": "SparseSegmentSqrtNWithNumSegments",
     "summary": "Computes the sum along sparse segments of a tensor divided by the sqrt of N.",
     "description": "N is the size of the segment being reduced.\n\nLike `SparseSegmentSqrtN`, but allows missing ids in `segment_ids`. If an id is\nmissing, the `output` tensor at that position will be zeroed.\n\nRead\n[the section on segmentation](https://tensorflow.org/api_docs/python/tf/math#Segmentation)\nfor an explanation of segments.",
@@ -52176,6 +52470,68 @@
       {
         "name": "output",
         "typeAttr": "T"
+      }
+    ]
+  },
+  {
+    "name": "SparseSegmentSumGradV2",
+    "summary": "Computes gradients for SparseSegmentSum.",
+    "description": "Returns tensor \"output\" with same shape as grad, except for dimension 0 whose\nvalue is the number of unique indexes in \"indices\". Also returns vector\n\"sorted_unique_indices\" containing the corresponding indexes from \"indices\".",
+    "attributes": [
+      {
+        "name": "T",
+        "type": "type",
+        "description": "Must be one of the following: `bfloat16`, `float16`, `float32`, `float64`."
+      },
+      {
+        "name": "Tidx",
+        "type": "type",
+        "description": "Must be one of the following: `int32`, `int64`.",
+        "default": {
+          "type": "type",
+          "value": 3
+        }
+      },
+      {
+        "name": "Tsegmentids",
+        "type": "type",
+        "description": "Must be one of the following: `int32`, `int64`.",
+        "default": {
+          "type": "type",
+          "value": 3
+        }
+      }
+    ],
+    "inputs": [
+      {
+        "name": "grad",
+        "description": "gradient propagated to the SparseSegmentSum op.",
+        "typeAttr": "T"
+      },
+      {
+        "name": "indices",
+        "description": "indices passed to the corresponding SparseSegmentSum op.",
+        "typeAttr": "Tidx"
+      },
+      {
+        "name": "segment_ids",
+        "description": "segment_ids passed to the corresponding SparseSegmentSum op.",
+        "typeAttr": "Tsegmentids"
+      },
+      {
+        "name": "dense_output_dim0",
+        "description": "dimension 0 of \"data\" passed to SparseSegmentSum op.",
+        "type": 3
+      }
+    ],
+    "outputs": [
+      {
+        "name": "output",
+        "typeAttr": "T"
+      },
+      {
+        "name": "sorted_unique_indices",
+        "typeAttr": "Tidx"
       }
     ]
   },
@@ -55353,6 +55709,52 @@
     ]
   },
   {
+    "name": "StochasticCastToInt",
+    "summary": "Stochastically cast a given tensor from floats to ints.",
+    "description": "The values are cast with a deterministic pseudo-random tensor from a uniform distribution generated from user given key, counter, algorithm. Values will saturate if out of the specified integer type range, and will become zero if inputs are NaN.  \n\nThe outputs are a deterministic function of `input`, `key`, `counter`, `alg`.\n",
+    "attributes": [
+      {
+        "name": "Tin",
+        "type": "type",
+        "description": "The type of the input. Must be one of the following: `float16`, `bfloat16`, `float32`, `float64`."
+      },
+      {
+        "name": "Tout",
+        "type": "type",
+        "description": "The type of the output. Must be one of the following: `int8`, `int16`, `int32`."
+      }
+    ],
+    "inputs": [
+      {
+        "name": "input",
+        "description": "The operand to stochastically cast to int.",
+        "typeAttr": "Tin"
+      },
+      {
+        "name": "key",
+        "description": "Key for the counter-based RNG algorithm (shape uint64[1]).",
+        "type": 23
+      },
+      {
+        "name": "counter",
+        "description": "Initial counter for the counter-based RNG algorithm (shape uint64[2] or uint64[1] depending on the algorithm). If a larger vector is given, only the needed portion on the left (i.e. [:N]) will be used.",
+        "type": 23
+      },
+      {
+        "name": "alg",
+        "description": "The RNG algorithm (shape int32[]).",
+        "type": 3
+      }
+    ],
+    "outputs": [
+      {
+        "name": "output",
+        "description": "The cast result with the same shape as the input.",
+        "typeAttr": "Tout"
+      }
+    ]
+  },
+  {
     "name": "StopGradient",
     "summary": "Stops gradient computation.",
     "description": "When executed in a graph, this op outputs its input tensor as-is.\n\nWhen building ops to compute gradients, this op prevents the contribution of\nits inputs to be taken into account.  Normally, the gradient generator adds ops\nto a graph to compute the derivatives of a specified 'loss' by recursively\nfinding out inputs that contributed to its computation.  If you insert this op\nin the graph it inputs are masked from the gradient generator.  They are not\ntaken into account for computing gradients.\n\nThis is useful any time you want to compute a value with TensorFlow but need\nto pretend that the value was a constant. For example, the softmax function\nfor a vector x can be written as\n\n```python\n\n  def softmax(x):\n    numerator = tf.exp(x)\n    denominator = tf.reduce_sum(numerator)\n    return numerator / denominator\n```\n\nThis however is susceptible to overflow if the values in x are large. An\nalternative more stable way is to subtract the maximum of x from each of the\nvalues.\n\n```python\n\n  def stable_softmax(x):\n    z = x - tf.reduce_max(x)\n    numerator = tf.exp(z)\n    denominator = tf.reduce_sum(numerator)\n    return numerator / denominator\n```\n\nHowever, when we backprop through the softmax to x, we dont want to backprop\nthrough the `tf.reduce_max(x)` (if the max values are not unique then the\ngradient could flow to the wrong input) calculation and treat that as a\nconstant. Therefore, we should write this out as\n\n```python\n\n  def stable_softmax(x):\n    z = x - tf.stop_gradient(tf.reduce_max(x))\n    numerator = tf.exp(z)\n    denominator = tf.reduce_sum(numerator)\n    return numerator / denominator\n```\n\nSome other examples include:\n\n*  The *EM* algorithm where the *M-step* should not involve backpropagation\n   through the output of the *E-step*.\n*  Contrastive divergence training of Boltzmann machines where, when\n   differentiating the energy function, the training must not backpropagate\n   through the graph that generated the samples from the model.\n*  Adversarial training, where no backprop should happen through the adversarial\n   example generation process.",
@@ -55641,7 +56043,7 @@
       {
         "name": "N",
         "type": "int64",
-        "minimum": 1
+        "minimum": 0
       },
       {
         "name": "separator",
@@ -56314,6 +56716,45 @@
       {
         "name": "buffer_size",
         "description": "A scalar representing the number of bytes to buffer. A value of\n0 means no buffering will be performed.",
+        "type": 9
+      }
+    ],
+    "outputs": [
+      {
+        "name": "handle",
+        "type": 21
+      }
+    ]
+  },
+  {
+    "name": "TFRecordDatasetV2",
+    "summary": "Creates a dataset that emits the records from one or more TFRecord files.",
+    "attributes": [
+      {
+        "name": "metadata",
+        "type": "string",
+        "default": ""
+      }
+    ],
+    "inputs": [
+      {
+        "name": "filenames",
+        "description": "A scalar or vector containing the name(s) of the file(s) to be\nread.",
+        "type": 7
+      },
+      {
+        "name": "compression_type",
+        "description": "A scalar containing either (i) the empty string (no\ncompression), (ii) \"ZLIB\", or (iii) \"GZIP\".",
+        "type": 7
+      },
+      {
+        "name": "buffer_size",
+        "description": "A scalar representing the number of bytes to buffer. A value of\n0 means no buffering will be performed.",
+        "type": 9
+      },
+      {
+        "name": "byte_offsets",
+        "description": "A scalar or vector containing the number of bytes for each file\nthat will be skipped prior to reading.",
         "type": 9
       }
     ],

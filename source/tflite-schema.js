@@ -1475,6 +1475,7 @@ $root.tflite.StridedSliceOptions = class StridedSliceOptions {
         $.ellipsis_mask = reader.int32_(position, 8, 0);
         $.new_axis_mask = reader.int32_(position, 10, 0);
         $.shrink_axis_mask = reader.int32_(position, 12, 0);
+        $.offset = reader.bool_(position, 14, false);
         return $;
     }
 
@@ -1485,6 +1486,7 @@ $root.tflite.StridedSliceOptions = class StridedSliceOptions {
         $.ellipsis_mask = reader.value(json.ellipsis_mask, 0);
         $.new_axis_mask = reader.value(json.new_axis_mask, 0);
         $.shrink_axis_mask = reader.value(json.shrink_axis_mask, 0);
+        $.offset = reader.value(json.offset, false);
         return $;
     }
 };
@@ -2683,6 +2685,8 @@ $root.tflite.Operator = class Operator {
         $.custom_options_format = reader.int8_(position, 16, 0);
         $.mutating_variable_inputs = reader.bools_(position, 18);
         $.intermediates = reader.typedArray(position, 20, Int32Array);
+        $.large_custom_options_offset = reader.uint64_(position, 22, 0);
+        $.large_custom_options_size = reader.uint64_(position, 24, 0);
         return $;
     }
 
@@ -2696,6 +2700,8 @@ $root.tflite.Operator = class Operator {
         $.custom_options_format = $root.tflite.CustomOptionsFormat[json.custom_options_format];
         $.mutating_variable_inputs = reader.array(json.mutating_variable_inputs);
         $.intermediates = reader.typedArray(json.intermediates, Int32Array);
+        $.large_custom_options_offset = reader.value(json.large_custom_options_offset, 0);
+        $.large_custom_options_size = reader.value(json.large_custom_options_size, 0);
         return $;
     }
 };
@@ -2728,12 +2734,16 @@ $root.tflite.Buffer = class Buffer {
     static decode(reader, position) {
         const $ = new $root.tflite.Buffer();
         $.data = reader.typedArray(position, 4, Uint8Array);
+        $.offset = reader.uint64_(position, 6, 0);
+        $.size = reader.uint64_(position, 8, 0);
         return $;
     }
 
     static decodeText(reader, json) {
         const $ = new $root.tflite.Buffer();
         $.data = reader.typedArray(json.data, Uint8Array);
+        $.offset = reader.value(json.offset, 0);
+        $.size = reader.value(json.size, 0);
         return $;
     }
 };
@@ -3085,6 +3095,16 @@ $root.tflite.TensorMetadata = class TensorMetadata {
     }
 };
 
+$root.tflite.CustomMetadata = class CustomMetadata {
+
+    static decode(reader, position) {
+        const $ = new $root.tflite.CustomMetadata();
+        $.name = reader.string_(position, 4, null);
+        $.data = reader.typedArray(position, 6, Uint8Array);
+        return $;
+    }
+};
+
 $root.tflite.SubGraphMetadata = class SubGraphMetadata {
 
     static decode(reader, position) {
@@ -3098,6 +3118,7 @@ $root.tflite.SubGraphMetadata = class SubGraphMetadata {
         $.output_process_units = reader.tableArray(position, 16, $root.tflite.ProcessUnit.decode);
         $.input_tensor_groups = reader.tableArray(position, 18, $root.tflite.TensorGroup.decode);
         $.output_tensor_groups = reader.tableArray(position, 20, $root.tflite.TensorGroup.decode);
+        $.custom_metadata = reader.tableArray(position, 22, $root.tflite.CustomMetadata.decode);
         return $;
     }
 };

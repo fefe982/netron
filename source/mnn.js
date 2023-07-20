@@ -20,22 +20,20 @@ mnn.ModelFactory = class {
         return null;
     }
 
-    open(context) {
-        return context.require('./mnn-schema').then((/* schema */) => {
-            let net = null;
-            try {
-                mnn.schema = flatbuffers.get('mnn').MNN;
-                const stream = context.stream;
-                const reader = flatbuffers.BinaryReader.open(stream);
-                net = mnn.schema.Net.create(reader);
-            } catch (error) {
-                const message = error && error.message ? error.message : error.toString();
-                throw new mnn.Error('File format is not mnn.Net (' + message.replace(/\.$/, '') + ').');
-            }
-            return context.metadata('mnn-metadata.json').then((metadata) => {
-                return new mnn.Model(metadata, net);
-            });
-        });
+    async open(context) {
+        await context.require('./mnn-schema');
+        let net = null;
+        try {
+            mnn.schema = flatbuffers.get('mnn').MNN;
+            const stream = context.stream;
+            const reader = flatbuffers.BinaryReader.open(stream);
+            net = mnn.schema.Net.create(reader);
+        } catch (error) {
+            const message = error && error.message ? error.message : error.toString();
+            throw new mnn.Error('File format is not mnn.Net (' + message.replace(/\.$/, '') + ').');
+        }
+        const metadata = await context.metadata('mnn-metadata.json');
+        return new mnn.Model(metadata, net);
     }
 };
 
@@ -107,14 +105,12 @@ mnn.Graph = class {
                 const op = consts.get(index);
                 if (op) {
                     const tensor = op ? mnn.Utility.createTensor(op.main, 'Const') : null;
-                    const argument = new mnn.Argument(name, null, tensor);
-                    args.set(index, argument);
+                    args.set(index, new mnn.Value(name, null, tensor));
                 } else {
                     const extraTensorDescribe = net.extraTensorDescribe[index];
                     const blob = extraTensorDescribe ? extraTensorDescribe.blob : null;
                     const type = blob && blob.dims && blob.dims.length > 0 ? new mnn.TensorType(blob.dataType, new mnn.TensorShape(blob.dims), blob.dataFormat) : null;
-                    const argument = new mnn.Argument(name, type, null);
-                    args.set(index, argument);
+                    args.set(index, new mnn.Value(name, type, null));
                 }
             }
             return args.get(index);
@@ -123,7 +119,7 @@ mnn.Graph = class {
         for (const op of oplists) {
             if (op.type === mnn.schema.OpType.Input) {
                 const args = Array.from(op.outputIndexes).map((index) => arg(index));
-                this._inputs.push(new mnn.Parameter(op.name, true, args));
+                this._inputs.push(new mnn.Argument(op.name, args));
             } else {
                 this._nodes.push(new mnn.Node(metadata, op, net, arg));
             }
@@ -131,9 +127,9 @@ mnn.Graph = class {
 
         for (let i = 0; i < net.tensorName.length; i++) {
             if (!inputs.has(i)) {
-                const argument = arg(i);
-                const parameter = new mnn.Parameter(argument.name, true, [ argument ]);
-                this._outputs.push(parameter);
+                const value = arg(i);
+                const argument = new mnn.Argument(value.name, [ value ]);
+                this._outputs.push(argument);
             }
         }
     }
@@ -166,19 +162,19 @@ mnn.Node = class {
         this._outputs = [];
         this._chains = [];
         if (op.inputIndexes && op.inputIndexes.length > 0) {
-            this._inputs.push(new mnn.Parameter('input', true, Array.from(op.inputIndexes).map((index) => arg(index))));
+            this._inputs.push(new mnn.Argument('input', Array.from(op.inputIndexes).map((index) => arg(index))));
         }
         if (op.outputIndexes && op.outputIndexes.length > 0) {
-            this._outputs.push(new mnn.Parameter('output', true, Array.from(op.outputIndexes).map((index) => arg(index))));
+            this._outputs.push(new mnn.Argument('output', Array.from(op.outputIndexes).map((index) => arg(index))));
         }
         const param = op.main;
         if (param) {
             const parameters = [ param ];
             if (param instanceof mnn.schema.Blob) {
                 const tensor = mnn.Utility.createTensor(param, 'Blob');
-                const argument = new mnn.Argument('', null, tensor);
-                const parameter = new mnn.Parameter('value', true, [ argument ]);
-                this._inputs.push(parameter);
+                const value = new mnn.Value('', null, tensor);
+                const argument = new mnn.Argument('value', [ value ]);
+                this._inputs.push(argument);
                 parameters.splice(0, parameters.length);
             } else if (param instanceof mnn.schema.Convolution2D) {
                 const common = param.common;
@@ -244,9 +240,8 @@ mnn.Node = class {
         const shape = new mnn.TensorShape(dimensions);
         const type = new mnn.TensorType(dataType, shape);
         const tensor = new mnn.Tensor('Weight', type, value);
-        const argument = new mnn.Argument('', null, tensor);
-        const parameter = new mnn.Parameter(name, true, [ argument ]);
-        this._inputs.push(parameter);
+        const argument = new mnn.Argument(name, [ new mnn.Value('', null, tensor) ]);
+        this._inputs.push(argument);
     }
 
     get type() {
@@ -313,28 +308,23 @@ mnn.Attribute = class {
     }
 };
 
-mnn.Parameter = class {
+mnn.Argument = class {
 
-    constructor(name, visible, args) {
+    constructor(name, value) {
         this._name = name;
-        this._visible = visible;
-        this._arguments = args;
+        this._value = value;
     }
 
     get name() {
         return this._name;
     }
 
-    get visible() {
-        return this._visible;
-    }
-
-    get arguments() {
-        return this._arguments;
+    get value() {
+        return this._value;
     }
 };
 
-mnn.Argument = class {
+mnn.Value = class {
 
     constructor(name, type, initializer) {
         this._name = name;

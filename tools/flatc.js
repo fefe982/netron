@@ -1,6 +1,6 @@
 
 const flatc = {};
-const fs = require('fs');
+const fs = require('fs').promises;
 const path = require('path');
 
 flatc.Object = class {
@@ -323,7 +323,7 @@ flatc.Parser = class {
 
     constructor(text, file, root) {
         // https://google.github.io/flatbuffers/flatbuffers_grammar.html
-        this._tokenizer = new flatc.Parser.Tokenizer(text, file);
+        this._tokenizer = new flatc.Tokenizer(text, file);
         this._root = root;
         this._context = root.defineNamespace('');
     }
@@ -524,7 +524,7 @@ flatc.Parser = class {
     }
 };
 
-flatc.Parser.Tokenizer = class {
+flatc.Tokenizer = class {
 
     constructor(text, file) {
         this._text = text;
@@ -549,7 +549,7 @@ flatc.Parser.Tokenizer = class {
         }
         const next = this._position + this._token.token.length;
         while (this._position < next) {
-            if (flatc.Parser.Tokenizer._isNewline(this._get(this._position))) {
+            if (flatc.Tokenizer._isNewline(this._get(this._position))) {
                 this._position = this._newLine(this._position);
                 this._lineStart = this._position;
                 this._line++;
@@ -690,7 +690,7 @@ flatc.Parser.Tokenizer = class {
 
     _skipLine() {
         while (this._position < this._text.length) {
-            if (flatc.Parser.Tokenizer._isNewline(this._get(this._position))) {
+            if (flatc.Tokenizer._isNewline(this._get(this._position))) {
                 break;
             }
             this._position++;
@@ -700,11 +700,11 @@ flatc.Parser.Tokenizer = class {
     _skipWhitespace() {
         while (this._position < this._text.length) {
             const c = this._get(this._position);
-            if (flatc.Parser.Tokenizer._isSpace(c)) {
+            if (flatc.Tokenizer._isSpace(c)) {
                 this._position++;
                 continue;
             }
-            if (flatc.Parser.Tokenizer._isNewline(c)) {
+            if (flatc.Tokenizer._isNewline(c)) {
                 // Implicit Line Continuation
                 this._position = this._newLine(this._position);
                 this._lineStart = this._position;
@@ -769,13 +769,18 @@ flatc.Parser.Tokenizer = class {
 
 flatc.Root = class extends flatc.Object {
 
-    constructor(root, paths, files) {
+    constructor(root) {
         super(null, root);
         this._namespaces = new Map();
         this._files = new Set();
         this.root_type = new Set();
+    }
+
+    async load(paths, files) {
         for (const file of files) {
-            this._parseFile(paths, file);
+            /* eslint-disable no-await-in-loop */
+            await this._parseFile(paths, file);
+            /* eslint-enable no-await-in-loop */
         }
         this.resolve();
     }
@@ -821,16 +826,20 @@ flatc.Root = class extends flatc.Object {
         return super.find(name, type);
     }
 
-    _parseFile(paths, file) {
+    async _parseFile(paths, file) {
         if (!this._files.has(file)) {
             this._files.add(file);
-            const content = fs.readFileSync(file, 'utf-8');
+            const content = await fs.readFile(file, 'utf-8');
             const parser = new flatc.Parser(content, file, this);
             const includes = parser.include();
             for (const include of includes) {
-                const includeFile = this._resolve(paths, file, include);
+                /* eslint-disable no-await-in-loop */
+                const includeFile = await this._resolve(paths, file, include);
+                /* eslint-enable no-await-in-loop */
                 if (includeFile) {
-                    this._parseFile(paths, includeFile);
+                    /* eslint-disable no-await-in-loop */
+                    await this._parseFile(paths, includeFile);
+                    /* eslint-enable no-await-in-loop */
                     continue;
                 }
                 throw new flatc.Error("Include '" + include + "' not found.");
@@ -839,14 +848,26 @@ flatc.Root = class extends flatc.Object {
         }
     }
 
-    _resolve(paths, origin, target) {
+    async _resolve(paths, origin, target) {
+        const access = async (path) => {
+            try {
+                await fs.access(path);
+                return true;
+            } catch (error) {
+                return false;
+            }
+        };
         const file = path.join(path.dirname(origin), target);
-        if (fs.existsSync(file)) {
+        const exists = await access(file);
+        if (exists) {
             return file;
         }
         for (const current of paths) {
             const file = path.join(current, target);
-            if (fs.existsSync(file)) {
+            /* eslint-disable no-await-in-loop */
+            const exists = await access(file);
+            /* eslint-enable no-await-in-loop */
+            if (exists) {
                 return file;
             }
         }
@@ -1211,8 +1232,7 @@ flatc.Error = class extends Error {
     }
 };
 
-const main = (args) => {
-
+const main = async (args) => {
     const options = { verbose: false, root: 'default', out: '', text: false, paths: [], files: [] };
     while (args.length > 0) {
         const arg = args.shift();
@@ -1240,12 +1260,12 @@ const main = (args) => {
                 break;
         }
     }
-
     try {
-        const root = new flatc.Root(options.root, options.paths, options.files);
+        const root = new flatc.Root(options.root);
+        await root.load(options.paths, options.files);
         const generator = new flatc.Generator(root, options.text);
         if (options.out) {
-            fs.writeFileSync(options.out, generator.content, 'utf-8');
+            await fs.writeFile(options.out, generator.content, 'utf-8');
         }
     } catch (err) {
         if (err instanceof flatc.Error && !options.verbose) {
@@ -1253,16 +1273,15 @@ const main = (args) => {
         } else {
             process.stderr.write(err.stack + '\n');
         }
-        return 1;
+        process.exit(1);
     }
-    return 0;
+    process.exit(0);
 };
 
 if (typeof process === 'object' && Array.isArray(process.argv) &&
     process.argv.length > 1 && process.argv[1] === __filename) {
     const args = process.argv.slice(2);
-    const code = main(args);
-    process.exit(code);
+    main(args);
 }
 
 if (typeof module !== 'undefined' && typeof module.exports === 'object') {

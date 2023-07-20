@@ -36,30 +36,29 @@ tnn.ModelFactory = class {
         return '';
     }
 
-    open(context, match) {
-        return context.metadata('tnn-metadata.json').then((metadata) => {
-            switch (match) {
-                case 'tnn.model': {
-                    const tnnmodel = context.identifier.substring(0, context.identifier.length - 9) + '.tnnmodel';
-                    return context.request(tnnmodel, null).then((stream) => {
-                        const buffer = stream.peek();
-                        return new tnn.Model(metadata, context.stream.peek(), buffer);
-                    }).catch(() => {
-                        return new tnn.Model(metadata, context.stream.peek(), null);
-                    });
-                }
-                case 'tnn.params': {
-                    const tnnproto = context.identifier.substring(0, context.identifier.length - 9) + '.tnnproto';
-                    return context.request(tnnproto, null).then((stream) => {
-                        const buffer = stream.peek();
-                        return new tnn.Model(metadata, buffer, context.stream.peek());
-                    });
-                }
-                default: {
-                    throw new tnn.Error("Unsupported TNN format '" + match + "'.");
+    async open(context, target) {
+        const metadata = await context.metadata('tnn-metadata.json');
+        switch (target) {
+            case 'tnn.model': {
+                const tnnmodel = context.identifier.substring(0, context.identifier.length - 9) + '.tnnmodel';
+                try {
+                    const stream = await context.request(tnnmodel, null);
+                    const buffer = stream.peek();
+                    return new tnn.Model(metadata, context.stream.peek(), buffer);
+                } catch (error) {
+                    return new tnn.Model(metadata, context.stream.peek(), null);
                 }
             }
-        });
+            case 'tnn.params': {
+                const tnnproto = context.identifier.substring(0, context.identifier.length - 9) + '.tnnproto';
+                const stream = await context.request(tnnproto, null);
+                const buffer = stream.peek();
+                return new tnn.Model(metadata, buffer, context.stream.peek());
+            }
+            default: {
+                throw new tnn.Error("Unsupported TNN format '" + target + "'.");
+            }
+        }
     }
 };
 
@@ -88,16 +87,28 @@ tnn.Graph = class {
         this._nodes = [];
         const resources = new tnn.LayerResourceReader(tnnmodel);
         const reader = new tnn.TextProtoReader(tnnproto);
+        const args = new Map();
+        const arg = (name, type, tensor) => {
+            if (name.length === 0) {
+                return new tnn.Value(name, type || null, tensor || null);
+            }
+            if (!args.has(name)) {
+                args.set(name, new tnn.Value(name, type || null, tensor || null));
+            } else if (type || tensor) {
+                throw new tnn.Value("Duplicate value '" + name + "'.");
+            }
+            return args.get(name);
+        };
         for (const input of reader.inputs) {
             const shape = new tnn.TensorShape(input.shape);
             const type = new tnn.TensorType(input.data_type, shape);
-            this._inputs.push(new tnn.Parameter(input.name, [ new tnn.Argument(input.name, type, null) ]));
+            this._inputs.push(new tnn.Argument(input.name, [ arg(input.name, type) ]));
         }
         for (const output of reader.outputs) {
-            this._outputs.push(new tnn.Parameter(output.name, [ new tnn.Argument(output.name, null, null) ]));
+            this._outputs.push(new tnn.Argument(output.name, [ arg(output.name) ]));
         }
         for (const layer of reader.layers) {
-            this._nodes.push(new tnn.Node(metadata, resources, layer));
+            this._nodes.push(new tnn.Node(metadata, resources, layer, arg));
         }
     }
 
@@ -114,31 +125,27 @@ tnn.Graph = class {
     }
 };
 
-tnn.Parameter = class {
+tnn.Argument = class {
 
-    constructor(name, args) {
+    constructor(name, value) {
         this._name = name;
-        this._arguments = args;
+        this._value = value;
     }
 
     get name() {
         return this._name;
     }
 
-    get visible() {
-        return true;
-    }
-
-    get arguments() {
-        return this._arguments;
+    get value() {
+        return this._value;
     }
 };
 
-tnn.Argument = class {
+tnn.Value = class {
 
     constructor(name, type, initializer) {
         if (typeof name !== 'string') {
-            throw new tnn.Error("Invalid argument identifier '" + JSON.stringify(name) + "'.");
+            throw new tnn.Error("Invalid value identifier '" + JSON.stringify(name) + "'.");
         }
         this._name = name;
         this._type = type || null;
@@ -163,7 +170,7 @@ tnn.Argument = class {
 
 tnn.Node = class {
 
-    constructor(metadata, resources, layer) {
+    constructor(metadata, resources, layer, arg) {
         this._inputs = [];
         this._outputs = [];
         this._attributes = [];
@@ -192,17 +199,15 @@ tnn.Node = class {
             for (const inputDef of this._type.inputs) {
                 if (inputIndex < inputs.length || inputDef.option != 'optional') {
                     const inputCount = (inputDef.option == 'variadic') ? (inputs.length - inputIndex) : 1;
-                    const inputArguments = inputs.slice(inputIndex, inputIndex + inputCount).filter((id) => id != '' || inputDef.option != 'optional').map((id) => {
-                        return new tnn.Argument(id, null, null);
-                    });
-                    this._inputs.push(new tnn.Parameter(inputDef.name, inputArguments));
+                    const inputArguments = inputs.slice(inputIndex, inputIndex + inputCount).filter((id) => id != '' || inputDef.option != 'optional').map((id) => arg(id));
+                    this._inputs.push(new tnn.Argument(inputDef.name, inputArguments));
                     inputIndex += inputCount;
                 }
             }
         } else {
             this._inputs.push(...inputs.slice(inputIndex).map((input, index) => {
                 const inputName = ((inputIndex + index) == 0) ? 'input' : (inputIndex + index).toString();
-                return new tnn.Parameter(inputName, [ new tnn.Argument(input, null, null) ]);
+                return new tnn.Argument(inputName, [ arg(input) ]);
             }));
         }
 
@@ -212,19 +217,25 @@ tnn.Node = class {
             for (const outputDef of this._type.outputs) {
                 if (outputIndex < outputs.length || outputDef.option != 'optional') {
                     const outputCount = (outputDef.option == 'variadic') ? (outputs.length - outputIndex) : 1;
-                    const outputArguments = outputs.slice(outputIndex, outputIndex + outputCount).map((id) => {
-                        return new tnn.Argument(id, null, null);
-                    });
-                    this._outputs.push(new tnn.Parameter(outputDef.name, outputArguments));
+                    const outputArguments = outputs.slice(outputIndex, outputIndex + outputCount).map((id) => arg(id));
+                    this._outputs.push(new tnn.Argument(outputDef.name, outputArguments));
                     outputIndex += outputCount;
                 }
             }
         } else {
             this._outputs.push(...outputs.slice(outputIndex).map((output, index) => {
                 const outputName = ((outputIndex + index) == 0) ? 'output' : (outputIndex + index).toString();
-                return new tnn.Parameter(outputName, [ new tnn.Argument(output, null, null) ]);
+                return new tnn.Argument(outputName, [ arg(output) ]);
             }));
         }
+        const weight = (resource, name, shape) => {
+            const initializer = resource[name];
+            if (!initializer) {
+                throw new tnn.Error("Layer initializer'" + resource.type + "." + name + "' not found '");
+            }
+            const tensor = new tnn.Tensor(new tnn.TensorType(initializer.dataType, new tnn.TensorShape(shape)), initializer.value);
+            this._inputs.push(new tnn.Argument(name, [ arg('', null, tensor) ]));
+        };
         switch (this._type.name) {
             case 'Convolution':
             case 'ConvolutionDepthWise':
@@ -236,12 +247,12 @@ tnn.Node = class {
                     const kernel_w = parseInt(layer.attr['3'] || 0, 10);
                     const kernel_h = parseInt(layer.attr['4'] || kernel_w, 10);
                     const weight_data_size = resource.filter.length;
-                    this._weight(resource, 'filter', [ num_output, weight_data_size / (num_output * kernel_w * kernel_h), kernel_w, kernel_h ]);
+                    weight(resource, 'filter', [ num_output, weight_data_size / (num_output * kernel_w * kernel_h), kernel_w, kernel_h ]);
                     if (resource.bias) {
-                        this._weight(resource, 'bias', [ num_output ]);
+                        weight(resource, 'bias', [ num_output ]);
                     }
                     if (resource.quantized) {
-                        this._weight(resource, 'quantized', [ num_output ]);
+                        weight(resource, 'quantized', [ num_output ]);
                     }
                 }
                 break;
@@ -254,9 +265,9 @@ tnn.Node = class {
                     const kernel_h = parseInt(layer.attr['4'] || kernel_w, 10);
                     const kernel_d = parseInt(layer.attr['5'] || kernel_w, 10);
                     const weight_data_size = resource.filter.length;
-                    this._weight(resource, 'weight', [ num_output, weight_data_size / (num_output * kernel_w * kernel_h  * kernel_d), kernel_w, kernel_h, kernel_d ]);
+                    weight(resource, 'weight', [ num_output, weight_data_size / (num_output * kernel_w * kernel_h  * kernel_d), kernel_w, kernel_h, kernel_d ]);
                     if (resource.bias) {
-                        this._weight(resources, 'bias', [ num_output ]);
+                        weight(resources, 'bias', [ num_output ]);
                     }
                 }
                 break;
@@ -266,10 +277,10 @@ tnn.Node = class {
                 if (resource) {
                     const num_output = parseInt(layer.attr['0'] || 0, 10);
                     const weight_data_size = resource.weight.length;
-                    this._weight(resource, 'weight', [ num_output, weight_data_size / num_output ]);
-                    this._weight(resource, 'bias', [ num_output ]);
+                    weight(resource, 'weight', [ num_output, weight_data_size / num_output ]);
+                    weight(resource, 'bias', [ num_output ]);
                     if (resource.weight.dataType === 'int8') {
-                        this._weight(resource, 'scale', [ num_output ]);
+                        weight(resource, 'scale', [ num_output ]);
                     }
                 }
                 break;
@@ -277,7 +288,7 @@ tnn.Node = class {
             case 'PReLU': {
                 const resource = resources.read(this._name);
                 if (resource) {
-                    this._weight(resource, 'slope', [ resource.slope.length ]);
+                    weight(resource, 'slope', [ resource.slope.length ]);
                 }
                 break;
             }
@@ -285,8 +296,8 @@ tnn.Node = class {
             case 'InstBatchNormCxx': {
                 const resource = resources.read(this._name);
                 if (resource) {
-                    this._weight(resource, 'scale', [ resource.scale.length ]);
-                    this._weight(resource, 'bias', [ resource.bias.length ]);
+                    weight(resource, 'scale', [ resource.scale.length ]);
+                    weight(resource, 'bias', [ resource.bias.length ]);
                 }
                 break;
             }
@@ -299,7 +310,7 @@ tnn.Node = class {
                     const resource = resources.read(this._name);
                     if (resource) {
                         const num_output = resource.slope.length;
-                        this._weight(resource, 'slope', [ num_output ]);
+                        weight(resource, 'slope', [ num_output ]);
                     }
                 }
                 break;
@@ -308,12 +319,12 @@ tnn.Node = class {
                 const resource = resources.read(this._name);
                 if (resource) {
                     const weight_size = resource.ccm_weight.length;
-                    this._weight(resource, 'ccm_weight', [ weight_size ]);
-                    this._weight(resource, 'ccm_bias', [ weight_size ]);
-                    this._weight(resource, 'shifts', [ weight_size ]);
-                    this._weight(resource, 'slopes', [ weight_size ]);
-                    this._weight(resource, 'projection_weight', [ weight_size ]);
-                    this._weight(resource, 'projection_bias', [ weight_size ]);
+                    weight(resource, 'ccm_weight', [ weight_size ]);
+                    weight(resource, 'ccm_bias', [ weight_size ]);
+                    weight(resource, 'shifts', [ weight_size ]);
+                    weight(resource, 'slopes', [ weight_size ]);
+                    weight(resource, 'projection_weight', [ weight_size ]);
+                    weight(resource, 'projection_bias', [ weight_size ]);
                 }
                 break;
             }
@@ -321,8 +332,8 @@ tnn.Node = class {
                 const resource = resources.read(this._name);
                 if (resource) {
                     const scale_data_size = resource.scale.length;
-                    this._weight(resource, 'scale', [ scale_data_size]);
-                    this._weight(resource, 'bias', [ scale_data_size ]);
+                    weight(resource, 'scale', [ scale_data_size]);
+                    weight(resource, 'bias', [ scale_data_size ]);
                 }
                 break;
             }
@@ -330,10 +341,10 @@ tnn.Node = class {
                 const resource = resources.read(this._name);
                 if (resource) {
                     if (resource.data) {
-                        this._weight(resource, 'data', [ resource.data.length ]);
+                        weight(resource, 'data', [ resource.data.length ]);
                     }
                     if (resource.indices) {
-                        this._weight(resource, 'indices', [ resource.indices.length ]);
+                        weight(resource, 'indices', [ resource.indices.length ]);
                     }
                 }
                 break;
@@ -363,27 +374,18 @@ tnn.Node = class {
     get outputs() {
         return this._outputs;
     }
-
-    _weight(resource, name, shape) {
-        const initializer = resource[name];
-        if (!initializer) {
-            throw new tnn.Error("Layer initializer'" + resource.type + "." + name + "' not found '");
-        }
-        const tensor = new tnn.Tensor(new tnn.TensorType(initializer.dataType, new tnn.TensorShape(shape)), initializer.value);
-        this._inputs.push(new tnn.Parameter(name, [ new tnn.Argument('', null, tensor) ]));
-    }
 };
 
 tnn.Attribute = class {
 
-    constructor(schema, key, value) {
+    constructor(metadata, key, value) {
         this._type = '';
         this._name = key.toString();
         this._value = value;
-        if (schema) {
-            this._name = schema.name;
-            if (schema.type) {
-                this._type = schema.type;
+        if (metadata) {
+            this._name = metadata.name;
+            if (metadata.type) {
+                this._type = metadata.type;
             }
             switch (this._type) {
                 case '':
@@ -403,10 +405,10 @@ tnn.Attribute = class {
                 default:
                     throw new tnn.Error("Unsupported attribute type '" + this._type + "'.");
             }
-            if (Object.prototype.hasOwnProperty.call(schema, 'visible') && !schema.visible) {
+            if (metadata && metadata.visible === false) {
                 this._visible = false;
-            } else if (Object.prototype.hasOwnProperty.call(schema, 'default')) {
-                if (this._value == schema.default || (this._value && this._value.toString() == schema.default.toString())) {
+            } else if (Object.prototype.hasOwnProperty.call(metadata, 'default')) {
+                if (this._value == metadata.default || (this._value && this._value.toString() == metadata.default.toString())) {
                     this._visible = false;
                 }
             }

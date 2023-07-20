@@ -13,23 +13,32 @@ var grapher = require('./grapher');
 
 view.View = class {
 
-    constructor(host, id) {
+    constructor(host) {
         this._host = host;
-        this._id = id ? ('-' + id) : '';
-        this._options = {
+        this._defaultOptions = {
             weights: true,
             attributes: false,
             names: false,
             direction: 'vertical',
             mousewheel: 'scroll'
         };
-        this._host.view(this).then(() => {
-            this._model = null;
-            this._graphs = [];
-            this._selection = [];
-            this._sidebar = new view.Sidebar(this._host, id);
-            this._searchText = '';
-            this._modelFactoryService = new view.ModelFactoryService(this._host);
+        this._options = Object.assign({}, this._defaultOptions);
+        this._model = null;
+        this._graphs = [];
+        this._selection = [];
+        this._sidebar = new view.Sidebar(this._host);
+        this._searchText = '';
+        this._modelFactoryService = new view.ModelFactoryService(this._host);
+    }
+
+    async start() {
+        try {
+            await this._host.view(this);
+            const options = this._host.get('configuration', 'options') || {};
+            for (const entry of Object.entries(options)) {
+                const name = entry[0];
+                this._options[name] = entry[1];
+            }
             this._element('sidebar-button').addEventListener('click', () => {
                 this.showModelProperties();
             });
@@ -51,14 +60,18 @@ view.View = class {
                 }
             }, { passive: true });
             this._host.document.addEventListener('keydown', () => {
-                this.select(null);
+                if (this._graph) {
+                    this._graph.select(null);
+                }
+            });
+            const platform = this._host.environment('platform');
+            this._menu = new view.Menu(this._host);
+            this._menu.add({
+                accelerator: platform === 'darwin' ? 'Ctrl+Cmd+F' : 'F11',
+                execute: () => this._host.execute('fullscreen')
             });
             if (this._host.environment('menu')) {
-                const button = this._element('menu-button');
-                const element = this._element('menu');
-                this._menu = new view.Menu(this._host, element, button);
-            }
-            if (this._host.environment('menu')) {
+                this._menu.attach(this._element('menu'), this._element('menu-button'));
                 const file = this._menu.group('&File');
                 file.add({
                     label: '&Open...',
@@ -74,13 +87,13 @@ view.View = class {
                         enabled: () => this.activeGraph
                     });
                     file.add({
-                        label: this._host.environment('platform') === 'darwin' ? '&Close Window' : '&Close',
+                        label: platform === 'darwin' ? '&Close Window' : '&Close',
                         accelerator: 'CmdOrCtrl+W',
                         execute: () => this._host.execute('close'),
                     });
                     file.add({
-                        label: this._host.environment('platform') === 'win32' ? 'E&xit' : '&Quit',
-                        accelerator: this._host.environment('platform') === 'win32' ? '' : 'CmdOrCtrl+Q',
+                        label: platform === 'win32' ? 'E&xit' : '&Quit',
+                        accelerator: platform === 'win32' ? '' : 'CmdOrCtrl+Q',
                         execute: () => this._host.execute('quit'),
                     });
                 } else {
@@ -139,7 +152,7 @@ view.View = class {
                 if (this._host.type === 'Electron') {
                     view.add({
                         label: '&Reload',
-                        accelerator: this._host.environment('platform') === 'darwin' ? 'CmdOrCtrl+R' : 'F5',
+                        accelerator: platform === 'darwin' ? 'CmdOrCtrl+R' : 'F5',
                         execute: () => this._host.execute('reload'),
                         enabled: () => this.activeGraph
                     });
@@ -170,7 +183,7 @@ view.View = class {
                     execute: () => this.showModelProperties(),
                     enabled: () => this.activeGraph
                 });
-                if (!this._host.environment('packaged')) {
+                if (this._host.type === 'Electron' && !this._host.environment('packaged')) {
                     view.add({});
                     view.add({
                         label: '&Developer Tools...',
@@ -188,10 +201,10 @@ view.View = class {
                     execute: () => this._host.execute('about')
                 });
             }
-            this._host.start();
-        }).catch((err) => {
+            await this._host.start();
+        } catch (err) {
             this.error(err, null, null);
-        });
+        }
     }
 
     show(page) {
@@ -248,17 +261,21 @@ view.View = class {
 
     find() {
         if (this._graph) {
-            this.select(null);
-            const graphElement = this._element('canvas');
-            const content = new view.FindSidebar(this._host, graphElement, this._graph);
+            this._graph.select(null);
+            const content = new view.FindSidebar(this._host, this.activeGraph);
             content.on('search-text-changed', (sender, text) => {
                 this._searchText = text;
             });
             content.on('select', (sender, selection) => {
-                this.select(selection);
-                this.scrollTo(selection);
+                this.scrollTo(this._graph.select([ selection ]));
             });
-            this._sidebar.open(content.content, 'Find');
+            content.on('focus', (sender, selection) => {
+                this._graph.focus([ selection ]);
+            });
+            content.on('blur', (sender, selection) => {
+                this._graph.blur([ selection ]);
+            });
+            this._sidebar.open(content.render(), 'Find');
             content.focus(this._searchText);
         }
     }
@@ -289,6 +306,18 @@ view.View = class {
             default:
                 throw new view.Error("Unsupported toogle '" + name + "'.");
         }
+        const options = {};
+        for (const entry of Object.entries(this._options)) {
+            const name = entry[0];
+            if (this._defaultOptions[name] !== entry[1]) {
+                options[name] = entry[1];
+            }
+        }
+        if (Object.entries(options).length == 0) {
+            this._host.delete('configuration', 'options');
+        } else {
+            this._host.set('configuration', 'options', options);
+        }
     }
 
     recents(recents) {
@@ -316,16 +345,14 @@ view.View = class {
         }
     }
 
-    _timeout(time) {
+    _timeout(delay) {
         return new Promise((resolve) => {
-            setTimeout(() => {
-                resolve();
-            }, time);
+            setTimeout(resolve, delay);
         });
     }
 
     _element(id) {
-        return this._host.document.getElementById(id + this._id);
+        return this._host.document.getElementById(id);
     }
 
     zoomIn() {
@@ -350,9 +377,7 @@ view.View = class {
             this._events.touchstart = (e) => this._touchStartHandler(e);
         }
         const graph = this._element('graph');
-        if (graph) {
-            graph.focus();
-        }
+        graph.focus();
         graph.addEventListener('scroll', this._events.scroll);
         graph.addEventListener('wheel', this._events.wheel, { passive: false });
         graph.addEventListener('pointerdown', this._events.pointerdown);
@@ -413,16 +438,18 @@ view.View = class {
             const pointerMoveHandler = (e) => {
                 e.preventDefault();
                 e.stopImmediatePropagation();
-                const dx = e.clientX - this._mousePosition.x;
-                const dy = e.clientY - this._mousePosition.y;
-                this._mousePosition.moved = dx * dx + dy * dy > 0;
-                if (this._mousePosition.moved) {
-                    const container = this._element('graph');
-                    container.scrollTop = this._mousePosition.top - dy;
-                    container.scrollLeft = this._mousePosition.left - dx;
+                if (this._mousePosition) {
+                    const dx = e.clientX - this._mousePosition.x;
+                    const dy = e.clientY - this._mousePosition.y;
+                    this._mousePosition.moved = dx * dx + dy * dy > 0;
+                    if (this._mousePosition.moved) {
+                        const container = this._element('graph');
+                        container.scrollTop = this._mousePosition.top - dy;
+                        container.scrollLeft = this._mousePosition.left - dx;
+                    }
                 }
             };
-            const pointerUpHandler = () => {
+            const pointerUpHandler = (e) => {
                 e.target.releasePointerCapture(e.pointerId);
                 container.style.removeProperty('cursor');
                 container.removeEventListener('pointerup', pointerUpHandler);
@@ -540,27 +567,13 @@ view.View = class {
         }
     }
 
-    select(selection) {
-        while (this._selection.length > 0) {
-            const element = this._selection.pop();
-            element.classList.remove('select');
-        }
-        if (selection && selection.length > 0) {
-            for (const element of selection) {
-                element.classList.add('select');
-                this._selection.push(element);
-            }
-        }
-    }
-
-    error(err, name, screen) {
+    async error(err, name, screen) {
         if (this._sidebar) {
             this._sidebar.close();
         }
         this._host.exception(err, false);
-
         const knowns = [
-            { name: '', message: /^Invalid argument identifier/, url: 'https://github.com/lutzroeder/netron/issues/540' },
+            { name: '', message: /^Invalid value identifier/, url: 'https://github.com/lutzroeder/netron/issues/540' },
             { name: '', message: /^Cannot read property/, url: 'https://github.com/lutzroeder/netron/issues/647' },
             { name: '', message: /^Failed to render tensor/, url: 'https://github.com/lutzroeder/netron/issues/681' },
             { name: 'Error', message: /^EPERM: operation not permitted/, url: 'https://github.com/lutzroeder/netron/issues/551' },
@@ -588,7 +601,11 @@ view.View = class {
         const known = knowns.find((known) => (known.name.length === 0 || known.name === err.name) && err.message.match(known.message));
         const message = err.message;
         name = name || err.name;
-        this._host.error(name, message, known ? known.url : undefined);
+        const button = await this._host.error(name, message);
+        const url = known && known.url ? known.url : null;
+        if (button === 0 && (url || this._host.type == 'Electron')) {
+            this._host.openURL(url || this._host.environment('repository') + '/issues');
+        }
         this.show(screen !== undefined ? screen : 'welcome');
     }
 
@@ -596,49 +613,49 @@ view.View = class {
         return this._modelFactoryService.accept(file, size);
     }
 
-    open(context) {
+    async open(context) {
         this._sidebar.close();
-        return this._timeout(2).then(() => {
-            return this._modelFactoryService.open(context).then((model) => {
-                const format = [];
-                if (model.format) {
-                    format.push(model.format);
-                }
-                if (model.producer) {
-                    format.push('(' + model.producer + ')');
-                }
-                if (format.length > 0) {
-                    this._host.event_ua('Model', 'Format', format.join(' '));
-                    this._host.event('model_open', {
-                        model_format: model.format || '',
-                        model_producer: model.producer || ''
-                    });
-                }
-                return this._timeout(20).then(() => {
-                    const graphs = Array.isArray(model.graphs) && model.graphs.length > 0 ? [ model.graphs[0] ] : [];
-                    return this._updateGraph(model, graphs);
+        await this._timeout(2);
+        try {
+            const model = await this._modelFactoryService.open(context);
+            const format = [];
+            if (model.format) {
+                format.push(model.format);
+            }
+            if (model.producer) {
+                format.push('(' + model.producer + ')');
+            }
+            if (format.length > 0) {
+                this._host.event_ua('Model', 'Format', format.join(' '));
+                this._host.event('model_open', {
+                    model_format: model.format || '',
+                    model_producer: model.producer || ''
                 });
-            }).catch((error) => {
-                if (error && context.identifier) {
-                    error.context = context.identifier;
-                }
-                throw error;
-            });
-        });
+            }
+            await this._timeout(20);
+            const graphs = Array.isArray(model.graphs) && model.graphs.length > 0 ? [ model.graphs[0] ] : [];
+            return await this._updateGraph(model, graphs);
+        } catch (error) {
+            if (error && context.identifier) {
+                error.context = context.identifier;
+            }
+            throw error;
+        }
     }
 
-    _updateActiveGraph(graph) {
+    async _updateActiveGraph(graph) {
         this._sidebar.close();
         if (this._model) {
             const model = this._model;
             this.show('welcome spinner');
-            this._timeout(200).then(() => {
-                return this._updateGraph(model, [ graph ]).catch((error) => {
-                    if (error) {
-                        this.error(error, 'Graph update failed.', 'welcome');
-                    }
-                });
-            });
+            await this._timeout(200);
+            try {
+                await this._updateGraph(model, [ graph ]);
+            } catch (error) {
+                if (error) {
+                    this.error(error, 'Graph update failed.', 'welcome');
+                }
+            }
         }
     }
 
@@ -646,57 +663,56 @@ view.View = class {
         return Array.isArray(this._graphs) && this._graphs.length > 0 ? this._graphs[0] : null;
     }
 
-    _updateGraph(model, graphs) {
-        return this._timeout(100).then(() => {
-            const graph = Array.isArray(graphs) && graphs.length > 0 ? graphs[0] : null;
-            if (graph && graph != this._graphs[0]) {
-                const nodes = graph.nodes;
-                if (nodes.length > 2048) {
-                    if (!this._host.confirm('Large model detected.', 'This graph contains a large number of nodes and might take a long time to render. Do you want to continue?')) {
-                        this._host.event('graph_view', {
-                            graph_node_count: nodes.length,
-                            graph_skip: 1 }
-                        );
-                        this.show(null);
-                        return null;
-                    }
+    async _updateGraph(model, graphs) {
+        await this._timeout(100);
+        const graph = Array.isArray(graphs) && graphs.length > 0 ? graphs[0] : null;
+        if (graph && graph != this._graphs[0]) {
+            const nodes = graph.nodes;
+            if (nodes.length > 2048) {
+                if (!this._host.confirm('Large model detected.', 'This graph contains a large number of nodes and might take a long time to render. Do you want to continue?')) {
+                    this._host.event('graph_view', {
+                        graph_node_count: nodes.length,
+                        graph_skip: 1 }
+                    );
+                    this.show(null);
+                    return null;
                 }
             }
-            const update = () => {
-                const nameButton = this._element('name-button');
-                const backButton = this._element('back-button');
-                if (this._graphs.length > 1) {
-                    const graph = this.activeGraph;
-                    nameButton.innerHTML = graph ? graph.name : '';
-                    backButton.style.opacity = 1;
-                    nameButton.style.opacity = 1;
-                } else {
-                    backButton.style.opacity = 0;
-                    nameButton.style.opacity = 0;
-                }
-            };
-            const lastModel = this._model;
-            const lastGraphs = this._graphs;
-            this._model = model;
-            this._graphs = graphs;
-            return this.renderGraph(this._model, this.activeGraph).then(() => {
-                if (this._page !== 'default') {
-                    this.show('default');
-                }
-                update();
-                return this._model;
-            }).catch((error) => {
-                this._model = lastModel;
-                this._graphs = lastGraphs;
-                return this.renderGraph(this._model, this.activeGraph).then(() => {
-                    if (this._page !== 'default') {
-                        this.show('default');
-                    }
-                    update();
-                    throw error;
-                });
-            });
-        });
+        }
+        const update = () => {
+            const nameButton = this._element('name-button');
+            const backButton = this._element('back-button');
+            if (this._graphs.length > 1) {
+                const graph = this.activeGraph;
+                nameButton.innerHTML = graph ? graph.name : '';
+                backButton.style.opacity = 1;
+                nameButton.style.opacity = 1;
+            } else {
+                backButton.style.opacity = 0;
+                nameButton.style.opacity = 0;
+            }
+        };
+        const lastModel = this._model;
+        const lastGraphs = this._graphs;
+        this._model = model;
+        this._graphs = graphs;
+        try {
+            await this.renderGraph(this._model, this.activeGraph);
+            if (this._page !== 'default') {
+                this.show('default');
+            }
+            update();
+            return this._model;
+        } catch (error) {
+            this._model = lastModel;
+            this._graphs = lastGraphs;
+            await this.renderGraph(this._model, this.activeGraph);
+            if (this._page !== 'default') {
+                this.show('default');
+            }
+            update();
+            throw error;
+        }
     }
 
     pushGraph(graph) {
@@ -714,120 +730,113 @@ view.View = class {
         return null;
     }
 
-    renderGraph(model, graph) {
-        try {
-            this._graph = null;
+    async renderGraph(model, graph) {
+        this._graph = null;
 
-            const canvas = this._element('canvas');
-            while (canvas.lastChild) {
-                canvas.removeChild(canvas.lastChild);
-            }
-            if (!graph) {
-                return Promise.resolve();
-            }
-            this._zoom = 1;
-
-            const groups = graph.groups;
-            const nodes = graph.nodes;
-            this._host.event('graph_view', {
-                graph_node_count: nodes.length,
-                graph_skip: 0
-            });
-
-            const options = {};
-            options.nodesep = 20;
-            options.ranksep = 20;
-            const rotate = graph.nodes.every((node) => node.inputs.filter((input) => input.arguments.every((argument) => !argument.initializer)).length === 0 && node.outputs.length === 0);
-            const horizontal = rotate ? this._options.direction === 'vertical' : this._options.direction !== 'vertical';
-            if (horizontal) {
-                options.rankdir = "LR";
-            }
-            if (nodes.length > 3000) {
-                options.ranker = 'longest-path';
-            }
-
-            const viewGraph = new view.Graph(this, model, groups, options);
-            viewGraph.add(graph);
-
-            // Workaround for Safari background drag/zoom issue:
-            // https://stackoverflow.com/questions/40887193/d3-js-zoom-is-not-working-with-mousewheel-in-safari
-            const background = this._host.document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-            background.setAttribute('id', 'background');
-            background.setAttribute('fill', 'none');
-            background.setAttribute('pointer-events', 'all');
-            canvas.appendChild(background);
-
-            const origin = this._host.document.createElementNS('http://www.w3.org/2000/svg', 'g');
-            origin.setAttribute('id', 'origin');
-            canvas.appendChild(origin);
-
-            viewGraph.build(this._host.document, origin);
-
-            this._zoom = 1;
-
-            return this._timeout(20).then(() => {
-
-                viewGraph.update();
-
-                const elements = Array.from(canvas.getElementsByClassName('graph-input') || []);
-                if (elements.length === 0) {
-                    const nodeElements = Array.from(canvas.getElementsByClassName('graph-node') || []);
-                    if (nodeElements.length > 0) {
-                        elements.push(nodeElements[0]);
-                    }
-                }
-
-                const size = canvas.getBBox();
-                const margin = 100;
-                const width = Math.ceil(margin + size.width + margin);
-                const height = Math.ceil(margin + size.height + margin);
-                origin.setAttribute('transform', 'translate(' + margin.toString() + ', ' + margin.toString() + ') scale(1)');
-                background.setAttribute('width', width);
-                background.setAttribute('height', height);
-                this._width = width;
-                this._height = height;
-                delete this._scrollLeft;
-                delete this._scrollRight;
-                canvas.setAttribute('viewBox', '0 0 ' + width + ' ' + height);
-                canvas.setAttribute('width', width);
-                canvas.setAttribute('height', height);
-
-                this._zoom = 1;
-                this._updateZoom(this._zoom);
-
-                const container = this._element('graph');
-                if (elements && elements.length > 0) {
-                    // Center view based on input elements
-                    const xs = [];
-                    const ys = [];
-                    for (let i = 0; i < elements.length; i++) {
-                        const element = elements[i];
-                        const rect = element.getBoundingClientRect();
-                        xs.push(rect.left + (rect.width / 2));
-                        ys.push(rect.top + (rect.height / 2));
-                    }
-                    let x = xs[0];
-                    const y = ys[0];
-                    if (ys.every(y => y === ys[0])) {
-                        x = xs.reduce((a, b) => a + b, 0) / xs.length;
-                    }
-                    const graphRect = container.getBoundingClientRect();
-                    const left = (container.scrollLeft + x - graphRect.left) - (graphRect.width / 2);
-                    const top = (container.scrollTop + y - graphRect.top) - (graphRect.height / 2);
-                    container.scrollTo({ left: left, top: top, behavior: 'auto' });
-                } else {
-                    const canvasRect = canvas.getBoundingClientRect();
-                    const graphRect = container.getBoundingClientRect();
-                    const left = (container.scrollLeft + (canvasRect.width / 2) - graphRect.left) - (graphRect.width / 2);
-                    const top = (container.scrollTop + (canvasRect.height / 2) - graphRect.top) - (graphRect.height / 2);
-                    container.scrollTo({ left: left, top: top, behavior: 'auto' });
-                }
-                this._graph = viewGraph;
-                return;
-            });
-        } catch (error) {
-            return Promise.reject(error);
+        const canvas = this._element('canvas');
+        while (canvas.lastChild) {
+            canvas.removeChild(canvas.lastChild);
         }
+        if (!graph) {
+            return;
+        }
+        this._zoom = 1;
+
+        const groups = graph.groups;
+        const nodes = graph.nodes;
+        this._host.event('graph_view', {
+            graph_node_count: nodes.length,
+            graph_skip: 0
+        });
+
+        const options = {};
+        options.nodesep = 20;
+        options.ranksep = 20;
+        const rotate = graph.nodes.every((node) => node.inputs.filter((input) => input.value.every((argument) => !argument.initializer)).length === 0 && node.outputs.length === 0);
+        const horizontal = rotate ? this._options.direction === 'vertical' : this._options.direction !== 'vertical';
+        if (horizontal) {
+            options.rankdir = "LR";
+        }
+        if (nodes.length > 3000) {
+            options.ranker = 'longest-path';
+        }
+
+        const viewGraph = new view.Graph(this, model, groups, options);
+        viewGraph.add(graph);
+
+        // Workaround for Safari background drag/zoom issue:
+        // https://stackoverflow.com/questions/40887193/d3-js-zoom-is-not-working-with-mousewheel-in-safari
+        const background = this._host.document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        background.setAttribute('id', 'background');
+        background.setAttribute('fill', 'none');
+        background.setAttribute('pointer-events', 'all');
+        canvas.appendChild(background);
+
+        const origin = this._host.document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        origin.setAttribute('id', 'origin');
+        canvas.appendChild(origin);
+
+        viewGraph.build(this._host.document, origin);
+
+        this._zoom = 1;
+
+        await this._timeout(20);
+
+        viewGraph.update();
+
+        const elements = Array.from(canvas.getElementsByClassName('graph-input') || []);
+        if (elements.length === 0) {
+            const nodeElements = Array.from(canvas.getElementsByClassName('graph-node') || []);
+            if (nodeElements.length > 0) {
+                elements.push(nodeElements[0]);
+            }
+        }
+        const size = canvas.getBBox();
+        const margin = 100;
+        const width = Math.ceil(margin + size.width + margin);
+        const height = Math.ceil(margin + size.height + margin);
+        origin.setAttribute('transform', 'translate(' + margin.toString() + ', ' + margin.toString() + ') scale(1)');
+        background.setAttribute('width', width);
+        background.setAttribute('height', height);
+        this._width = width;
+        this._height = height;
+        delete this._scrollLeft;
+        delete this._scrollRight;
+        canvas.setAttribute('viewBox', '0 0 ' + width + ' ' + height);
+        canvas.setAttribute('width', width);
+        canvas.setAttribute('height', height);
+
+        this._zoom = 1;
+        this._updateZoom(this._zoom);
+
+        const container = this._element('graph');
+        if (elements && elements.length > 0) {
+            // Center view based on input elements
+            const xs = [];
+            const ys = [];
+            for (let i = 0; i < elements.length; i++) {
+                const element = elements[i];
+                const rect = element.getBoundingClientRect();
+                xs.push(rect.left + (rect.width / 2));
+                ys.push(rect.top + (rect.height / 2));
+            }
+            let x = xs[0];
+            const y = ys[0];
+            if (ys.every(y => y === ys[0])) {
+                x = xs.reduce((a, b) => a + b, 0) / xs.length;
+            }
+            const graphRect = container.getBoundingClientRect();
+            const left = (container.scrollLeft + x - graphRect.left) - (graphRect.width / 2);
+            const top = (container.scrollTop + y - graphRect.top) - (graphRect.height / 2);
+            container.scrollTo({ left: left, top: top, behavior: 'auto' });
+        } else {
+            const canvasRect = canvas.getBoundingClientRect();
+            const graphRect = container.getBoundingClientRect();
+            const left = (container.scrollLeft + (canvasRect.width / 2) - graphRect.left) - (graphRect.width / 2);
+            const top = (container.scrollTop + (canvasRect.height / 2) - graphRect.top) - (graphRect.height / 2);
+            container.scrollTo({ left: left, top: top, behavior: 'auto' });
+        }
+        this._graph = viewGraph;
     }
 
     applyStyleSheet(element, name) {
@@ -980,21 +989,10 @@ view.View = class {
                     this.error(error, null, null);
                 });
                 nodeSidebar.on('activate', (sender, argument) => {
-                    const name = 'edge-' + argument.name;
-                    const selection = [];
-                    const graphElement = this._element('canvas');
-                    const edgePathsElement = graphElement.getElementById('edge-paths');
-                    let element = edgePathsElement.firstChild;
-                    while (element) {
-                        if (element.id == name) {
-                            selection.push(element);
-                        }
-                        element = element.nextSibling;
-                    }
-                    this.select(selection);
+                    this._graph.select([ argument ]);
                 });
                 nodeSidebar.on('deactivate', () => {
-                    this.select(null);
+                    this._graph.select(null);
                 });
                 if (input) {
                     nodeSidebar.toggleInput(input.name);
@@ -1038,93 +1036,57 @@ view.View = class {
 
 view.Menu = class {
 
-    constructor(host, element, button) {
+    constructor(host) {
         this.items = [];
-        this._host = host;
-        this._element = element;
-        this._darwin = this._host.environment('platform') === 'darwin';
+        this._darwin = host.environment('platform') === 'darwin';
+        this._document = host.document;
         this._stack = [];
         this._root = [];
         this._buttons = [];
         this._accelerators = new Map();
         this._keyCodes = new Map([
-            [ 'Backspace', 0x08 ], [ 'Enter', 0x0D ],
-            [ 'Up', 0x26 ], [ 'Down', 0x28 ],
-            [ 'F5', 0x74 ]
+            [ 'Backspace', 0x08 ], [ 'Enter', 0x0D ], [ 'Escape', 0x1B ],
+            [ 'Left', 0x25 ], [ 'Up', 0x26 ], [ 'Right', 0x27 ], [ 'Down', 0x28 ],
+            [ 'F5', 0x74 ], [ 'F11', 0x7a ]
         ]);
         this._symbols = new Map([
             [ 'Backspace', '&#x232B;' ], [ 'Enter', '&#x23ce;' ],
             [ 'Up', '&#x2191;' ], [ 'Down', '&#x2193;' ],
         ]);
-        button.addEventListener('click', (e) => {
-            this.toggle();
-            e.preventDefault();
-        });
-        this._host.window.addEventListener('keydown', (e) => {
+        this._keydown = (e) => {
             this._alt = false;
-            let code = e.keyCode;
-            code |= ((e.ctrlKey && !this._darwin) || (e.metaKey && this._darwin)) ? 0x0400 : 0;
-            code |= e.altKey ? 0x0200 : 0;
-            code |= e.shiftKey ? 0x0100 : 0;
-            switch (code) {
-                case 0x001B: { // Escape
-                    this._deactivate();
-                    if (this._stack.length === 0) {
-                        this.close();
-                    }
-                    break;
-                }
-                case 0x0025: { // Left
-                    if (this._stack.length > 1) {
-                        this._deactivate();
-                    }
-                    break;
-                }
-                case 0x0027: { // Right
-                    const button = this._element.ownerDocument.activeElement;
-                    if (button && button.getAttribute('data-type') === 'group') {
-                        button.click();
-                    }
-                    break;
-                }
-                case 0x0026: { // Up
-                    this._previous();
-                    break;
-                }
-                case 0x0028: { // Down
-                    this._next();
-                    break;
-                }
-                case 0x0212: { // Alt
-                    this._alt = true;
-                    break;
-                }
-                default: {
-                    const item = this._accelerators.get(code.toString());
-                    if (item && this._execute(item)) {
+            const code = e.keyCode | (e.altKey ? 0x0200 : 0) | (e.shiftKey ? 0x0100 : 0);
+            const modifier = (e.ctrlKey ? 0x0400 : 0) | (e.metaKey ? 0x0800 : 0);
+            if ((code | modifier) === 0x0212) { // Alt
+                this._alt = true;
+            } else {
+                const action =
+                    this._accelerators.get(code | modifier) ||
+                    this._accelerators.get(code | ((e.ctrlKey && !this._darwin) || (e.metaKey && this._darwin) ? 0x1000 : 0));
+                if (action && this._execute(action)) {
+                    e.preventDefault();
+                } else {
+                    const item = this._mnemonic(code | modifier);
+                    if (item && this._activate(item)) {
                         e.preventDefault();
-                    } else {
-                        const item = this._mnemonic(code);
-                        if (item && this._activate(item)) {
-                            e.preventDefault();
-                        }
                     }
-                    break;
                 }
             }
-        });
-        this._host.window.addEventListener('keyup', (e) => {
+        };
+        this._keyup = (e) => {
             const code = e.keyCode;
             if (code === 0x0012 && this._alt) { // Alt
                 switch (this._stack.length) {
                     case 0: {
-                        this.open();
-                        e.preventDefault();
+                        if (this.open()) {
+                            e.preventDefault();
+                        }
                         break;
                     }
                     case 1: {
-                        this.close();
-                        e.preventDefault();
+                        if (this.close()) {
+                            e.preventDefault();
+                        }
                         break;
                     }
                     default: {
@@ -1140,14 +1102,62 @@ view.Menu = class {
                 }
             }
             this._alt = false;
+        };
+        this._next = () => {
+            const button = this._element.ownerDocument.activeElement;
+            const index = this._buttons.indexOf(button);
+            if (index !== -1 && index < this._buttons.length - 1) {
+                const next = this._buttons[index + 1];
+                next.focus();
+            }
+        };
+        this._previous = () => {
+            const button = this._element.ownerDocument.activeElement;
+            const index = this._buttons.indexOf(button);
+            if (index > 0) {
+                const next = this._buttons[index - 1];
+                next.focus();
+            }
+        };
+        this._push = () => {
+            const button = this._element.ownerDocument.activeElement;
+            if (button && button.getAttribute('data-type') === 'group') {
+                button.click();
+            }
+        };
+        this._pop = () => {
+            if (this._stack.length > 1) {
+                this._deactivate();
+            }
+        };
+        this._exit = () => {
+            this._deactivate();
+            if (this._stack.length === 0) {
+                this.close();
+            }
+        };
+        host.window.addEventListener('keydown', this._keydown);
+        host.window.addEventListener('keyup', this._keyup);
+    }
+
+    attach(element, button) {
+        this._element = element;
+        button.addEventListener('click', (e) => {
+            this.toggle();
+            e.preventDefault();
         });
+    }
+
+    add(value) {
+        const item = new view.Menu.Command(value);
+        this.register(item, item.accelerator);
     }
 
     group(label) {
         const item = new view.Menu.Group(this, label);
         item.identifier = 'menu-item-' + this.items.length.toString();
         this.items.push(item);
-        this.register(item);
+        item.shortcut = this.register(item.accelerator);
         return item;
     }
 
@@ -1156,20 +1166,110 @@ view.Menu = class {
             this.close();
         } else {
             this._root = [ this ];
-            this._rebuild();
-            this._update();
+            this._stack = [ this ];
+            this.open();
         }
     }
 
-    _execute(item) {
-        switch (item ? item.type : null) {
+    open() {
+        if (this._element) {
+            if (this._stack.length === 0) {
+                this.toggle();
+                this._stack = [ this ];
+            }
+            this._rebuild();
+            this._update();
+            this.register(this._exit, 'Escape');
+            this.register(this._previous, 'Up');
+            this.register(this._next, 'Down');
+            this.register(this._pop, 'Left');
+            this.register(this._push, 'Right');
+        }
+    }
+
+    close() {
+        if (this._element) {
+            this.unregister(this._exit);
+            this.unregister(this._previous);
+            this.unregister(this._next);
+            this.unregister(this._pop);
+            this.unregister(this._push);
+            this._element.style.opacity = 0;
+            this._element.style.left = '-16em';
+            const button = this._element.ownerDocument.activeElement;
+            if (this._buttons.indexOf(button) > 0) {
+                button.blur();
+            }
+            while (this._root.length > 1) {
+                this._deactivate();
+            }
+            this._stack = [];
+        }
+    }
+
+    register(action, accelerator) {
+        let shortcut = '';
+        if (accelerator) {
+            let shift = false;
+            let alt = false;
+            let ctrl = false;
+            let cmd = false;
+            let cmdOrCtrl = false;
+            let key = '';
+            for (const part of accelerator.split('+')) {
+                switch (part) {
+                    case 'CmdOrCtrl': cmdOrCtrl = true; break;
+                    case 'Cmd': cmd = true; break;
+                    case 'Ctrl': ctrl = true; break;
+                    case 'Alt': alt = true; break;
+                    case 'Shift': shift = true; break;
+                    default: key = part; break;
+                }
+            }
+            if (key !== '') {
+                if (this._darwin) {
+                    shortcut += ctrl ? '&#x2303' : '';
+                    shortcut += alt ? '&#x2325;' : '';
+                    shortcut += shift ? '&#x21e7;' : '';
+                    shortcut += cmdOrCtrl || cmd ? '&#x2318;' : '';
+                    shortcut += this._symbols.has(key) ? this._symbols.get(key) : key;
+                } else {
+                    shortcut += cmdOrCtrl || ctrl ? 'Ctrl+' : '';
+                    shortcut += alt ? 'Alt+' : '';
+                    shortcut += shift ? 'Shift+' : '';
+                    shortcut += key;
+                }
+                let code = (cmdOrCtrl ? 0x1000 : 0) | (cmd ? 0x0800 : 0) | (ctrl ? 0x0400 : 0) | (alt ? 0x0200 : 0 | shift ? 0x0100 : 0);
+                code |= this._keyCodes.has(key) ? this._keyCodes.get(key) : key.charCodeAt(0);
+                this._accelerators.set(code, action);
+            }
+        }
+        return shortcut;
+    }
+
+    unregister(action) {
+        this._accelerators = new Map(Array.from(this._accelerators.entries()).filter((entry) => entry[1] !== action));
+    }
+
+    _execute(action) {
+        if (typeof action === 'function') {
+            action();
+            return true;
+        }
+        switch (action ? action.type : null) {
             case 'group': {
-                this._push(item);
+                while (this._stack.length > this._root.length) {
+                    this._stack.pop();
+                }
+                this._root.push({ items: [ action ] });
+                this._stack.push(action);
+                this._rebuild();
+                this._update();
                 return true;
             }
             case 'command': {
                 this.close();
-                setTimeout(() => item.execute(), 10);
+                setTimeout(() => action.execute(), 10);
                 return true;
             }
             default: {
@@ -1231,16 +1331,6 @@ view.Menu = class {
         }
     }
 
-    _push(item) {
-        while (this._stack.length > this._root.length) {
-            this._stack.pop();
-        }
-        this._root.push({ items: [ item ] });
-        this._stack.push(item);
-        this._rebuild();
-        this._update();
-    }
-
     _label(item, mnemonic) {
         delete item.mnemonic;
         const value = item.label;
@@ -1261,7 +1351,7 @@ view.Menu = class {
         this._element.innerHTML = '';
         const root = this._root[this._root.length - 1];
         for (const group of root.items) {
-            const container = this._host.document.createElement('div');
+            const container = this._document.createElement('div');
             container.setAttribute('id', group.identifier);
             container.setAttribute('class', 'menu-group');
             container.innerHTML = "<div class='menu-group-header'></div>";
@@ -1269,28 +1359,28 @@ view.Menu = class {
                 switch (item.type) {
                     case 'group':
                     case 'command': {
-                        const button = this._host.document.createElement('button');
+                        const button = this._document.createElement('button');
                         button.setAttribute('class', 'menu-command');
                         button.setAttribute('id', item.identifier);
                         button.setAttribute('data-type', item.type);
                         button.addEventListener('mouseenter', () => button.focus());
                         button.addEventListener('click', () => this._execute(item));
-                        const accelerator = this._host.document.createElement('span');
+                        const accelerator = this._document.createElement('span');
                         accelerator.setAttribute('class', 'menu-shortcut');
                         if (item.type === 'group') {
                             accelerator.innerHTML = '&#10095;';
-                        } else if (item.accelerator) {
-                            accelerator.innerHTML = item.accelerator;
+                        } else if (item.shortcut) {
+                            accelerator.innerHTML = item.shortcut;
                         }
                         button.appendChild(accelerator);
-                        const content = this._host.document.createElement('span');
+                        const content = this._document.createElement('span');
                         content.setAttribute('class', 'menu-label');
                         button.appendChild(content);
                         container.appendChild(button);
                         break;
                     }
                     case 'separator': {
-                        const element = this._host.document.createElement('div');
+                        const element = this._document.createElement('div');
                         element.setAttribute('class', 'menu-separator');
                         element.setAttribute('id', item.identifier);
                         container.appendChild(element);
@@ -1322,14 +1412,14 @@ view.Menu = class {
             let visible = false;
             let block = false;
             const active = this._stack.length <= 1 || this._stack[1] === group;
-            const container = this._host.document.getElementById(group.identifier);
+            const container = this._document.getElementById(group.identifier);
             container.childNodes[0].innerHTML = this._label(group, this === selected);
             for (const item of group.items) {
                 switch (item.type) {
                     case 'group':
                     case 'command': {
                         const label = this._label(item, group === selected);
-                        const button = this._host.document.getElementById(item.identifier);
+                        const button = this._document.getElementById(item.identifier);
                         button.childNodes[1].innerHTML = label;
                         if (item.enabled) {
                             button.removeAttribute('disabled');
@@ -1346,7 +1436,7 @@ view.Menu = class {
                         break;
                     }
                     case 'separator': {
-                        const element = this._host.document.getElementById(item.identifier);
+                        const element = this._document.getElementById(item.identifier);
                         element.style.display = block ? 'block' : 'none';
                         block = false;
                         break;
@@ -1361,7 +1451,7 @@ view.Menu = class {
                 if ((item.type === 'group' || item.type === 'command') && item.enabled) {
                     break;
                 } else if (item.type === 'separator') {
-                    const element = this._host.document.getElementById(item.identifier);
+                    const element = this._document.getElementById(item.identifier);
                     element.style.display = 'none';
                 }
             }
@@ -1375,87 +1465,6 @@ view.Menu = class {
         if (index === -1 && this._buttons.length > 0) {
             this._buttons[0].focus();
         }
-    }
-
-    _next() {
-        const button = this._element.ownerDocument.activeElement;
-        const index = this._buttons.indexOf(button);
-        if (index !== -1 && index < this._buttons.length - 1) {
-            const next = this._buttons[index + 1];
-            next.focus();
-        }
-    }
-
-    _previous() {
-        const button = this._element.ownerDocument.activeElement;
-        const index = this._buttons.indexOf(button);
-        if (index > 0) {
-            const next = this._buttons[index - 1];
-            next.focus();
-        }
-    }
-
-    open() {
-        if (this._stack.length === 0) {
-            this.toggle();
-            this._stack = [ this ];
-            this._rebuild();
-            this._update();
-        }
-    }
-
-    close() {
-        this._element.style.opacity = 0;
-        this._element.style.left = '-200px';
-        const button = this._element.ownerDocument.activeElement;
-        if (this._buttons.indexOf(button) > 0) {
-            button.blur();
-        }
-        while (this._root.length > 1) {
-            this._deactivate();
-        }
-        this._stack = [];
-    }
-
-    register(item) {
-        let shortcut = '';
-        if (item.accelerator) {
-            let cmdOrCtrl = false;
-            let alt = false;
-            let shift = false;
-            let key = '';
-            for (const part of item.accelerator.split('+')) {
-                switch (part) {
-                    case 'CmdOrCtrl': cmdOrCtrl = true; break;
-                    case 'Alt': alt = true; break;
-                    case 'Shift': shift = true; break;
-                    default: key = part; break;
-                }
-            }
-            if (key !== '') {
-                if (this._darwin) {
-                    shortcut += alt ? '&#x2325;' : '';
-                    shortcut += shift ? '&#x21e7;' : '';
-                    shortcut += cmdOrCtrl ? '&#x2318;' : '';
-                    shortcut += this._symbols.has(key) ? this._symbols.get(key) : key;
-                } else {
-                    shortcut += cmdOrCtrl ? 'Ctrl+' : '';
-                    shortcut += alt ? 'Alt+' : '';
-                    shortcut += shift ? 'Shift+' : '';
-                    shortcut += key;
-                }
-                let code = this._keyCodes.has(key) ? this._keyCodes.get(key) : key.charCodeAt(0);
-                code |= cmdOrCtrl ? 0x0400 : 0;
-                code |= alt ? 0x0200 : 0;
-                code |= shift ? 0x0100 : 0;
-                this._accelerators.set(code.toString(), item);
-            }
-        }
-        item.accelerator = shortcut;
-    }
-
-    unregister(item) {
-        this._accelerators = new Map(Array.from(this._accelerators.entries()).filter((entry) => entry.value !== item));
     }
 };
 
@@ -1476,14 +1485,14 @@ view.Menu.Group = class {
         const item = Object.keys(value).length > 0 ? new view.Menu.Command(value) : new view.Menu.Separator();
         item.identifier = this.identifier + '-' + this.items.length.toString();
         this.items.push(item);
-        this.parent.register(item);
+        item.shortcut = this.parent.register(item, item.accelerator);
     }
 
     group(label) {
         const item = new view.Menu.Group(this, label);
         item.identifier = this.identifier + '-' + this.items.length.toString();
         this.items.push(item);
-        this.parent.register(item);
+        item.shortcut = this.parent.register(item, item.accelerator);
         return item;
     }
 
@@ -1497,8 +1506,8 @@ view.Menu.Group = class {
         this.items = [];
     }
 
-    register(item) {
-        this.parent.register(item);
+    register(item, accelerator) {
+        return this.parent.register(item, accelerator);
     }
 
     unregister(item) {
@@ -1539,22 +1548,23 @@ view.Menu.Separator = class {
     }
 };
 
-
 view.Graph = class extends grapher.Graph {
 
     constructor(view, model, compound, options) {
         super(compound, options);
         this.view = view;
         this.model = model;
-        this._arguments = new Map();
         this._nodeKey = 0;
+        this._values = new Map();
+        this._table = new Map();
+        this._selection = new Set();
     }
 
     createNode(node) {
         const value = new view.Node(this, node);
         value.name = (this._nodeKey++).toString();
-        // value.name = node.name;
         this.setNode(value);
+        this._table.set(node, value);
         return value;
     }
 
@@ -1562,6 +1572,7 @@ view.Graph = class extends grapher.Graph {
         const value = new view.Input(this, input);
         value.name = (this._nodeKey++).toString();
         this.setNode(value);
+        this._table.set(input, value);
         return value;
     }
 
@@ -1569,20 +1580,22 @@ view.Graph = class extends grapher.Graph {
         const value = new view.Output(this, output);
         value.name = (this._nodeKey++).toString();
         this.setNode(value);
+        this._table.set(output, value);
         return value;
     }
 
-    createArgument(argument) {
+    createValue(argument) {
         const name = argument.name;
-        if (!this._arguments.has(name)) {
-            this._arguments.set(name, new view.Argument(this, argument));
+        if (!this._values.has(name)) {
+            const value = new view.Value(this, argument);
+            this._values.set(name, value);
+            this._table.set(argument, value);
+        } else {
+            // TODO #1109 duplicate argument name
+            const value = this._values.get(name);
+            this._table.set(argument, value);
         }
-        return this._arguments.get(name);
-    }
-
-    createEdge(from, to) {
-        const value = new view.Edge(from, to);
-        return value;
+        return this._values.get(name);
     }
 
     add(graph) {
@@ -1601,23 +1614,19 @@ view.Graph = class extends grapher.Graph {
                 }
             }
         }
-
         for (const input of graph.inputs) {
             const viewInput = this.createInput(input);
-            for (const argument of input.arguments) {
-                this.createArgument(argument).from(viewInput);
+            for (const value of input.value) {
+                this.createValue(value).from(viewInput);
             }
         }
-
         for (const node of graph.nodes) {
-
             const viewNode = this.createNode(node);
-
             const inputs = node.inputs;
             for (const input of inputs) {
-                for (const argument of input.arguments) {
-                    if (argument.name != '' && !argument.initializer) {
-                        this.createArgument(argument).to(viewNode);
+                for (const value of input.value) {
+                    if (value.name != '' && !value.initializer) {
+                        this.createValue(value).to(viewNode);
                     }
                 }
             }
@@ -1629,24 +1638,23 @@ view.Graph = class extends grapher.Graph {
                 }
             }
             for (const output of outputs) {
-                for (const argument of output.arguments) {
-                    if (!argument) {
+                for (const value of output.value) {
+                    if (!value) {
                         const error = new view.Error('Invalid null argument.');
                         error.context = this.model.identifier;
                         throw error;
                     }
-                    if (argument.name != '') {
-                        this.createArgument(argument).from(viewNode);
+                    if (value.name != '') {
+                        this.createValue(value).from(viewNode);
                     }
                 }
             }
 
             if (node.controlDependencies && node.controlDependencies.length > 0) {
-                for (const argument of node.controlDependencies) {
-                    this.createArgument(argument).to(viewNode, true);
+                for (const value of node.controlDependencies) {
+                    this.createValue(value).to(viewNode, true);
                 }
             }
-
             const createCluster = (name) => {
                 if (!clusters.has(name)) {
                     this.setNode({ name: name, rx: 5, ry: 5 });
@@ -1658,7 +1666,6 @@ view.Graph = class extends grapher.Graph {
                     }
                 }
             };
-
             if (groups) {
                 let groupName = node.group;
                 if (groupName && groupName.length > 0) {
@@ -1680,20 +1687,55 @@ view.Graph = class extends grapher.Graph {
                 }
             }
         }
-
         for (const output of graph.outputs) {
             const viewOutput = this.createOutput(output);
-            for (const argument of output.arguments) {
-                this.createArgument(argument).to(viewOutput);
+            for (const value of output.value) {
+                this.createValue(value).to(viewOutput);
             }
         }
     }
 
     build(document, origin) {
-        for (const argument of this._arguments.values()) {
-            argument.build();
+        for (const value of this._values.values()) {
+            value.build();
         }
         super.build(document, origin);
+    }
+
+    select(selection) {
+        for (const element of this._selection) {
+            element.deselect();
+        }
+        this._selection.clear();
+        let array = [];
+        if (selection) {
+            for (const value of selection) {
+                if (this._table.has(value)) {
+                    const element = this._table.get(value);
+                    array = array.concat(element.select());
+                    this._selection.add(element);
+                }
+            }
+        }
+        return array;
+    }
+
+    focus(selection) {
+        for (const value of selection) {
+            const element = this._table.get(value);
+            if (element && !this._selection.has(element)) {
+                element.select();
+            }
+        }
+    }
+
+    blur(selection) {
+        for (const value of selection) {
+            const element = this._table.get(value);
+            if (element && !this._selection.has(element)) {
+                element.deselect();
+            }
+        }
     }
 };
 
@@ -1751,11 +1793,11 @@ view.Node = class extends grapher.Node {
         let hiddenInitializers = false;
         if (this.context.view.options.weights) {
             for (const input of node.inputs) {
-                if (input.visible && input.arguments.length === 1 && input.arguments[0].initializer != null) {
+                if (input.visible !== false && input.value.length === 1 && input.value[0].initializer != null) {
                     initializers.push(input);
                 }
-                if ((!input.visible || input.arguments.length > 1) &&
-                    input.arguments.some((argument) => argument.initializer != null)) {
+                if ((input.visible === false || input.value.length > 1) &&
+                    input.value.some((argument) => argument.initializer != null)) {
                     hiddenInitializers = true;
                 }
             }
@@ -1763,7 +1805,7 @@ view.Node = class extends grapher.Node {
         let sortedAttributes = [];
         const attributes = node.attributes || [];
         if (this.context.view.options.attributes) {
-            sortedAttributes = attributes.filter((attribute) => attribute.visible).slice();
+            sortedAttributes = attributes.filter((attribute) => attribute.visible !== false).slice();
         }
         sortedAttributes.sort((a, b) => {
             const au = a.name.toUpperCase();
@@ -1774,15 +1816,15 @@ view.Node = class extends grapher.Node {
             const list = this.list();
             list.on('click', () => this.context.view.showNodeProperties(node));
             for (const initializer of initializers) {
-                const argument = initializer.arguments[0];
-                const type = argument.type;
+                const value = initializer.value[0];
+                const type = value.type;
                 let shape = '';
                 let separator = '';
                 if (type && type.shape && type.shape.dimensions && Array.isArray(type.shape.dimensions)) {
                     shape = '\u3008' + type.shape.dimensions.map((d) => (d !== null && d !== undefined) ? d : '?').join('\u00D7') + '\u3009';
-                    if (type.shape.dimensions.length === 0 && argument.initializer) {
+                    if (type.shape.dimensions.length === 0 && value.initializer) {
                         try {
-                            const initializer = argument.initializer;
+                            const initializer = value.initializer;
                             const tensor = new view.Tensor(initializer);
                             if ((tensor.layout === '<' || tensor.layout === '>' || tensor.layout === '|') && !tensor.empty && tensor.type.dataType !== '?') {
                                 shape = tensor.toString();
@@ -1794,7 +1836,7 @@ view.Node = class extends grapher.Node {
                         } catch (err) {
                             let type = '?';
                             try {
-                                type = argument.initializer.type.toString();
+                                type = value.initializer.type.toString();
                             } catch (error) {
                                 // continue regardless of error
                             }
@@ -1806,14 +1848,14 @@ view.Node = class extends grapher.Node {
                         }
                     }
                 }
-                list.add(argument.name ? 'initializer-' + argument.name : '', initializer.name, shape, type ? type.toString() : '', separator);
+                list.add(value.name ? 'initializer-' + value.name : '', initializer.name, shape, type ? type.toString() : '', separator);
             }
             if (hiddenInitializers) {
                 list.add(null, '\u3008' + '\u2026' + '\u3009', '', null, '');
             }
 
             for (const attribute of sortedAttributes) {
-                if (attribute.visible) {
+                if (attribute.visible !== false) {
                     let value = new view.Formatter(attribute.value, attribute.type).toString();
                     if (value && value.length > 25) {
                         value = value.substring(0, 25) + '\u2026';
@@ -1857,7 +1899,7 @@ view.Input = class extends grapher.Node {
         this.context = context;
         this.value = value;
         view.Input.counter = view.Input.counter || 0;
-        const types = value.arguments.map((argument) => argument.type || '').join('\n');
+        const types = value.value.map((argument) => argument.type || '').join('\n');
         let name = value.name || '';
         if (name.length > 16) {
             name = name.split('/').pop();
@@ -1887,7 +1929,7 @@ view.Output = class extends grapher.Node {
         super();
         this.context = context;
         this.value = value;
-        const types = value.arguments.map((argument) => argument.type || '').join('\n');
+        const types = value.value.map((argument) => argument.type || '').join('\n');
         let name = value.name || '';
         if (name.length > 16) {
             name = name.split('/').pop();
@@ -1906,11 +1948,11 @@ view.Output = class extends grapher.Node {
     }
 };
 
-view.Argument = class {
+view.Value = class {
 
     constructor(context, argument) {
         this.context = context;
-        this._argument = argument;
+        this.value = argument;
     }
 
     from(node) {
@@ -1932,8 +1974,7 @@ view.Argument = class {
             for (let i = 0; i < this._to.length; i++) {
                 const to = this._to[i];
                 let content = '';
-                const type = this._argument.type;
-
+                const type = this.value.type;
                 if (type &&
                     type.shape &&
                     type.shape.dimensions &&
@@ -1942,15 +1983,15 @@ view.Argument = class {
                     content = type.shape.dimensions.map((dim) => (dim !== null && dim !== undefined) ? dim : '?').join('\u00D7');
                 }
                 if (this.context.view.options.names) {
-                    content = this._argument.name.split('\n').shift(); // custom argument id
+                    content = this.value.name.split('\n').shift(); // custom argument id
                 }
-                const edge = this.context.createEdge(this._from, to);
+                const edge = new view.Edge(this, this._from, to);
                 edge.v = this._from.name;
                 edge.w = to.name;
                 if (content) {
                     edge.label = content;
                 }
-                edge.id = 'edge-' + this._argument.name;
+                edge.id = 'edge-' + this.value.name;
                 if (this._controlDependencies && this._controlDependencies.has(i)) {
                     edge.class = 'edge-path-control-dependency';
                 }
@@ -1959,35 +2000,61 @@ view.Argument = class {
             }
         }
     }
+
+    select() {
+        let array = [];
+        for (const edge of this._edges) {
+            array = array.concat(edge.select());
+        }
+        return array;
+    }
+
+    deselect() {
+        for (const edge of this._edges) {
+            edge.deselect();
+        }
+    }
 };
 
 view.Edge = class extends grapher.Edge {
 
-    constructor(from, to) {
+    constructor(argument, from, to) {
         super(from, to);
+        this.argument = argument;
     }
 
     get minlen() {
-        if (this.from.inputs.every((parameter) => parameter.arguments.every((argument) => argument.initializer))) {
+        if (this.from.inputs.every((parameter) => parameter.value.every((argument) => argument.initializer))) {
             return 2;
         }
         return 1;
+    }
+
+    emit(event) {
+        switch (event) {
+            case 'pointerover':
+                this.argument.context.focus([ this.argument.value ]);
+                break;
+            case 'pointerleave':
+                this.argument.context.blur([ this.argument.value ]);
+                break;
+            default:
+                break;
+        }
     }
 };
 
 view.Sidebar = class {
 
-    constructor(host, id) {
+    constructor(host) {
         this._host = host;
-        this._id = id ? ('-' + id) : '';
         this._stack = [];
-        this._closeSidebarHandler = () => {
-            this._pop();
-        };
+        const pop = () => this._update(this._stack.slice(0, -1));
+        this._closeSidebarHandler = () => pop();
         this._closeSidebarKeyDownHandler = (e) => {
             if (e.keyCode == 27) {
                 e.preventDefault();
-                this._pop();
+                pop();
             }
         };
         const sidebar = this._element('sidebar');
@@ -2000,66 +2067,35 @@ view.Sidebar = class {
     }
 
     _element(id) {
-        return this._host.document.getElementById(id + this._id);
+        return this._host.document.getElementById(id);
     }
 
     open(content, title) {
-        this.close();
-        this.push(content, title);
+        this._update([ { title: title, content: content } ]);
     }
 
     close() {
-        this._deactivate();
-        this._stack = [];
-        this._hide();
+        this._update([]);
     }
 
     push(content, title) {
-        const item = { title: title, content: content };
-        this._stack.push(item);
-        this._activate(item);
+        this._update(this._stack.concat({ title: title, content: content }));
     }
 
-    _pop() {
-        this._deactivate();
-        if (this._stack.length > 0) {
+    _update(stack) {
+        const sidebar = this._element('sidebar');
+        const container = this._element('graph');
+        const closeButton = this._element('sidebar-closebutton');
+        closeButton.removeEventListener('click', this._closeSidebarHandler);
+        this._host.document.removeEventListener('keydown', this._closeSidebarKeyDownHandler);
+        if (stack) {
+            this._stack = stack;
+        } else if (this._stack.length > 0) {
             this._stack.pop();
         }
         if (this._stack.length > 0) {
-            this._activate(this._stack[this._stack.length - 1]);
-        } else {
-            this._hide();
-        }
-    }
-
-    _hide() {
-        const sidebar = this._element('sidebar');
-        if (sidebar) {
-            sidebar.style.right = 'calc(0px - min(calc(100% * 0.6), 500px))';
-            sidebar.style.opacity = 0;
-        }
-        const container = this._element('graph');
-        if (container) {
-            container.style.width = '100%';
-            container.focus();
-        }
-    }
-
-    _deactivate() {
-        const sidebar = this._element('sidebar');
-        if (sidebar) {
-            const closeButton = this._element('sidebar-closebutton');
-            closeButton.removeEventListener('click', this._closeSidebarHandler);
-            this._host.document.removeEventListener('keydown', this._closeSidebarKeyDownHandler);
-        }
-    }
-
-    _activate(item) {
-        const sidebar = this._element('sidebar');
-        if (sidebar) {
-            const title = this._element('sidebar-title');
-            title.innerHTML = item.title ? item.title.toUpperCase() : '';
-            const closeButton = this._element('sidebar-closebutton');
+            const item = this._stack[this._stack.length - 1];
+            this._element('sidebar-title').innerHTML = item.title || '';
             closeButton.addEventListener('click', this._closeSidebarHandler);
             const content = this._element('sidebar-content');
             if (typeof item.content == 'string') {
@@ -2073,14 +2109,16 @@ view.Sidebar = class {
                 content.innerHTML = '';
                 content.appendChild(item.content);
             }
-            sidebar.style.width = 'min(calc(100% * 0.6), 500px)';
+            sidebar.style.width = 'min(calc(100% * 0.6), 42em)';
             sidebar.style.right = 0;
             sidebar.style.opacity = 1;
             this._host.document.addEventListener('keydown', this._closeSidebarKeyDownHandler);
-        }
-        const container = this._element('graph');
-        if (container) {
-            container.style.width = 'max(40vw, calc(100vw - 500px))';
+            container.style.width = 'max(40vw, calc(100vw - 42em))';
+        } else {
+            sidebar.style.right = 'calc(0px - min(calc(100% * 0.6), 42em))';
+            sidebar.style.opacity = 0;
+            container.style.width = '100%';
+            container.focus();
         }
     }
 };
@@ -2112,6 +2150,10 @@ view.NodeSidebar = class extends view.Control {
         this._attributes = [];
         this._inputs = [];
         this._outputs = [];
+
+        const container = this._host.document.createElement('div');
+        container.className = 'sidebar-node';
+        this._elements.push(container);
 
         if (node.type) {
             let showDocumentation = null;
@@ -2174,10 +2216,6 @@ view.NodeSidebar = class extends view.Control {
                 this._addOutput(output.name, output);
             }
         }
-
-        const separator = this._host.document.createElement('div');
-        separator.className = 'sidebar-separator';
-        this._elements.push(separator);
     }
 
     render() {
@@ -2188,12 +2226,12 @@ view.NodeSidebar = class extends view.Control {
         const element = this._host.document.createElement('div');
         element.className = 'sidebar-header';
         element.innerText = title;
-        this._elements.push(element);
+        this._elements[0].appendChild(element);
     }
 
     _addProperty(name, value) {
         const item = new view.NameValueView(this._host, name, value);
-        this._elements.push(item.render());
+        this._elements[0].appendChild(item.render());
     }
 
     _addAttribute(name, attribute) {
@@ -2203,11 +2241,11 @@ view.NodeSidebar = class extends view.Control {
         });
         const item = new view.NameValueView(this._host, name, value);
         this._attributes.push(item);
-        this._elements.push(item.render());
+        this._elements[0].appendChild(item.render());
     }
 
     _addInput(name, input) {
-        if (input.arguments.length > 0) {
+        if (input.value.length > 0) {
             const value = new view.ParameterView(this._host, input);
             value.on('export-tensor', (sender, value) => this.emit('export-tensor', value));
             value.on('error', (sender, value) => this.emit('error', value));
@@ -2215,18 +2253,18 @@ view.NodeSidebar = class extends view.Control {
             value.on('deactivate', (sender, value) => this.emit('deactivate', value));
             const item = new view.NameValueView(this._host, name, value);
             this._inputs.push(item);
-            this._elements.push(item.render());
+            this._elements[0].appendChild(item.render());
         }
     }
 
     _addOutput(name, output) {
-        if (output.arguments.length > 0) {
+        if (output.value.length > 0) {
             const value = new view.ParameterView(this._host, output);
             value.on('activate', (sender, value) => this.emit('activate', value));
             value.on('deactivate', (sender, value) => this.emit('deactivate', value));
             const item = new view.NameValueView(this._host, name, value);
             this._outputs.push(item);
-            this._elements.push(item.render());
+            this._elements[0].appendChild(item.render());
         }
     }
 
@@ -2524,8 +2562,8 @@ view.ParameterView = class extends view.Control {
         this._list = list;
         this._elements = [];
         this._items = [];
-        for (const argument of list.arguments) {
-            const item = new view.ArgumentView(host, argument);
+        for (const value of list.value) {
+            const item = new view.ArgumentView(host, value);
             item.on('export-tensor', (sender, value) => this.emit('export-tensor', value));
             item.on('error', (sender, value) => this.emit('error', value));
             item.on('activate', (sender, value) => this.emit('activate', value));
@@ -2583,7 +2621,7 @@ view.ArgumentView = class extends view.ValueView {
             const nameLine = this._host.document.createElement('div');
             nameLine.className = 'sidebar-item-value-line';
             if (typeof name !== 'string') {
-                throw new Error("Invalid argument identifier '" + JSON.stringify(name) + "'.");
+                throw new Error("Invalid value identifier '" + JSON.stringify(name) + "'.");
             }
             nameLine.innerHTML = '<span class=\'sidebar-item-value-line-content\'>name: <b>' + (name || ' ') + '</b></span>';
             nameLine.addEventListener('pointerenter', () => this.emit('activate', this._argument));
@@ -2664,7 +2702,9 @@ view.ModelSidebar = class extends view.Control {
         super();
         this._host = host;
         this._model = model;
-        this._elements = [];
+
+        this._container = this._host.document.createElement('div');
+        this._container.className = 'sidebar-node';
 
         if (model.format) {
             this._addProperty('format', new view.ValueTextView(this._host, model.format));
@@ -2730,33 +2770,29 @@ view.ModelSidebar = class extends view.Control {
                 }
             }
         }
-
-        const separator = this._host.document.createElement('div');
-        separator.className = 'sidebar-separator';
-        this._elements.push(separator);
     }
 
     render() {
-        return this._elements;
+        return [ this._container ];
     }
 
     _addHeader(title) {
         const element = this._host.document.createElement('div');
         element.className = 'sidebar-header';
         element.innerText = title;
-        this._elements.push(element);
+        this._container.appendChild(element);
     }
 
     _addProperty(name, value) {
         const item = new view.NameValueView(this._host, name, value);
-        this._elements.push(item.render());
+        this._container.appendChild(item.render());
     }
 
     addArgument(name, argument) {
         const value = new view.ParameterView(this._host, argument);
         value.toggle();
         const item = new view.NameValueView(this._host, name, value);
-        this._elements.push(item.render());
+        this._container.appendChild(item.render());
     }
 };
 
@@ -2858,10 +2894,6 @@ view.DocumentationSidebar = class extends view.Control {
             }
 
             this._elements = [ element ];
-
-            const separator = this._host.document.createElement('div');
-            separator.className = 'sidebar-separator';
-            this._elements.push(separator);
         }
         return this._elements;
     }
@@ -2878,29 +2910,29 @@ view.DocumentationSidebar = class extends view.Control {
 
 view.FindSidebar = class extends view.Control {
 
-    constructor(host, element, graph) {
+    constructor(host, graph) {
         super();
         this._host = host;
-        this._graphElement = element;
         this._graph = graph;
-        this._contentElement = this._host.document.createElement('div');
-        this._contentElement.setAttribute('class', 'sidebar-find');
+        this._table = new Map();
         this._searchElement = this._host.document.createElement('input');
+        this._searchElement.setAttribute('class', 'sidebar-find-search');
         this._searchElement.setAttribute('id', 'search');
         this._searchElement.setAttribute('type', 'text');
         this._searchElement.setAttribute('spellcheck', 'false');
-        this._searchElement.setAttribute('placeholder', 'Search...');
-        this._searchElement.setAttribute('style', 'width: 100%');
+        this._searchElement.setAttribute('placeholder', 'Search');
         this._searchElement.addEventListener('input', (e) => {
             this.update(e.target.value);
             this.emit('search-text-changed', e.target.value);
         });
-        this._resultElement = this._host.document.createElement('ol');
-        this._resultElement.addEventListener('click', (e) => {
-            this.select(e);
+        this._contentElement = this._host.document.createElement('ol');
+        this._contentElement.setAttribute('class', 'sidebar-find-content');
+        this._contentElement.addEventListener('click', (e) => {
+            const identifier = e.target.getAttribute('data');
+            if (this._table.has(identifier)) {
+                this.emit('select', this._table.get(identifier));
+            }
         });
-        this._contentElement.appendChild(this._searchElement);
-        this._contentElement.appendChild(this._resultElement);
     }
 
     on(event, callback) {
@@ -2917,44 +2949,6 @@ view.FindSidebar = class extends view.Control {
         }
     }
 
-    select(e) {
-        const selection = [];
-        const id = e.target.id;
-
-        const nodesElement = this._graphElement.getElementById('nodes');
-        let nodeElement = nodesElement.firstChild;
-        while (nodeElement) {
-            if (nodeElement.id == id) {
-                selection.push(nodeElement);
-            }
-            nodeElement = nodeElement.nextSibling;
-        }
-
-        const edgePathsElement = this._graphElement.getElementById('edge-paths');
-        let edgePathElement = edgePathsElement.firstChild;
-        while (edgePathElement) {
-            if (edgePathElement.id == id) {
-                selection.push(edgePathElement);
-            }
-            edgePathElement = edgePathElement.nextSibling;
-        }
-
-        let initializerElement = this._graphElement.getElementById(id);
-        if (initializerElement) {
-            while (initializerElement.parentElement) {
-                initializerElement = initializerElement.parentElement;
-                if (initializerElement.id && initializerElement.id.startsWith('node-')) {
-                    selection.push(initializerElement);
-                    break;
-                }
-            }
-        }
-
-        if (selection.length > 0) {
-            this.emit('select', selection);
-        }
-    }
-
     focus(searchText) {
         this._searchElement.focus();
         this._searchElement.value = '';
@@ -2963,120 +2957,127 @@ view.FindSidebar = class extends view.Control {
     }
 
     update(searchText) {
-        while (this._resultElement.lastChild) {
-            this._resultElement.removeChild(this._resultElement.lastChild);
+        while (this._contentElement.lastChild) {
+            this._contentElement.removeChild(this._contentElement.lastChild);
         }
-
+        this._table.clear();
+        let index = 0;
+        const add = (value, content) => {
+            const key = index.toString();
+            index++;
+            this._table.set(key, value);
+            const element = this._host.document.createElement('li');
+            element.innerText = content;
+            element.setAttribute('data', key);
+            element.addEventListener('pointerover', (e) => {
+                const identifier = e.target.getAttribute('data');
+                if (this._table.has(identifier)) {
+                    this.emit('focus', this._table.get(identifier));
+                }
+            });
+            element.addEventListener('pointerleave', (e) => {
+                const identifier = e.target.getAttribute('data');
+                if (this._table.has(identifier)) {
+                    this.emit('blur', this._table.get(identifier));
+                }
+            });
+            this._contentElement.appendChild(element);
+        };
         let terms = null;
-        let callback = null;
+        let match = null;
         const unquote = searchText.match(new RegExp(/^'(.*)'|"(.*)"$/));
         if (unquote) {
             const term = unquote[1] || unquote[2];
             terms = [ term ];
-            callback = (name) => {
+            match = (name) => {
                 return term == name;
             };
         } else {
             terms = searchText.trim().toLowerCase().split(' ').map((term) => term.trim()).filter((term) => term.length > 0);
-            callback = (name) => {
+            match = (name) => {
                 return terms.every((term) => name.toLowerCase().indexOf(term) !== -1);
             };
         }
-
-        const nodes = new Set();
         const edges = new Set();
-
-        for (const node of this._graph.nodes.values()) {
-            const label = node.label;
-            const initializers = [];
-            if (label.class === 'graph-node' || label.class === 'graph-input') {
-                for (const input of label.inputs) {
-                    for (const argument of input.arguments) {
-                        if (argument.name && !edges.has(argument.name)) {
-                            const match = (argument, term) => {
-                                if (argument.name && argument.name.toLowerCase().indexOf(term) !== -1) {
-                                    return true;
-                                }
-                                if (argument.type) {
-                                    if (argument.type.dataType && term === argument.type.dataType.toLowerCase()) {
-                                        return true;
-                                    }
-                                    if (argument.type.shape) {
-                                        if (term === argument.type.shape.toString().toLowerCase()) {
-                                            return true;
-                                        }
-                                        if (argument.type.shape && Array.isArray(argument.type.shape.dimensions)) {
-                                            const dimensions = argument.type.shape.dimensions.map((dimension) => dimension ? dimension.toString().toLowerCase() : '');
-                                            if (term === dimensions.join(',')) {
-                                                return true;
-                                            }
-                                            if (dimensions.some((dimension) => term === dimension)) {
-                                                return true;
-                                            }
-                                        }
-                                    }
-                                }
-                                return false;
-                            };
-                            if (terms.every((term) => match(argument, term))) {
-                                if (!argument.initializer) {
-                                    const inputItem = this._host.document.createElement('li');
-                                    inputItem.innerText = '\u2192 ' + argument.name.split('\n').shift(); // custom argument id
-                                    inputItem.id = 'edge-' + argument.name;
-                                    this._resultElement.appendChild(inputItem);
-                                    edges.add(argument.name);
-                                } else {
-                                    initializers.push(argument);
-                                }
+        const arg = (argument) => {
+            if (terms.length === 0) {
+                return true;
+            }
+            let match = false;
+            for (const term of terms) {
+                if (argument.name && argument.name.toLowerCase().indexOf(term) !== -1) {
+                    match = true;
+                    break;
+                }
+                if (argument.type) {
+                    if (argument.type.dataType && term === argument.type.dataType.toLowerCase()) {
+                        match = true;
+                        break;
+                    }
+                    if (argument.type.shape) {
+                        if (term === argument.type.shape.toString().toLowerCase()) {
+                            match = true;
+                            break;
+                        }
+                        if (argument.type.shape && Array.isArray(argument.type.shape.dimensions)) {
+                            const dimensions = argument.type.shape.dimensions.map((dimension) => dimension ? dimension.toString().toLowerCase() : '');
+                            if (term === dimensions.join(',')) {
+                                match = true;
+                                break;
+                            }
+                            if (dimensions.some((dimension) => term === dimension)) {
+                                match = true;
+                                break;
                             }
                         }
                     }
                 }
             }
-            if (label.class === 'graph-node') {
-                const name = label.value.name;
-                const type = label.value.type.name;
-                if (!nodes.has(label.id) &&
-                    ((name && callback(name) || (type && callback(type))))) {
-                    const nameItem = this._host.document.createElement('li');
-                    nameItem.innerText = '\u25A2 ' + (name || '[' + type + ']');
-                    nameItem.id = label.id;
-                    this._resultElement.appendChild(nameItem);
-                    nodes.add(label.id);
-                }
+            return match;
+        };
+        const edge = (argument) => {
+            if (argument.name && !edges.has(argument.name) && arg(argument)) {
+                add(argument, '\u2192 ' + argument.name.split('\n').shift()); // split custom argument id
+                edges.add(argument.name);
             }
-            for (const argument of initializers) {
-                if (argument.name) {
-                    const initializeItem = this._host.document.createElement('li');
-                    initializeItem.innerText = '\u25A0 ' + argument.name.split('\n').shift(); // custom argument id
-                    initializeItem.id = 'initializer-' + argument.name;
-                    this._resultElement.appendChild(initializeItem);
-                }
+        };
+        for (const input of this._graph.inputs) {
+            for (const value of input.value) {
+                edge(value);
             }
         }
-
-        for (const node of this._graph.nodes.values()) {
-            const label = node.label;
-            if (label.class === 'graph-node' || label.class === 'graph-output') {
-                for (const output of label.outputs) {
-                    for (const argument of output.arguments) {
-                        if (argument.name && !edges.has(argument.name) && terms.every((term) => argument.name.toLowerCase().indexOf(term) != -1)) {
-                            const outputItem = this._host.document.createElement('li');
-                            outputItem.innerText = '\u2192 ' + argument.name.split('\n').shift(); // custom argument id
-                            outputItem.id = 'edge-' + argument.name;
-                            this._resultElement.appendChild(outputItem);
-                            edges.add(argument.name);
-                        }
+        for (const node of this._graph.nodes) {
+            const initializers = [];
+            for (const input of node.inputs) {
+                for (const value of input.value) {
+                    if (value.initializer) {
+                        initializers.push(value);
+                    } else {
+                        edge(value);
                     }
                 }
             }
+            const name = node.name;
+            const type = node.type.name;
+            if ((name && match(name)) || (type && match(type))) {
+                add(node, '\u25A2 ' + (name || '[' + type + ']'));
+            }
+            for (const value of initializers) {
+                if (value.name && !edges.has(value.name) && arg(value)) {
+                    add(node, '\u25A0 ' + value.name.split('\n').shift()); // split custom argument id
+                }
+            }
         }
-
-        this._resultElement.style.display = this._resultElement.childNodes.length != 0 ? 'block' : 'none';
+        for (const output of this._graph.outputs) {
+            for (const value of output.value) {
+                edge(value);
+            }
+        }
+        this._contentElement.style.display = this._contentElement.childNodes.length != 0 ? 'block' : 'none';
     }
 
-    get content() {
-        return this._contentElement;
+    render() {
+        return [ this._searchElement, this._contentElement ];
     }
 };
 
@@ -3127,10 +3128,12 @@ view.Tensor = class {
             [ 'boolean', 1 ],
             [ 'qint8', 1 ], [ 'qint16', 2 ], [ 'qint32', 4 ],
             [ 'quint8', 1 ], [ 'quint16', 2 ], [ 'quint32', 4 ],
+            [ 'xint8', 1 ],
             [ 'int8', 1 ], [ 'int16', 2 ], [ 'int32', 4 ], [ 'int64', 8 ],
             [ 'uint8', 1 ], [ 'uint16', 2 ], [ 'uint32', 4, ], [ 'uint64', 8 ],
             [ 'float16', 2 ], [ 'float32', 4 ], [ 'float64', 8 ], [ 'bfloat16', 2 ],
-            [ 'complex64', 8 ], [ 'complex128', 15 ]
+            [ 'complex64', 8 ], [ 'complex128', 16 ],
+            [ 'float8e4m3fn', 1 ], [ 'float8e4m3fnuz', 1 ], [ 'float8e5m2', 1 ], [ 'float8e5m2fnuz', 1 ]
         ]);
     }
 
@@ -3326,6 +3329,7 @@ view.Tensor = class {
                     }
                     break;
                 case 'qint8':
+                case 'xint8':
                 case 'int8':
                     for (; i < max; i++) {
                         results.push(view.getInt8(i));
@@ -3410,6 +3414,26 @@ view.Tensor = class {
                 case 'complex128':
                     for (; i < size; i += 16) {
                         results.push(view.getComplex128(i, this._littleEndian));
+                    }
+                    break;
+                case 'float8e4m3fn':
+                    for (; i < size; i++) {
+                        results.push(view.getFloat8e4m3(i, true, false));
+                    }
+                    break;
+                case 'float8e4m3fnuz':
+                    for (; i < size; i++) {
+                        results.push(view.getFloat8e4m3(i, true, true));
+                    }
+                    break;
+                case 'float8e5m2':
+                    for (; i < size; i++) {
+                        results.push(view.getFloat8e5m2(i, false, false));
+                    }
+                    break;
+                case 'float8e5m2fnuz':
+                    for (; i < size; i++) {
+                        results.push(view.getFloat8e5m2(i, true, true));
                     }
                     break;
                 default:
@@ -3867,7 +3891,7 @@ markdown.Generator = class {
         this._emStartRegExp = /^(?:(\*(?=[!"#$%&'()+\-.,/:;<=>?@[\]`{|}~]))|\*)(?![*\s])|_/;
         this._emMiddleRegExp = /^\*(?:(?:(?!__[^_]*?__|\*\*\[^\*\]*?\*\*)(?:[^*]|\\\*)|__[^_]*?__|\*\*\[^\*\]*?\*\*)|\*(?:(?!__[^_]*?__|\*\*\[^\*\]*?\*\*)(?:[^*]|\\\*)|__[^_]*?__|\*\*\[^\*\]*?\*\*)*?\*)+?\*$|^_(?![_\s])(?:(?:(?!__[^_]*?__|\*\*\[^\*\]*?\*\*)(?:[^_]|\\_)|__[^_]*?__|\*\*\[^\*\]*?\*\*)|_(?:(?!__[^_]*?__|\*\*\[^\*\]*?\*\*)(?:[^_]|\\_)|__[^_]*?__|\*\*\[^\*\]*?\*\*)*?_)+?_$/;
         this._emEndAstRegExp = /[^!"#$%&'()+\-.,/:;<=>?@[\]`{|}~\s]\*(?!\*)|[!"#$%&'()+\-.,/:;<=>?@[\]`{|}~]\*(?!\*)(?:(?=[!"#$%&'()+\-.,/:;<=>?@[\]`{|}~_\s]|$))/g;
-        this._emEndUndRegExp = /[^\s]_(?!_)(?:(?=[!"#$%&'()+\-.,/:;<=>?@[\]`{|}~*\s])|$)/g,
+        this._emEndUndRegExp = /[^\s]_(?!_)(?:(?=[!"#$%&'()+\-.,/:;<=>?@[\]`{|}~*\s])|$)/g;
         this._codespanRegExp = /^(`+)([^`]|[^`][\s\S]*?[^`])\1(?!`)/;
         this._brRegExp = /^( {2,}|\\)\n(?!\s*$)/;
         this._delRegExp = /^~+(?=\S)([\s\S]*?\S)~+/;
@@ -4621,18 +4645,22 @@ view.ModelContext = class {
                 ];
                 const skip =
                     signatures.some((signature) => signature.length <= stream.length && stream.peek(signature.length).every((value, index) => signature[index] === undefined || signature[index] === value)) ||
-                    Array.from(this._tags).some((pair) => pair[0] !== 'flatbuffers' && pair[1].size > 0) ||
+                    Array.from(this._tags).some((entry) => entry[0] !== 'flatbuffers' && entry[1].size > 0) ||
                     Array.from(this._content.values()).some((obj) => obj !== undefined);
                 if (!skip) {
                     switch (type) {
                         case 'json': {
                             try {
-                                const reader = json.TextReader.open(this.stream);
-                                if (reader) {
-                                    const obj = reader.read();
-                                    this._content.set(type, obj);
+                                const buffer = this.stream.peek(Math.min(this.stream.length, 0x1000));
+                                if ((buffer.length < 8 || String.fromCharCode.apply(null, buffer.slice(0, 8)) !== '\x89HDF\r\n\x1A\n') &&
+                                    (buffer.some((v) => v === 0x22 || v === 0x5b || v === 0x5d || v === 0x7b || v === 0x7d))) {
+                                    const reader = json.TextReader.open(this.stream);
+                                    if (reader) {
+                                        const obj = reader.read();
+                                        this._content.set(type, obj);
+                                    }
                                 }
-                            } catch (err) {
+                            } catch (error) {
                                 // continue regardless of error
                             }
                             break;
@@ -4648,7 +4676,7 @@ view.ModelContext = class {
                                         this._content.set(type, obj);
                                     }
                                 }
-                            } catch (err) {
+                            } catch (error) {
                                 // continue regardless of error
                             }
                             break;
@@ -4681,7 +4709,7 @@ view.ModelContext = class {
                                     const pickle = execution.__import__('pickle');
                                     unpickler = new pickle.Unpickler(data);
                                 }
-                            } catch (err) {
+                            } catch (error) {
                                 // continue regardless of error
                             }
                             if (unpickler) {
@@ -4815,19 +4843,19 @@ view.EntryContext = class {
         return this._stream;
     }
 
-    request(file, encoding, base) {
+    async request(file, encoding, base) {
         if (base === undefined) {
             const stream = this._entries.get(file);
             if (!stream) {
-                return Promise.reject(new Error('File not found.'));
+                throw new view.Error('File not found.');
             }
             if (encoding) {
                 const decoder = new TextDecoder(encoding);
                 const buffer = stream.peek();
                 const value = decoder.decode(buffer);
-                return Promise.resolve(value);
+                return value;
             }
-            return Promise.resolve(stream);
+            return stream;
         }
         return this._host.request(file, encoding, base);
     }
@@ -4869,7 +4897,7 @@ view.ModelFactoryService = class {
         this.register('./mediapipe', [ '.pbtxt' ]);
         this.register('./uff', [ '.uff', '.pb', '.pbtxt', '.uff.txt', '.trt', '.engine' ]);
         this.register('./tensorrt', [ '.trt', '.trtmodel', '.engine', '.model', '.txt', '.uff', '.pb', '.tmfile', '.onnx', '.pth', '.dnn', '.plan' ]);
-        this.register('./numpy', [ '.npz', '.npy', '.pkl', '.pickle', '.model', '.model2' ]);
+        this.register('./numpy', [ '.npz', '.npy', '.pkl', '.pickle', '.model', '.model2', '.mge' ]);
         this.register('./lasagne', [ '.pkl', '.pickle', '.joblib', '.model', '.pkl.z', '.joblib.z' ]);
         this.register('./lightgbm', [ '.txt', '.pkl', '.model' ]);
         this.register('./keras', [ '.h5', '.hd5', '.hdf5', '.keras', '.json', '.cfg', '.model', '.pb', '.pth', '.weights', '.pkl', '.lite', '.tflite', '.ckpt' ], [ '.zip' ]);
@@ -4907,7 +4935,8 @@ view.ModelFactoryService = class {
         this.register('./cambricon', [ '.cambricon' ]);
         this.register('./onednn', [ '.json']);
         this.register('./mlir', [ '.mlir']);
-        this.register('./hailo', ['.hn', '.har']);
+        this.register('./hailo', [ '.hn', '.har' ]);
+        this.register('./safetensors', [ '.safetensors' ]);
     }
 
     register(id, factories, containers) {
@@ -4920,32 +4949,29 @@ view.ModelFactoryService = class {
         }
     }
 
-    open(context) {
-        return this._openSignature(context).then((context) => {
+    async open(context) {
+        try {
+            await this._openSignature(context);
             const modelContext = new view.ModelContext(context);
-            /* eslint-disable consistent-return */
-            return this._openContext(modelContext).then((model) => {
-                if (model) {
-                    return model;
-                }
+            const model = await this._openContext(modelContext);
+            if (!model) {
                 const entries = modelContext.entries();
-                if (entries && entries.size > 0) {
-                    return this._openEntries(entries).then((context) => {
-                        if (context) {
-                            return this._openContext(context);
-                        }
-                        this._unsupported(modelContext);
-                    });
+                if (!entries || entries.size === 0) {
+                    this._unsupported(modelContext);
                 }
-                this._unsupported(modelContext);
-            });
-            /* eslint-enable consistent-return */
-        }).catch((error) => {
+                const context = await this._openEntries(entries);
+                if (!context) {
+                    this._unsupported(modelContext);
+                }
+                return this._openContext(context);
+            }
+            return model;
+        } catch (error) {
             if (error && context.identifier) {
                 error.context = context.identifier;
             }
             throw error;
-        });
+        }
     }
 
     _unsupported(context) {
@@ -4980,6 +5006,7 @@ view.ModelFactoryService = class {
                     { name: 'keras-yolo2 configuration', tags: [ 'model', 'train', 'valid' ] },
                     { name: 'Vulkan SwiftShader ICD manifest', tags: [ 'file_format_version', 'ICD' ] },
                     { name: 'DeepLearningExamples configuration', tags: [ 'attention_probs_dropout_prob', 'hidden_act', 'hidden_dropout_prob', 'hidden_size', ] },
+                    { name: 'GitHub page data', tags: [ 'payload', 'title', 'locale' ] },
                     { name: 'NuGet assets', tags: [ 'version', 'targets', 'packageFolders' ] },
                     { name: 'NuGet data', tags: [ 'format', 'restore', 'projects' ] },
                     { name: 'NPM package', tags: [ 'name', 'version', 'dependencies' ] },
@@ -4989,7 +5016,6 @@ view.ModelFactoryService = class {
                     { name: 'Brain.js data', tags: [ 'type', 'sizes', 'layers' ] },
                     { name: 'Custom Vision metadata', tags: [ 'CustomVision.Metadata.Version' ] },
                     { name: 'W&B metadata', tags: [ 'program', 'host', 'executable' ] }
-
                 ];
                 const match = (obj, tag) => {
                     if (tag.startsWith('[].')) {
@@ -5147,63 +5173,48 @@ view.ModelFactoryService = class {
         unknown();
     }
 
-    _openContext(context) {
+    async _openContext(context) {
         const modules = this._filter(context).filter((module) => module && module.length > 0);
         const errors = [];
         let success = false;
-        const nextModule = () => {
+        const next = async () => {
             if (modules.length > 0) {
-                const id = modules.shift();
-                return this._host.require(id).then((module) => {
+                try {
+                    const id = modules.shift();
+                    const module = await this._host.require(id);
                     if (!module.ModelFactory) {
                         throw new view.Error("Failed to load module '" + id + "'.");
                     }
                     const modelFactory = new module.ModelFactory();
-                    let match = undefined;
-                    try {
-                        match = modelFactory.match(context);
-                        if (!match) {
-                            return nextModule();
+                    const target = modelFactory.match(context);
+                    if (target) {
+                        success = true;
+                        const model = await modelFactory.open(context, target);
+                        if (!model.identifier) {
+                            model.identifier = context.identifier;
                         }
-                    } catch (error) {
-                        return Promise.reject(error);
+                        return model;
                     }
-                    success = true;
-                    try {
-                        return modelFactory.open(context, match).then((model) => {
-                            if (!model.identifier) {
-                                model.identifier = context.identifier;
-                            }
-                            return model;
-                        }).catch((error) => {
-                            if (context.stream && context.stream.position !== 0) {
-                                context.stream.seek(0);
-                            }
-                            errors.push(error);
-                            return nextModule();
-                        });
-                    } catch (error) {
-                        if (context.stream && context.stream.position !== 0) {
-                            context.stream.seek(0);
-                        }
-                        errors.push(error);
-                        return nextModule();
+                } catch (error) {
+                    if (context.stream && context.stream.position !== 0) {
+                        context.stream.seek(0);
                     }
-                });
+                    errors.push(error);
+                }
+                return await next();
             }
             if (success) {
                 if (errors.length === 1) {
-                    const error = errors[0];
-                    return Promise.reject(error);
+                    throw errors[0];
                 }
-                return Promise.reject(new view.Error(errors.map((err) => err.message).join('\n')));
+                throw new view.Error(errors.map((err) => err.message).join('\n'));
             }
-            return Promise.resolve(null);
+            return null;
         };
-        return nextModule();
+        return await next();
     }
 
-    _openEntries(entries) {
+    async _openEntries(entries) {
         try {
             const rootFolder = (files) => {
                 const map = files.map((file) => file.split('/').slice(0, -1));
@@ -5213,34 +5224,33 @@ view.ModelFactoryService = class {
                 const folder = rotate(map).filter(equals).map(at(0)).join('/');
                 return folder.length === 0 ? folder : folder + '/';
             };
-            const filter = (queue) => {
+            const filter = async (queue) => {
                 let matches = [];
-                const nextEntry = () => {
+                const nextEntry = async () => {
                     if (queue.length > 0) {
                         const entry = queue.shift();
                         const context = new view.ModelContext(new view.EntryContext(this._host, entries, folder, entry.name, entry.stream));
-                        let modules = this._filter(context);
-                        const nextModule = () => {
+                        const modules = this._filter(context);
+                        const nextModule = async () => {
                             if (modules.length > 0) {
                                 const id = modules.shift();
-                                return this._host.require(id).then((module) => {
-                                    if (!module.ModelFactory) {
-                                        throw new view.ArchiveError("Failed to load module '" + id + "'.", null);
-                                    }
-                                    const factory = new module.ModelFactory();
-                                    if (factory.match(context)) {
-                                        matches.push(context);
-                                        modules = [];
-                                    }
-                                    return nextModule();
-                                });
+                                const module = await this._host.require(id);
+                                if (!module.ModelFactory) {
+                                    throw new view.ArchiveError("Failed to load module '" + id + "'.", null);
+                                }
+                                const modelFactory = new module.ModelFactory();
+                                if (modelFactory.match(context)) {
+                                    matches.push(context);
+                                    modules.splice(0, modules.length);
+                                }
+                                return await nextModule();
                             }
-                            return nextEntry();
+                            return await nextEntry();
                         };
-                        return nextModule();
+                        return await nextModule();
                     }
                     if (matches.length === 0) {
-                        return Promise.resolve(null);
+                        return null;
                     }
                     // MXNet
                     if (matches.length === 2 &&
@@ -5296,13 +5306,19 @@ view.ModelFactoryService = class {
                         matches.some((context) => context.identifier.toLowerCase().split('/').pop() === 'keras_metadata.pb')) {
                         matches = matches.filter((context) => context.identifier.toLowerCase().split('/').pop() !== 'keras_metadata.pb');
                     }
+                    // Keras
+                    if (matches.length === 2 &&
+                        matches.some((context) => context.identifier.toLowerCase().split('/').pop() === 'config.json') &&
+                        matches.some((context) => context.identifier.toLowerCase().split('/').pop() === 'model.weights.h5')) {
+                        matches = matches.filter((context) => context.identifier.toLowerCase().split('/').pop() == 'model.weights.h5');
+                    }
                     if (matches.length > 1) {
-                        return Promise.reject(new view.ArchiveError('Archive contains multiple model files.'));
+                        throw new view.ArchiveError('Archive contains multiple model files.');
                     }
                     const match = matches.shift();
-                    return Promise.resolve(match);
+                    return match;
                 };
-                return nextEntry();
+                return await nextEntry();
             };
             const list = Array.from(entries).map((entry) => {
                 return { name: entry[0], stream: entry[1] };
@@ -5321,15 +5337,14 @@ view.ModelFactoryService = class {
             });
             const folder = rootFolder(files.map((entry) => entry.name));
             const queue = files.slice(0).filter((entry) => entry.name.substring(folder.length).indexOf('/') < 0);
-            return filter(queue).then((context) => {
-                if (context) {
-                    return Promise.resolve(context);
-                }
+            const context = await filter(queue);
+            if (!context) {
                 const queue = files.slice(0).filter((entry) => entry.name.substring(folder.length).indexOf('/') >= 0);
-                return filter(queue);
-            });
+                return await filter(queue);
+            }
+            return context;
         } catch (error) {
-            return Promise.reject(new view.ArchiveError(error.message));
+            throw new view.ArchiveError(error.message);
         }
     }
 
@@ -5359,7 +5374,7 @@ view.ModelFactoryService = class {
         return Array.from(new Set(list.map((entry) => entry.id)));
     }
 
-    _openSignature(context) {
+    async _openSignature(context) {
         const stream = context.stream;
         if (stream) {
             let empty = true;
@@ -5374,7 +5389,7 @@ view.ModelFactoryService = class {
             }
             stream.seek(0);
             if (empty) {
-                return Promise.reject(new view.Error('File has no content.'));
+                throw new view.Error('File has no content.');
             }
             /* eslint-disable no-control-regex */
             const entries = [
@@ -5388,10 +5403,9 @@ view.ModelFactoryService = class {
                 { name: 'HTML markup', value: /^\s*<!DOCTYPE\s*HTML>/ },
                 { name: 'HTML markup', value: /^\s*<!DOCTYPE\s*HTML\s+(PUBLIC|SYSTEM)?/ },
                 { name: 'Unity metadata', value: /^fileFormatVersion:/ },
-                { name: 'Python source code', value: /^\s*import[ ]+(os|sys|types|torch|argparse|onnx|numpy|tensorflow)(,|;|\s)/ },
-                { name: 'Python source code', value: /^\s*import[ ]+([a-z])+[ ]+as[ ]+/ },
-                { name: 'Python source code', value: /^\s*from[ ]+(torch)[ ]+import[ ]+/ },
-                { name: 'Python source code', value: /^\s*from[ ]+(keras)[ ]+import[ ]+/ },
+                { name: 'Python source code', value: /^\s*('''.*''')?\s*import[ ]+[a-zA-Z_]\w*(\.[a-zA-Z_]\w*)*([ ]+as[ ]+[a-zA-Z]\w*)?[ ]*(,|;|\n|\r\n)/ },
+                { name: 'Python source code', value: /^\s*('''.*''')?\s*from[ ]+([a-zA-Z_]\w*(\.[a-zA-Z_]\w*)*)[ ]+import[ ]+[a-zA-Z]\w*[ ]+/ },
+                { name: 'Python virtual environment configuration', value: /^home[ ]*=[ ]*/, identifier: 'pyvenv.cfg' },
                 { name: 'Bash script', value: /^#!\/usr\/bin\/env\s/ },
                 { name: 'Bash script', value: /^#!\/bin\/bash\s/ },
                 { name: 'TSD header', value: /^%TSD-Header-###%/ },
@@ -5405,43 +5419,41 @@ view.ModelFactoryService = class {
             const content = String.fromCharCode.apply(null, buffer);
             for (const entry of entries) {
                 if (content.match(entry.value) && (!entry.identifier || entry.identifier === context.identifier)) {
-                    return Promise.reject(new view.Error('Invalid file content. File contains ' + entry.name + '.'));
+                    throw new view.Error('Invalid file content. File contains ' + entry.name + '.');
                 }
             }
         }
-        return Promise.resolve(context);
     }
 };
 
 view.Metadata = class {
 
-    static open(context, name) {
+    static async open(context, name) {
         view.Metadata._metadata = view.Metadata._metadata || new Map();
         if (view.Metadata._metadata.has(name)) {
-            return Promise.resolve(view.Metadata._metadata.get(name));
+            return view.Metadata._metadata.get(name);
         }
-        return context.request(name, 'utf-8', null).then((data) => {
+        try {
+            const json = await context.request(name, 'utf-8', null);
+            const data = JSON.parse(json);
             const library = new view.Metadata(data);
             view.Metadata._metadata.set(name, library);
             return library;
-        }).catch(() => {
+        } catch (error) {
             const library = new view.Metadata(null);
             view.Metadata._metadata.set(name, library);
             return library;
-        });
+        }
     }
 
     constructor(data) {
         this._types = new Map();
         this._attributes = new Map();
         this._inputs = new Map();
-        if (data) {
-            const metadata = JSON.parse(data);
-            for (const entry of metadata) {
-                this._types.set(entry.name, entry);
-                if (entry.identifier !== undefined) {
-                    this._types.set(entry.identifier, entry);
-                }
+        for (const entry of data || []) {
+            this._types.set(entry.name, entry);
+            if (entry.identifier !== undefined) {
+                this._types.set(entry.identifier, entry);
             }
         }
     }

@@ -10,10 +10,9 @@ tengine.ModelFactory = class {
         return tengine.Reader.open(context.stream);
     }
 
-    open(context, match) {
-        return tengine.Metadata.open(context).then((metadata) => {
-            return new tengine.Model(metadata, match);
-        });
+    async open(context, target) {
+        const metadata = await tengine.Metadata.open(context);
+        return new tengine.Model(metadata, target);
     }
 };
 
@@ -47,14 +46,14 @@ tengine.Graph = class {
         this._inputs = [];
         this._outputs = [];
         this._nodes = [];
-        const tensors = graph.tensors.map((tensor) => new tengine.Argument(tensor));
+        const tensors = graph.tensors.map((tensor) => new tengine.Value(tensor));
         for (const input of graph.inputs) {
             const node = graph.nodes[input];
-            this._inputs.push(new tengine.Parameter(node.name, true, node.outputs.map((output) => tensors[output])));
+            this._inputs.push(new tengine.Argument(node.name, node.outputs.map((output) => tensors[output])));
         }
         for (const output of graph.outputs) {
             const node = graph.nodes[output];
-            this._outputs.push(new tengine.Parameter(node.name, true, node.outputs.map((output) => tensors[output])));
+            this._outputs.push(new tengine.Argument(node.name, node.outputs.map((output) => tensors[output])));
         }
         for (const node of graph.nodes) {
             switch (node.type) {
@@ -85,28 +84,23 @@ tengine.Graph = class {
     }
 };
 
-tengine.Parameter = class {
+tengine.Argument = class {
 
-    constructor(name, visible, args) {
+    constructor(name, value) {
         this._name = name;
-        this._visible = visible;
-        this._arguments = args;
+        this._value = value;
     }
 
     get name() {
         return this._name;
     }
 
-    get visible() {
-        return this._visible;
-    }
-
-    get arguments() {
-        return this._arguments;
+    get value() {
+        return this._value;
     }
 };
 
-tengine.Argument = class {
+tengine.Value = class {
 
     constructor(tensor) {
         this._name = tensor.name;
@@ -159,14 +153,14 @@ tengine.Node = class {
                 if (inputIndex < inputs.length || inputDef.option != 'optional') {
                     const inputCount = (inputDef.option == 'variadic') ? (inputs.length - inputIndex) : 1;
                     const inputArguments = inputs.slice(inputIndex, inputIndex + inputCount).filter((id) => id != '' || inputDef.option != 'optional').map((id) => tensors[id]);
-                    this._inputs.push(new tengine.Parameter(inputDef.name, true, inputArguments));
+                    this._inputs.push(new tengine.Argument(inputDef.name, inputArguments));
                     inputIndex += inputCount;
                 }
             }
         } else {
             this._inputs.push(...inputs.slice(inputIndex).map((id, index) => {
                 const inputName = ((inputIndex + index) == 0) ? 'input' : (inputIndex + index).toString();
-                return new tengine.Parameter(inputName, true, [ tensors[id] ]);
+                return new tengine.Argument(inputName, [ tensors[id] ]);
             }));
         }
 
@@ -177,14 +171,14 @@ tengine.Node = class {
                 if (outputIndex < outputs.length || outputDef.option != 'optional') {
                     const outputCount = (outputDef.option == 'variadic') ? (outputs.length - outputIndex) : 1;
                     const outputArguments = outputs.slice(outputIndex, outputIndex + outputCount).map((id) => tensors[id]);
-                    this._outputs.push(new tengine.Parameter(outputDef.name, true, outputArguments));
+                    this._outputs.push(new tengine.Argument(outputDef.name, outputArguments));
                     outputIndex += outputCount;
                 }
             }
         } else {
             this._outputs.push(...outputs.slice(outputIndex).map((id, index) => {
                 const outputName = ((outputIndex + index) == 0) ? 'output' : (outputIndex + index).toString();
-                return new tengine.Parameter(outputName, true, [ tensors[id] ]);
+                return new tengine.Argument(outputName, [ tensors[id] ]);
             }));
         }
     }
@@ -212,19 +206,19 @@ tengine.Node = class {
 
 tengine.Attribute = class {
 
-    constructor(schema, key, value) {
+    constructor(metadata, key, value) {
         this._type = '';
         this._name = key;
         this._value = value;
-        if (schema) {
-            this._name = schema.name;
-            if (schema.type) {
-                this._type = schema.type;
+        if (metadata) {
+            this._name = metadata.name;
+            if (metadata.type) {
+                this._type = metadata.type;
             }
-            if (Object.prototype.hasOwnProperty.call(schema, 'visible') && !schema.visible) {
+            if (metadata.visible === false) {
                 this._visible = false;
-            } else if (Object.prototype.hasOwnProperty.call(schema, 'default')) {
-                if (this._value == schema.default || (this._value && this._value.toString() == schema.default.toString())) {
+            } else if (Object.prototype.hasOwnProperty.call(metadata, 'default')) {
+                if (this._value == metadata.default || (this._value && this._value.toString() == metadata.default.toString())) {
                     this._visible = false;
                 }
             }
@@ -310,17 +304,18 @@ tengine.TensorShape = class {
 
 tengine.Metadata = class {
 
-    static open(context) {
+    static async open(context) {
         if (tengine.Metadata._metadata) {
-            return Promise.resolve(tengine.Metadata._metadata);
+            return tengine.Metadata._metadata;
         }
-        return context.request('tengine-metadata.json', 'utf-8', null).then((data) => {
+        try {
+            const data = await context.request('tengine-metadata.json', 'utf-8', null);
             tengine.Metadata._metadata = new tengine.Metadata(data);
             return tengine.Metadata._metadata;
-        }).catch(() => {
+        } catch (error) {
             tengine.Metadata._metadata = new tengine.Metadata(null);
             return tengine.Metadata._metadata;
-        });
+        }
     }
 
     constructor(data) {
@@ -397,17 +392,16 @@ tengine.Reader = class {
                 }
                 return null;
             };
-            /* eslint-disable space-in-parens */
-            register( 0, 0, 'Accuracy', []);
-            register( 1, 0, 'BatchNormalization', [ 'f', 'f', 'i' ]);
-            register( 2, 0, 'BilinearResize', [ 'f', 'f', 'i' ]);
-            register( 3, 0, 'Concat', [ 'i' ]);
-            register( 4, 0, 'Const', []);
-            register( 5, 0, 'Convolution', [ 'i', 'i', 'i', 'i', 'i', 'i', 'i', 'i', 'i', 'i', 'i', 'i', 'i', 'i' ]);
-            register( 6, 0, 'Deconvolution', [ 'i', 'i', 'i', 'i', 'i', 'i', 'i', 'i', 'i', 'i', 'i', 'i', 'i' ]);
-            register( 7, 0, 'DetectionOutput', [ 'i', 'i', 'i', 'f', 'f' ]);
-            register( 8, 0, 'DropOut', []);
-            register( 9, 0, 'Eltwise', [ 'i', 'i' ]);
+            register(0, 0, 'Accuracy', []);
+            register(1, 0, 'BatchNormalization', [ 'f', 'f', 'i' ]);
+            register(2, 0, 'BilinearResize', [ 'f', 'f', 'i' ]);
+            register(3, 0, 'Concat', [ 'i' ]);
+            register(4, 0, 'Const', []);
+            register(5, 0, 'Convolution', [ 'i', 'i', 'i', 'i', 'i', 'i', 'i', 'i', 'i', 'i', 'i', 'i', 'i', 'i' ]);
+            register(6, 0, 'Deconvolution', [ 'i', 'i', 'i', 'i', 'i', 'i', 'i', 'i', 'i', 'i', 'i', 'i', 'i' ]);
+            register(7, 0, 'DetectionOutput', [ 'i', 'i', 'i', 'f', 'f' ]);
+            register(8, 0, 'DropOut', []);
+            register(9, 0, 'Eltwise', [ 'i', 'i' ]);
             register(10, 0, 'Flatten', [ 'i' ]);
             register(11, 0, 'FullyConnected', [ 'i' ]);
             register(12, 0, 'INPUT', []);
@@ -503,7 +497,6 @@ tengine.Reader = class {
             register(101, 0, 'L2Normalization', []);
             register(102, 0, 'PackModel', ['i','i']);
             register(103, 0, 'Num', []);
-            /* eslint-enable space-in-parens */
 
             const buffer = this._stream.peek();
             const reader = new tengine.BinaryReader(buffer);

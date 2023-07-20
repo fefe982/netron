@@ -6,8 +6,8 @@
         "email": "lutzroeder@users.noreply.github.com",
         "url": "https://www.lutzroeder.com"
     },
-    "version": "6.8.2",
-    "date": "2023-04-16 17:12:13",
+    "version": "7.0.6",
+    "date": "2023-07-19 15:58:05",
     "description": "Visualizer for neural network, deep learning, and machine learning models",
     "license": "MIT",
     "repository": "lutzroeder/netron",
@@ -28,17 +28,17 @@
         "pull": "node package.js pull"
     },
     "dependencies": {
-        "electron-updater": "5.3.0"
+        "electron-updater": "6.1.1"
     },
     "devDependencies": {
-        "electron": "24.1.2",
-        "electron-builder": "23.6.0",
-        "@electron/notarize": "1.2.3",
-        "eslint": "8.38.0"
+        "electron": "25.3.0",
+        "electron-builder": "24.4.0",
+        "@electron/notarize": "2.1.0",
+        "eslint": "8.45.0"
     },
     "eslintConfig": {
         "env": {
-            "es6": true,
+            "es2017": true,
             "browser": true,
             "node": true
         },
@@ -56,11 +56,13 @@
             "indent": [ "error", 4, { "SwitchCase": 1 } ],
             "keyword-spacing": "error",
             "linebreak-style": "off",
+            "no-array-constructor": "error",
             "no-await-in-loop": "error",
             "no-console": "error",
             "no-constructor-return": "error",
             "no-duplicate-imports": "error",
             "no-else-return": "error",
+            "no-extra-semi": "error",
             "no-invalid-this": "error",
             "no-iterator": "error",
             "no-labels": "error",
@@ -69,6 +71,7 @@
             "no-promise-executor-return": "error",
             "no-proto": "error",
             "no-self-compare": "error",
+            "no-sequences": "error",
             "no-template-curly-in-string": "error",
             "no-trailing-spaces": "error",
             "no-unmodified-loop-condition": "error",
@@ -130,11 +133,13 @@
             { "ext": "pdmodel",     "name": "PaddlePaddle Model"       },
             { "ext": "pdopt",       "name": "PaddlePaddle Model"       },
             { "ext": "pdparams",    "name": "PaddlePaddle Model"       },
+            { "ext": "pkl",         "name": "Pickle Model"             },
             { "ext": "prototxt",    "name": "Text Protocol Buffer"     },
             { "ext": "pt",          "name": "PyTorch Model"            },
             { "ext": "pth",         "name": "PyTorch Model"            },
             { "ext": "ptl",         "name": "PyTorch Model"            },
             { "ext": "rknn",        "name": "RKNN Model"               },
+            { "ext": "safetensors", "name": "Safetensors Checkpoint"   },
             { "ext": "t7",          "name": "Torch Model"              },
             { "ext": "tfl",         "name": "TensorFlow Lite Model"    },
             { "ext": "tflite",      "name": "TensorFlow Lite Model"    },

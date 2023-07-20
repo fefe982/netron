@@ -21,10 +21,8 @@ message.ModelFactory = class {
         return null;
     }
 
-    open(context, match) {
-        return Promise.resolve().then(() => {
-            return new message.Model(match);
-        });
+    async open(context, target) {
+        return new message.Model(target);
     }
 };
 
@@ -72,17 +70,17 @@ message.Graph = class {
         this._inputs = [];
         this._outputs = [];
         this._nodes = [];
-        const args = data.arguments ? data.arguments.map((argument) => new message.Argument(argument)) : [];
+        const args = data.arguments ? data.arguments.map((argument) => new message.Value(argument)) : [];
         for (const parameter of data.inputs || []) {
             parameter.arguments = parameter.arguments.map((index) => args[index]).filter((argument) => !argument.initializer);
             if (parameter.arguments.filter((argument) => !argument.initializer).length > 0) {
-                this._inputs.push(new message.Parameter(parameter));
+                this._inputs.push(new message.Argument(parameter));
             }
         }
         for (const parameter of data.outputs || []) {
             parameter.arguments = parameter.arguments.map((index) => args[index]);
             if (parameter.arguments.filter((argument) => !argument.initializer).length > 0) {
-                this._outputs.push(new message.Parameter(parameter));
+                this._outputs.push(new message.Argument(parameter));
             }
         }
         for (const node of data.nodes || []) {
@@ -109,27 +107,23 @@ message.Graph = class {
     }
 };
 
-message.Parameter = class {
+message.Argument = class {
 
     constructor(data) {
         this._name = data.name || '';
-        this._arguments = (data.arguments || []);
+        this._value = (data.arguments || []);
     }
 
     get name() {
         return this._name;
     }
 
-    get arguments() {
-        return this._arguments;
-    }
-
-    get visible() {
-        return true;
+    get value() {
+        return this._value;
     }
 };
 
-message.Argument = class {
+message.Value = class {
 
     constructor(data) {
         this._name= data.name || '';
@@ -158,8 +152,8 @@ message.Node = class {
     constructor(data) {
         this._type = { name: data.type.name, category: data.type.category };
         this._name = data.name;
-        this._inputs = (data.inputs || []).map((input) => new message.Parameter(input));
-        this._outputs = (data.outputs || []).map((output) => new message.Parameter(output));
+        this._inputs = (data.inputs || []).map((input) => new message.Argument(input));
+        this._outputs = (data.outputs || []).map((output) => new message.Argument(output));
         this._attributes = (data.attributes || []).map((attribute) => new message.Attribute(attribute));
     }
 
@@ -202,10 +196,6 @@ message.Attribute = class {
 
     get type() {
         return this._type;
-    }
-
-    get visible() {
-        return true;
     }
 };
 

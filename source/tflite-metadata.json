@@ -844,7 +844,8 @@
       { "name": "end_mask", "type": "int32", "default": 0 },
       { "name": "ellipsis_mask", "type": "int32", "default": 0 },
       { "name": "new_axis_mask", "type": "int32", "default": 0 },
-      { "name": "shrink_axis_mask", "type": "int32", "default": 0 }
+      { "name": "shrink_axis_mask", "type": "int32", "default": 0 },
+      { "name": "offset", "type": "boolean", "default": false }
     ]
   },
   {
@@ -886,10 +887,11 @@
       { "name": "input", "type": "T" },
       { "name": "feature", "type": "T" },
       { "name": "time", "type": "T" },
-      { "name": "bias", "type": "T" }
+      { "name": "bias", "type": "T" },
+      { "name": "state", "type": "T" }
     ],
     "outputs": [
-      { "name": "state", "type": "T" },
+      { "name": "state_out", "type": "T" },
       { "name": "output", "type": "T" }
     ]
   },

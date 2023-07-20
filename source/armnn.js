@@ -20,41 +20,39 @@ armnn.ModelFactory = class {
         return undefined;
     }
 
-    open(context, match) {
-        return context.require('./armnn-schema').then((/* schema */) => {
-            armnn.schema = flatbuffers.get('armnn').armnnSerializer;
-            let model = null;
-            switch (match) {
-                case 'armnn.flatbuffers': {
-                    try {
-                        const stream = context.stream;
-                        const reader = flatbuffers.BinaryReader.open(stream);
-                        model = armnn.schema.SerializedGraph.create(reader);
-                    } catch (error) {
-                        const message = error && error.message ? error.message : error.toString();
-                        throw new armnn.Error('File format is not armnn.SerializedGraph (' + message.replace(/\.$/, '') + ').');
-                    }
-                    break;
+    async open(context, target) {
+        await context.require('./armnn-schema');
+        armnn.schema = flatbuffers.get('armnn').armnnSerializer;
+        let model = null;
+        switch (target) {
+            case 'armnn.flatbuffers': {
+                try {
+                    const stream = context.stream;
+                    const reader = flatbuffers.BinaryReader.open(stream);
+                    model = armnn.schema.SerializedGraph.create(reader);
+                } catch (error) {
+                    const message = error && error.message ? error.message : error.toString();
+                    throw new armnn.Error('File format is not armnn.SerializedGraph (' + message.replace(/\.$/, '') + ').');
                 }
-                case 'armnn.flatbuffers.json': {
-                    try {
-                        const obj = context.open('json');
-                        const reader = flatbuffers.TextReader.open(obj);
-                        model = armnn.schema.SerializedGraph.createText(reader);
-                    } catch (error) {
-                        const message = error && error.message ? error.message : error.toString();
-                        throw new armnn.Error('File text format is not armnn.SerializedGraph (' + message.replace(/\.$/, '') + ').');
-                    }
-                    break;
-                }
-                default: {
-                    throw new armnn.Error("Unsupported Arm NN '" + match + "'.");
-                }
+                break;
             }
-            return context.metadata('armnn-metadata.json').then((metadata) => {
-                return new armnn.Model(metadata, model);
-            });
-        });
+            case 'armnn.flatbuffers.json': {
+                try {
+                    const obj = context.open('json');
+                    const reader = flatbuffers.TextReader.open(obj);
+                    model = armnn.schema.SerializedGraph.createText(reader);
+                } catch (error) {
+                    const message = error && error.message ? error.message : error.toString();
+                    throw new armnn.Error('File text format is not armnn.SerializedGraph (' + message.replace(/\.$/, '') + ').');
+                }
+                break;
+            }
+            default: {
+                throw new armnn.Error("Unsupported Arm NN '" + target + "'.");
+            }
+        }
+        const metadata = await context.metadata('armnn-metadata.json');
+        return new armnn.Model(metadata, model);
     }
 };
 
@@ -69,10 +67,6 @@ armnn.Model = class {
         return 'Arm NN';
     }
 
-    get description() {
-        return '';
-    }
-
     get graphs() {
         return this._graphs;
     }
@@ -85,7 +79,6 @@ armnn.Graph = class {
         this._nodes = [];
         this._inputs = [];
         this._outputs = [];
-
         const counts = new Map();
         for (const layer of graph.layers) {
             const base = armnn.Node.getBase(layer);
@@ -101,7 +94,7 @@ armnn.Graph = class {
                 const layer = graph.layers[layerIndex];
                 const base = layerIndex < graph.layers.length ? armnn.Node.getBase(layer) : null;
                 const tensorInfo = base && slotIndex < base.outputSlots.length ? base.outputSlots[slotIndex].tensorInfo : null;
-                args.set(name, new armnn.Argument(name, tensorInfo, tensor));
+                args.set(name, new armnn.Value(name, tensorInfo, tensor));
             }
             return args.get(name);
         };
@@ -130,8 +123,8 @@ armnn.Graph = class {
                 case armnn.schema.LayerType.Input: {
                     const name = base ? base.layerName : '';
                     for (const slot of base.outputSlots) {
-                        const argument = arg(base.index, slot.index);
-                        this._inputs.push(new armnn.Parameter(name, [ argument ]));
+                        const value = arg(base.index, slot.index);
+                        this._inputs.push(new armnn.Argument(name, [ value ]));
                     }
                     break;
                 }
@@ -139,8 +132,8 @@ armnn.Graph = class {
                     const base = armnn.Node.getBase(layer);
                     const name = base ? base.layerName : '';
                     for (const slot of base.inputSlots) {
-                        const argument = arg(slot.connection.sourceLayerIndex, slot.connection.outputSlotIndex);
-                        this._outputs.push(new armnn.Parameter(name, [ argument ]));
+                        const value = arg(slot.connection.sourceLayerIndex, slot.connection.outputSlotIndex);
+                        this._outputs.push(new armnn.Argument(name, [ value ]));
                     }
                     break;
                 }
@@ -187,7 +180,7 @@ armnn.Node = class {
             while (inputSlots.length > 0) {
                 const inputSchema = inputSchemas.length > 0 ? inputSchemas.shift() : { name: '?' };
                 const inputCount = inputSchema.list ? inputSlots.length : 1;
-                this._inputs.push(new armnn.Parameter(inputSchema.name, inputSlots.splice(0, inputCount).map((inputSlot) => {
+                this._inputs.push(new armnn.Argument(inputSchema.name, inputSlots.splice(0, inputCount).map((inputSlot) => {
                     return arg(inputSlot.connection.sourceLayerIndex, inputSlot.connection.outputSlotIndex);
                 })));
             }
@@ -195,7 +188,7 @@ armnn.Node = class {
             while (outputSlots.length > 0) {
                 const outputSchema = outputSchemas.length > 0 ? outputSchemas.shift() : { name: '?' };
                 const outputCount = outputSchema.list ? outputSlots.length : 1;
-                this._outputs.push(new armnn.Parameter(outputSchema.name, outputSlots.splice(0, outputCount).map((outputSlot) => {
+                this._outputs.push(new armnn.Argument(outputSchema.name, outputSlots.splice(0, outputCount).map((outputSlot) => {
                     return arg(base.index, outputSlot.index);
                 })));
             }
@@ -212,8 +205,8 @@ armnn.Node = class {
             for (const entry of Object.entries(layer.layer).filter((entry) => entry[1] instanceof armnn.schema.ConstTensor)) {
                 const name = entry[0];
                 const tensor = entry[1];
-                const argument = new armnn.Argument('', tensor.info, new armnn.Tensor(tensor));
-                this._inputs.push(new armnn.Parameter(name, [ argument ]));
+                const value = new armnn.Value('', tensor.info, new armnn.Tensor(tensor));
+                this._inputs.push(new armnn.Argument(name, [ value ]));
             }
         }
     }
@@ -275,31 +268,27 @@ armnn.Attribute = class {
     }
 };
 
-armnn.Parameter = class {
+armnn.Argument = class {
 
-    constructor(name, args) {
+    constructor(name, value) {
         this._name = name;
-        this._arguments = args;
+        this._value = value;
     }
 
     get name() {
         return this._name;
     }
 
-    get visible() {
-        return true;
-    }
-
-    get arguments() {
-        return this._arguments;
+    get value() {
+        return this._value;
     }
 };
 
-armnn.Argument = class {
+armnn.Value = class {
 
     constructor(name, tensorInfo, initializer) {
         if (typeof name !== 'string') {
-            throw new armnn.Error("Invalid argument identifier '" + JSON.stringify(name) + "'.");
+            throw new armnn.Error("Invalid value identifier '" + JSON.stringify(name) + "'.");
         }
         this._name = name;
         this._type = new armnn.TensorType(tensorInfo);

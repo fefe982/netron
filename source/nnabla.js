@@ -16,38 +16,37 @@ nnabla.ModelFactory = class {
         return undefined;
     }
 
-    open(context, match) {
-        return context.require('./nnabla-proto').then(() => {
-            nnabla.proto = protobuf.get('nnabla').nnabla;
-            switch (match) {
-                case 'nnabla.pbtxt': {
-                    const stream = context.stream;
-                    const reader = protobuf.TextReader.open(stream);
-                    const model = nnabla.proto.NNablaProtoBuf.decodeText(reader);
-                    const promises = [
-                        context.request('nnp_version.txt', null),
-                        context.request('parameter.protobuf', null)
-                    ];
-                    const open = (model, version) => {
-                        return context.metadata('nnabla-metadata.json').then((metadata) => {
-                            return new nnabla.Model(metadata, model, 'NNabla' + (version ? ' v' + version : ''));
-                        });
-                    };
-                    return Promise.all(promises).then((streams) => {
-                        const version = text.Reader.open(streams[0]).read();
-                        const reader = protobuf.BinaryReader.open(streams[1]);
-                        const params = nnabla.proto.NNablaProtoBuf.decode(reader);
-                        model.parameter = params.parameter;
-                        return open(model, version);
-                    }).catch(() => {
-                        return open(model);
-                    });
-                }
-                default: {
-                    throw new nnabla.Error("Unsupported nnabla format '" + match + "'.");
+    async open(context, target) {
+        await context.require('./nnabla-proto');
+        nnabla.proto = protobuf.get('nnabla').nnabla;
+        switch (target) {
+            case 'nnabla.pbtxt': {
+                const stream = context.stream;
+                const reader = protobuf.TextReader.open(stream);
+                const model = nnabla.proto.NNablaProtoBuf.decodeText(reader);
+                const promises = [
+                    context.request('nnp_version.txt', null),
+                    context.request('parameter.protobuf', null)
+                ];
+                const open = async (model, version) => {
+                    const metadata = await context.metadata('nnabla-metadata.json');
+                    return new nnabla.Model(metadata, model, 'NNabla' + (version ? ' v' + version : ''));
+                };
+                try {
+                    const streams = await Promise.all(promises);
+                    const version = text.Reader.open(streams[0]).read();
+                    const reader = protobuf.BinaryReader.open(streams[1]);
+                    const params = nnabla.proto.NNablaProtoBuf.decode(reader);
+                    model.parameter = params.parameter;
+                    return await open(model, version);
+                } catch (error) {
+                    return await open(model);
                 }
             }
-        });
+            default: {
+                throw new nnabla.Error("Unsupported nnabla format '" + target + "'.");
+            }
+        }
     }
 };
 
@@ -86,18 +85,18 @@ nnabla.Graph = class {
         const args = new Map();
         const arg = (name) => {
             if (!args.has(name)) {
-                args.set(name, new nnabla.Argument(name, dataTypes.get(name), tensors.get(name)));
+                args.set(name, new nnabla.Value(name, dataTypes.get(name), tensors.get(name)));
             }
             return args.get(name);
         };
 
         this._inputs = executor.data_variable.map((item) => {
             const name = item.variable_name;
-            return new nnabla.Parameter(name, [ arg(name) ]);
+            return new nnabla.Argument(name, [ arg(name) ]);
         });
         this._outputs = executor.output_variable.map((item) => {
             const name = item.variable_name;
-            return new nnabla.Parameter(name, [ arg(name) ]);
+            return new nnabla.Argument(name, [ arg(name) ]);
         });
 
         const get_parameters = (func) => {
@@ -121,7 +120,7 @@ nnabla.Graph = class {
                 const input = func_type.inputs && index < func_type.inputs.length ? func_type.inputs[index] : { name: index.toString() };
                 const count = input.list ? func.input.length - index : 1;
                 const args = func.input.slice(index, index + count).map((input) => arg(input));
-                inputs.push(new nnabla.Parameter(input.name, args));
+                inputs.push(new nnabla.Argument(input.name, args));
                 index += count;
             }
             const outputs = [];
@@ -129,7 +128,7 @@ nnabla.Graph = class {
                 const output = func_type.outputs && index < func_type.outputs.length ? func_type.outputs[index] : { name: index.toString() };
                 const count = output.list ? func.output.length - index : 1;
                 const args = func.output.slice(index, index + count).map((output) => arg(output));
-                outputs.push(new nnabla.Parameter(output.name, args));
+                outputs.push(new nnabla.Argument(output.name, args));
                 index += count;
             }
             return new nnabla.Node(metadata, func, attributes, inputs, outputs);
@@ -149,27 +148,23 @@ nnabla.Graph = class {
     }
 };
 
-nnabla.Parameter = class {
+nnabla.Argument = class {
 
-    constructor(name, args) {
+    constructor(name, value) {
         this._name = name;
-        this._arguments = args;
+        this._value = value;
     }
 
     get name() {
         return this._name;
     }
 
-    get visible() {
-        return true;
-    }
-
-    get arguments() {
-        return this._arguments;
+    get value() {
+        return this._value;
     }
 };
 
-nnabla.Argument = class {
+nnabla.Value = class {
 
     constructor(name, type, initializer) {
         this._name = name;

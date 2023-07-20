@@ -1,6 +1,4 @@
 
-// Experimental
-
 var uff = {};
 var protobuf = require('./protobuf');
 
@@ -29,40 +27,38 @@ uff.ModelFactory = class {
         return undefined;
     }
 
-    open(context, match) {
-        return context.require('./uff-proto').then(() => {
-            uff.proto = protobuf.get('uff').uff;
-            let meta_graph = null;
-            switch (match) {
-                case 'uff.pb': {
-                    try {
-                        const stream = context.stream;
-                        const reader = protobuf.BinaryReader.open(stream);
-                        meta_graph = uff.proto.MetaGraph.decode(reader);
-                    } catch (error) {
-                        const message = error && error.message ? error.message : error.toString();
-                        throw  new uff.Error('File format is not uff.MetaGraph (' + message.replace(/\.$/, '') + ').');
-                    }
-                    break;
+    async open(context, target) {
+        await context.require('./uff-proto');
+        uff.proto = protobuf.get('uff').uff;
+        let meta_graph = null;
+        switch (target) {
+            case 'uff.pb': {
+                try {
+                    const stream = context.stream;
+                    const reader = protobuf.BinaryReader.open(stream);
+                    meta_graph = uff.proto.MetaGraph.decode(reader);
+                } catch (error) {
+                    const message = error && error.message ? error.message : error.toString();
+                    throw  new uff.Error('File format is not uff.MetaGraph (' + message.replace(/\.$/, '') + ').');
                 }
-                case 'uff.pbtxt': {
-                    try {
-                        const stream = context.stream;
-                        const reader = protobuf.TextReader.open(stream);
-                        meta_graph = uff.proto.MetaGraph.decodeText(reader);
-                    } catch (error) {
-                        throw new uff.Error('File text format is not uff.MetaGraph (' + error.message + ').');
-                    }
-                    break;
-                }
-                default: {
-                    throw new uff.Error("Unsupported UFF format '" + match + "'.");
-                }
+                break;
             }
-            return context.metadata('uff-metadata.json').then((metadata) => {
-                return new uff.Model(metadata, meta_graph);
-            });
-        });
+            case 'uff.pbtxt': {
+                try {
+                    const stream = context.stream;
+                    const reader = protobuf.TextReader.open(stream);
+                    meta_graph = uff.proto.MetaGraph.decodeText(reader);
+                } catch (error) {
+                    throw new uff.Error('File text format is not uff.MetaGraph (' + error.message + ').');
+                }
+                break;
+            }
+            default: {
+                throw new uff.Error("Unsupported UFF format '" + target + "'.");
+            }
+        }
+        const metadata = await context.metadata('uff-metadata.json');
+        return new uff.Model(metadata, meta_graph);
     }
 };
 
@@ -110,10 +106,10 @@ uff.Graph = class {
         for (const node of graph.nodes) {
             for (const input of node.inputs) {
                 counts.set(input, counts.has(input) ? counts.get(input) + 1 : 1);
-                args.set(input, new uff.Argument(input));
+                args.set(input, new uff.Value(input));
             }
             if (!args.has(node.id)) {
-                args.set(node.id, new uff.Argument(node.id));
+                args.set(node.id, new uff.Value(node.id));
             }
         }
         for (let i = graph.nodes.length - 1; i >= 0; i--) {
@@ -125,7 +121,7 @@ uff.Graph = class {
                 }
                 if (fields.dtype && fields.shape && fields.values) {
                     const tensor = new uff.Tensor(fields.dtype.dtype, fields.shape, fields.values);
-                    args.set(node.id, new uff.Argument(node.id, tensor.type, tensor));
+                    args.set(node.id, new uff.Value(node.id, tensor.type, tensor));
                     graph.nodes.splice(i, 1);
                 }
             }
@@ -135,17 +131,17 @@ uff.Graph = class {
                     fields[field.key] = field.value;
                 }
                 const type = fields.dtype && fields.shape ? new uff.TensorType(fields.dtype.dtype, fields.shape) : null;
-                args.set(node.id, new uff.Argument(node.id, type, null));
+                args.set(node.id, new uff.Value(node.id, type, null));
             }
         }
 
         for (const node of graph.nodes) {
             if (node.operation === 'Input') {
-                this._inputs.push(new uff.Parameter(node.id, [ args.get(node.id) ]));
+                this._inputs.push(new uff.Argument(node.id, [ args.get(node.id) ]));
                 continue;
             }
             if (node.operation === 'MarkOutput' && node.inputs.length === 1) {
-                this._outputs.push(new uff.Parameter(node.id, [ args.get(node.inputs[0]) ]));
+                this._outputs.push(new uff.Argument(node.id, [ args.get(node.inputs[0]) ]));
                 continue;
             }
             this._nodes.push(new uff.Node(metadata, node, args));
@@ -169,31 +165,27 @@ uff.Graph = class {
     }
 };
 
-uff.Parameter = class {
+uff.Argument = class {
 
-    constructor(name, args) {
+    constructor(name, value) {
         this._name = name;
-        this._arguments = args;
+        this._value = value;
     }
 
     get name() {
         return this._name;
     }
 
-    get visible() {
-        return true;
-    }
-
-    get arguments() {
-        return this._arguments;
+    get value() {
+        return this._value;
     }
 };
 
-uff.Argument = class {
+uff.Value = class {
 
     constructor(name, type, initializer) {
         if (typeof name !== 'string') {
-            throw new uff.Error("Invalid argument identifier '" + JSON.stringify(name) + "'.");
+            throw new uff.Error("Invalid value identifier '" + JSON.stringify(name) + "'.");
         }
         this._name = name;
         this._type = type || null;
@@ -232,17 +224,17 @@ uff.Node = class {
                             return args.get(id);
                         });
                         inputIndex += inputCount;
-                        this._inputs.push(new uff.Parameter(inputSchema.name, inputArguments));
+                        this._inputs.push(new uff.Argument(inputSchema.name, inputArguments));
                     }
                 }
             }
             this._inputs.push(...node.inputs.slice(inputIndex).map((id, index) => {
                 const inputName = ((inputIndex + index) == 0) ? 'input' : (inputIndex + index).toString();
-                return new uff.Parameter(inputName, [ args.get(id) ]);
+                return new uff.Argument(inputName, [ args.get(id) ]);
             }));
         }
 
-        this._outputs.push(new uff.Parameter('output', [
+        this._outputs.push(new uff.Argument('output', [
             args.get(node.id)
         ]));
 
@@ -305,10 +297,6 @@ uff.Attribute = class {
 
     get value() {
         return this._value;
-    }
-
-    get visible() {
-        return true;
     }
 };
 

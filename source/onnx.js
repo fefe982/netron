@@ -161,121 +161,114 @@ onnx.ModelFactory = class {
         return undefined;
     }
 
-    open(context, match) {
-        const open = (model, format) => {
-            return onnx.Metadata.open(context).then((metadata) => {
-                return new onnx.Model(metadata, model, format);
-            });
+    async open(context, target) {
+        const open = async (model, format) => {
+            const metadata = await onnx.Metadata.open(context);
+            return new onnx.Model(metadata, model, format);
         };
-        switch (match) {
+        switch (target) {
             case 'onnx.pbtxt.ModelProto':
-                return context.require('./onnx-proto').then(() => {
-                    try {
-                        onnx.proto = protobuf.get('onnx').onnx;
-                        const stream = context.stream;
-                        const reader = protobuf.TextReader.open(stream);
-                        const model = onnx.proto.ModelProto.decodeText(reader);
-                        const format = 'ONNX' + (model.ir_version ? ' v' + model.ir_version.toString() : '');
-                        return open(model, format);
-                    } catch (error) {
-                        const message = error && error.message ? error.message : error.toString();
-                        throw new onnx.Error('File text format is not onnx.ModelProto (' + message.replace(/\.$/, '') + ').');
-                    }
-                });
+                await context.require('./onnx-proto');
+                try {
+                    onnx.proto = protobuf.get('onnx').onnx;
+                    const stream = context.stream;
+                    const reader = protobuf.TextReader.open(stream);
+                    const model = onnx.proto.ModelProto.decodeText(reader);
+                    const format = 'ONNX' + (model.ir_version ? ' v' + model.ir_version.toString() : '');
+                    return open(model, format);
+                } catch (error) {
+                    const message = error && error.message ? error.message : error.toString();
+                    throw new onnx.Error('File text format is not onnx.ModelProto (' + message.replace(/\.$/, '') + ').');
+                }
             case 'onnx.pb.TensorProto':
-                return context.require('./onnx-proto').then(() => {
-                    // TensorProto
-                    // input_0.pb, output_0.pb
-                    try {
-                        onnx.proto = protobuf.get('onnx').onnx;
-                        const stream = context.stream;
-                        const reader = protobuf.BinaryReader.open(stream);
-                        const tensor = onnx.proto.TensorProto.decode(reader);
-                        tensor.name = tensor.name || context.identifier;
-                        const model = new onnx.proto.ModelProto();
-                        model.graph = new onnx.proto.GraphProto();
-                        model.graph.initializer = [ tensor ];
-                        model.graph.value_info = [ new onnx.proto.ValueInfoProto() ];
-                        model.graph.value_info[0].name = tensor.name;
-                        model.graph.node = [ new onnx.proto.NodeProto() ];
-                        model.graph.node[0].op_type = 'Constant';
-                        model.graph.node[0].attribute = [ new onnx.proto.AttributeProto() ];
-                        model.graph.node[0].attribute[0].name = 'value';
-                        model.graph.node[0].attribute[0].type = onnx.AttributeType.TENSOR;
-                        model.graph.node[0].attribute[0].t = tensor;
-                        const format = 'ONNX Tensor';
-                        return open(model, format);
-                    } catch (error) {
-                        const message = error && error.message ? error.message : error.toString();
-                        throw new onnx.Error('File format is not onnx.TensorProto (' + message.replace(/\.$/, '') + ').');
-                    }
-                });
+                await context.require('./onnx-proto');
+                // TensorProto
+                // input_0.pb, output_0.pb
+                try {
+                    onnx.proto = protobuf.get('onnx').onnx;
+                    const stream = context.stream;
+                    const reader = protobuf.BinaryReader.open(stream);
+                    const tensor = onnx.proto.TensorProto.decode(reader);
+                    tensor.name = tensor.name || context.identifier;
+                    const model = new onnx.proto.ModelProto();
+                    model.graph = new onnx.proto.GraphProto();
+                    model.graph.initializer = [ tensor ];
+                    model.graph.value_info = [ new onnx.proto.ValueInfoProto() ];
+                    model.graph.value_info[0].name = tensor.name;
+                    model.graph.node = [ new onnx.proto.NodeProto() ];
+                    model.graph.node[0].op_type = 'Constant';
+                    model.graph.node[0].attribute = [ new onnx.proto.AttributeProto() ];
+                    model.graph.node[0].attribute[0].name = 'value';
+                    model.graph.node[0].attribute[0].type = onnx.AttributeType.TENSOR;
+                    model.graph.node[0].attribute[0].t = tensor;
+                    const format = 'ONNX Tensor';
+                    return open(model, format);
+                } catch (error) {
+                    const message = error && error.message ? error.message : error.toString();
+                    throw new onnx.Error('File format is not onnx.TensorProto (' + message.replace(/\.$/, '') + ').');
+                }
             case 'onnx.pb.GraphProto':
-                return context.require('./onnx-proto').then(() => {
-                    // GraphProto
-                    try {
-                        onnx.proto = protobuf.get('onnx').onnx;
-                        const stream = context.stream;
-                        const reader = protobuf.BinaryReader.open(stream);
-                        const model = new onnx.proto.ModelProto();
-                        model.graph = onnx.proto.GraphProto.decode(reader);
-                        const format = 'ONNX';
-                        return open(model, format);
-                    } catch (error) {
-                        const message = error && error.message ? error.message : error.toString();
-                        throw new onnx.Error('File format is not onnx.GraphProto (' + message.replace(/\.$/, '') + ').');
-                    }
-                });
+                await context.require('./onnx-proto');
+                // GraphProto
+                try {
+                    onnx.proto = protobuf.get('onnx').onnx;
+                    const stream = context.stream;
+                    const reader = protobuf.BinaryReader.open(stream);
+                    const model = new onnx.proto.ModelProto();
+                    model.graph = onnx.proto.GraphProto.decode(reader);
+                    const format = 'ONNX';
+                    return open(model, format);
+                } catch (error) {
+                    const message = error && error.message ? error.message : error.toString();
+                    throw new onnx.Error('File format is not onnx.GraphProto (' + message.replace(/\.$/, '') + ').');
+                }
             case 'onnx.pb.ModelProto':
-                return context.require('./onnx-proto').then(() => {
-                    // ModelProto
-                    try {
-                        onnx.proto = protobuf.get('onnx').onnx;
-                        const stream = context.stream;
-                        const reader = protobuf.BinaryReader.open(stream);
-                        const model = onnx.proto.ModelProto.decode(reader);
-                        const format = 'ONNX' + (model.ir_version ? ' v' + model.ir_version.toString() : '');
-                        return open(model, format);
-                    } catch (error) {
-                        const message = error && error.message ? error.message : error.toString();
-                        throw new onnx.Error('File format is not onnx.ModelProto (' + message.replace(/\.$/, '') + ').');
-                    }
-                });
+                await context.require('./onnx-proto');
+                // ModelProto
+                try {
+                    onnx.proto = protobuf.get('onnx').onnx;
+                    const stream = context.stream;
+                    const reader = protobuf.BinaryReader.open(stream);
+                    const model = onnx.proto.ModelProto.decode(reader);
+                    const format = 'ONNX' + (model.ir_version ? ' v' + model.ir_version.toString() : '');
+                    return open(model, format);
+                } catch (error) {
+                    const message = error && error.message ? error.message : error.toString();
+                    throw new onnx.Error('File format is not onnx.ModelProto (' + message.replace(/\.$/, '') + ').');
+                }
             case 'onnx.ort': {
-                return context.require('./onnx-schema').then((/* schema */) => {
-                    try {
-                        onnx.schema = flatbuffers.get('ort').onnxruntime.fbs;
-                        const stream = context.stream;
-                        const reader = onnx.Reader.ort.open(stream, 'ort');
-                        const model = reader.read();
-                        const format = 'ONNX Runtime' + (model.ir_version ? ' v' + model.ir_version.toString() : '');
-                        return open(model, format);
-                    } catch (error) {
-                        const message = error && error.message ? error.message : error.toString();
-                        throw new onnx.Error('File format is not ort.Model (' + message.replace(/\.$/, '') + ').');
-                    }
-                });
+                await context.require('./onnx-schema');
+                try {
+                    onnx.schema = flatbuffers.get('ort').onnxruntime.fbs;
+                    const stream = context.stream;
+                    const reader = onnx.Reader.ort.open(stream, 'ort');
+                    const model = reader.read();
+                    const format = 'ONNX Runtime' + (model.ir_version ? ' v' + model.ir_version.toString() : '');
+                    return open(model, format);
+                } catch (error) {
+                    const message = error && error.message ? error.message : error.toString();
+                    throw new onnx.Error('File format is not ort.Model (' + message.replace(/\.$/, '') + ').');
+                }
             }
             case 'onnx.text': {
-                return context.require('./onnx-proto').then(() => {
-                    try {
-                        onnx.proto = protobuf.get('onnx').onnx;
-                        const stream = context.stream;
-                        const reader = onnx.Reader.text.open(stream);
-                        const model = reader.read();
-                        const format = 'ONNX Text' + (model.ir_version ? ' v' + model.ir_version.toString() : '');
-                        return open(model, format);
-                    } catch (error) {
-                        const message = error && error.message ? error.message : error.toString();
-                        throw new onnx.Error('File format is not onnx.ModelProto (' + message.replace(/\.$/, '') + ').');
-                    }
-                });
+                await context.require('./onnx-proto');
+                try {
+                    onnx.proto = protobuf.get('onnx').onnx;
+                    const stream = context.stream;
+                    const reader = onnx.Reader.text.open(stream);
+                    const model = reader.read();
+                    const format = 'ONNX Text' + (model.ir_version ? ' v' + model.ir_version.toString() : '');
+                    return open(model, format);
+                } catch (error) {
+                    const message = error && error.message ? error.message : error.toString();
+                    throw new onnx.Error('File format is not onnx.ModelProto (' + message.replace(/\.$/, '') + ').');
+                }
             }
             case 'onnx.pickle': {
-                return Promise.reject(new onnx.Error('Unsupported Pickle content.'));
+                throw new onnx.Error('Unsupported Pickle content.');
             }
             default: {
-                return Promise.reject(new onnx.Error("Unsupported ONNX format '" + match + "'."));
+                throw new onnx.Error("Unsupported ONNX format '" + target + "'.");
             }
         }
     }
@@ -461,15 +454,15 @@ onnx.Graph = class {
         context.push(graph.node, graph.input, graph.output);
         this._nodes = context.pop();
         for (const input of graph.input) {
-            const argument = context.argument(input.name);
-            if (!argument.initializer) {
-                this._inputs.push(new onnx.Parameter(input.name, [ argument ]));
+            const value = context.value(input.name);
+            if (!value.initializer) {
+                this._inputs.push(new onnx.Argument(input.name, [ value ]));
             }
         }
         for (const output of graph.output) {
-            const argument = context.argument(output.name);
-            if (!argument.initializer) {
-                this._outputs.push(new onnx.Parameter(output.name, [ argument ]));
+            const value = context.value(output.name);
+            if (!value.initializer) {
+                this._outputs.push(new onnx.Argument(output.name, [ value ]));
             }
         }
     }
@@ -499,31 +492,27 @@ onnx.Graph = class {
     }
 };
 
-onnx.Parameter = class {
+onnx.Argument = class {
 
-    constructor(name, args) {
+    constructor(name, value) {
         this._name = name;
-        this._arguments = args;
+        this._value = value;
     }
 
     get name() {
         return this._name;
     }
 
-    get visible() {
-        return true;
-    }
-
-    get arguments() {
-        return this._arguments;
+    get value() {
+        return this._value;
     }
 };
 
-onnx.Argument = class {
+onnx.Value = class {
 
     constructor(name, type, initializer, annotation, description) {
         if (typeof name !== 'string') {
-            throw new onnx.Error("Invalid argument identifier '" + JSON.stringify(name) + "'.");
+            throw new onnx.Error("Invalid value identifier '" + JSON.stringify(name) + "'.");
         }
         this._name = name;
         this._type = type || null;
@@ -737,32 +726,32 @@ onnx.Group = class {
             }
         }
         const set = new Set();
-        const inputs = new Array();
-        const outputs = new Array();
+        const inputs = [];
+        const outputs = [];
         for (const node of this._nodes) {
             if (node instanceof onnx.Group) {
                 node.freeze();
             }
             for (const parameter of node.outputs) {
-                for (const argument of parameter.arguments) {
-                    if (!argument.initializer) {
-                        outputs.push(argument);
-                        set.add(argument.name);
+                for (const value of parameter.value) {
+                    if (!value.initializer) {
+                        outputs.push(value);
+                        set.add(value.name);
                     }
                 }
             }
         }
         for (const node of this._nodes) {
             for (const parameter of node.inputs) {
-                for (const argument of parameter.arguments) {
-                    if (!set.has(argument.name) && !argument.initializer) {
-                        inputs.push(argument);
+                for (const value of parameter.value) {
+                    if (!set.has(value.name) && !value.initializer) {
+                        inputs.push(value);
                     }
                 }
             }
         }
-        this._inputs = [ new onnx.Parameter('inputs', inputs) ];
-        this._outputs = [ new onnx.Parameter('outputs', outputs) ];
+        this._inputs = [ new onnx.Argument('inputs', inputs) ];
+        this._outputs = [ new onnx.Argument('outputs', outputs) ];
         this._attributes = [];
     }
 
@@ -812,18 +801,6 @@ onnx.Tensor = class {
                     case onnx.DataType.UNDEFINED: {
                         break;
                     }
-                    case onnx.DataType.FLOAT16:
-                        if (tensor.int32_data && tensor.int32_data.length > 0) {
-                            const buffer = new Uint8Array(tensor.int32_data.length << 1);
-                            const view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
-                            const array = tensor.int32_data;
-                            for (let i = 0; i < array.length; i++) {
-                                view.setUint16(i << 1, array[i], true);
-                            }
-                            this._data = buffer;
-                            this._layout = '<';
-                        }
-                        break;
                     case onnx.DataType.FLOAT:
                         this._data = new Float32Array(tensor.float_data);
                         this._layout = '|';
@@ -875,9 +852,30 @@ onnx.Tensor = class {
                         this._data = tensor.string_data;
                         this._layout = '|';
                         break;
-                    case onnx.DataType.BFLOAT16:
                     case onnx.DataType.COMPLEX64:
                     case onnx.DataType.COMPLEX128:
+                        break;
+                    case onnx.DataType.FLOAT16:
+                    case onnx.DataType.BFLOAT16:
+                        if (tensor.int32_data && tensor.int32_data.length > 0) {
+                            const array = tensor.int32_data;
+                            const buffer = new Uint8Array(array.length << 1);
+                            const view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+                            for (let i = 0; i < array.length; i++) {
+                                view.setUint16(i << 1, array[i], true);
+                            }
+                            this._data = buffer;
+                            this._layout = '<';
+                        }
+                        break;
+                    case onnx.DataType.FLOAT8E4M3FN:
+                    case onnx.DataType.FLOAT8E4M3FNUZ:
+                    case onnx.DataType.FLOAT8E5M2:
+                    case onnx.DataType.FLOAT8E5M2FNUZ:
+                        if (tensor.int32_data && tensor.int32_data.length > 0) {
+                            this._data = new Uint8Array(Array.from(tensor.int32_data));
+                            this._layout = '<';
+                        }
                         break;
                     default:
                         throw new onnx.Error("Unsupported tensor data type '" + tensor.data_type + "'.");
@@ -1053,15 +1051,15 @@ onnx.Function = class {
         context.push(func.node, func.input, func.output);
         this._nodes = context.pop();
         for (const input of func.input) {
-            const argument = context.argument(input.name);
-            if (!argument.initializer) {
-                this._inputs.push(new onnx.Parameter(input.name, [ argument ]));
+            const value = context.value(input.name);
+            if (!value.initializer) {
+                this._inputs.push(new onnx.Argument(input.name, [ value ]));
             }
         }
         for (const output of func.output) {
-            const argument = context.argument(output.name);
-            if (!argument.initializer) {
-                this._outputs.push(new onnx.Parameter(output.name, [ argument ]));
+            const value = context.value(output.name);
+            if (!value.initializer) {
+                this._outputs.push(new onnx.Argument(output.name, [ value ]));
             }
         }
     }
@@ -1156,17 +1154,18 @@ onnx.GraphMetadata = class {
 
 onnx.Metadata = class {
 
-    static open(context) {
+    static async open(context) {
         if (onnx.Metadata._metadata) {
-            return Promise.resolve(onnx.Metadata._metadata);
+            return onnx.Metadata._metadata;
         }
-        return context.request('onnx-metadata.json', 'utf-8', null).then((data) => {
+        try {
+            const data = await context.request('onnx-metadata.json', 'utf-8', null);
             onnx.Metadata._metadata = new onnx.Metadata(data);
             return onnx.Metadata._metadata;
-        }).catch(() => {
+        } catch (error) {
             onnx.Metadata._metadata = new onnx.Metadata(null);
             return onnx.Metadata._metadata;
-        });
+        }
     }
 
     constructor(data) {
@@ -1322,7 +1321,7 @@ onnx.GraphContext = class {
         this._dataTypes.set(onnx.DataType.FLOAT, 'float32');
         this._dataTypes.set(onnx.DataType.DOUBLE, 'float64');
         this._tensors = new Map();
-        this._arguments = new Map();
+        this._values = new Map();
         this._groups = new Map();
         this._nodes = [];
         for (const node of nodes) {
@@ -1387,13 +1386,13 @@ onnx.GraphContext = class {
         return this._groups.get(name);
     }
 
-    argument(name) {
-        if (!this._arguments.has(name)) {
+    value(name) {
+        if (!this._values.has(name)) {
             const tensor = this.tensor(name);
             const type = tensor.initializer ? tensor.initializer.type : tensor.type || null;
-            this._arguments.set(name, new onnx.Argument(name, type, tensor.initializer, tensor.annotation, tensor.description));
+            this._values.set(name, new onnx.Value(name, type, tensor.initializer, tensor.annotation, tensor.description));
         }
-        return this._arguments.get(name);
+        return this._values.get(name);
     }
 
     createType(type) {
@@ -1419,7 +1418,7 @@ onnx.GraphContext = class {
                 denotation = 'Text';
                 break;
             default:
-                throw new onnx.Error("Unsuppored tensor type denotation '" + type.denotation + "'.");
+                throw new onnx.Error("Unsupported tensor type denotation '" + type.denotation + "'.");
         }
         if (type.tensor_type) {
             const tensor_type = type.tensor_type;
@@ -1519,8 +1518,9 @@ onnx.GraphContext = class {
             for (let i = 0; i < node.input.length;) {
                 const input = schema && schema.inputs && i < schema.inputs.length ? schema.inputs[i] : { name: i.toString() };
                 const count = input.list ? node.input.length - i : 1;
-                const list = node.input.slice(i, i + count).map((input) => this.argument(input.name));
-                inputs.push(new onnx.Parameter(input.name, list));
+                const list = node.input.slice(i, i + count).filter((arg) => arg.name !== '' || arg.initializer);
+                const args = list.map((input) => this.value(input.name));
+                inputs.push(new onnx.Argument(input.name, args));
                 i += count;
             }
             const outputs = [];
@@ -1528,8 +1528,9 @@ onnx.GraphContext = class {
             for (let i = 0; i < node.output.length;) {
                 const output = schema && schema.outputs && i < schema.outputs.length ? schema.outputs[i] : { name: i.toString() };
                 const count = output.list ? node.output.length - i : 1;
-                const list = node.output.slice(i, i + count).map((output) => this.argument(output.name));
-                outputs.push(new onnx.Parameter(output.name, list));
+                const list = node.output.slice(i, i + count).filter((arg) => arg.name !== '' || arg.initializer);
+                const args = list.map((output) => this.value(output.name));
+                outputs.push(new onnx.Argument(output.name, args));
                 i += count;
             }
             node = new onnx.Node(this, node.op_type, node.domain, node.name, node.doc_string, node.attribute, inputs, outputs);

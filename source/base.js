@@ -105,10 +105,10 @@ base.Int64 = class Int64 {
         }
         if (this.high < 0) {
             if (this.equals(base.Int64.min)) {
-                const r = new base.Int64(radix, 0);
-                const div = this.divide(r);
-                const remainder = div.multiply(r).subtract(this);
-                return div.toString(r) + (remainder.low >>> 0).toString(r);
+                const radix = new base.Int64(r, 0);
+                const div = this.divide(radix);
+                const remainder = div.multiply(radix).subtract(this);
+                return div.toString(radix) + (remainder.low >>> 0).toString(radix);
             }
             return '-' + this.negate().toString(r);
         }
@@ -122,6 +122,7 @@ base.Int64 = class Int64 {
 base.Int64.min = new base.Int64(0, -2147483648);
 base.Int64.zero = new base.Int64(0, 0);
 base.Int64.one = new base.Int64(1, 0);
+base.Int64.negativeOne = new base.Int64(-1, 0);
 base.Int64.power24 = new base.Int64(1 << 24, 0);
 base.Int64.max = new base.Int64(0, 2147483647);
 
@@ -276,11 +277,11 @@ base.Utility = class {
         }
         if (a.isNegative) {
             if (b.isNegative) {
-                return this.negate().multiply(b.negate());
+                return a.negate().multiply(b.negate());
             }
-            return this.negate().multiply(b).negate();
+            return a.negate().multiply(b).negate();
         } else if (b.isNegative) {
-            return this.multiply(b.negate()).negate();
+            return a.multiply(b.negate()).negate();
         }
         if (a.compare(base.Int64.power24) < 0 && b.compare(base.Int64.power24) < 0) {
             return unsigned ? base.Uint64.create(a.toNumber() * b.toNumber()) : base.Int64.create(a.toNumber() * b.toNumber());
@@ -340,7 +341,7 @@ base.Utility = class {
                 const half = base.Utility._shiftRight(a, unsigned, 1);
                 const halfDivide = half.divide(b);
                 approx = base.Utility._shiftLeft(halfDivide, halfDivide instanceof base.Uint64, 1);
-                if (approx.eq(base.Int64.zero)) {
+                if (approx.equals(base.Int64.zero)) {
                     return b.isNegative ? base.Int64.one : base.Int64.negativeOne;
                 }
                 remainder = a.subtract(b.multiply(approx));
@@ -530,6 +531,98 @@ if (!DataView.prototype.getBfloat16) {
     DataView.__bfloat16_get_uint16_le = new Uint16Array(DataView.__bfloat16_get_float32_le.buffer, DataView.__bfloat16_get_float32_le.byteOffset, 2);
     DataView.__bfloat16_get_uint16_be = new Uint16Array(DataView.__bfloat16_get_float32_be.buffer, DataView.__bfloat16_get_float32_be.byteOffset, 2);
 }
+
+DataView.__float8e4m3_float32 = new Float32Array(1);
+DataView.__float8e4m3_uint32 = new Uint32Array(DataView.__float8e4m3_float32.buffer, DataView.__float8e4m3_float32.byteOffset, 1);
+DataView.prototype.getFloat8e4m3 = function(byteOffset, fn, uz) {
+    const value = this.getUint8(byteOffset);
+    let exponent_bias = 7;
+    if (uz) {
+        exponent_bias = 8;
+        if (value == 0x80) {
+            return NaN;
+        }
+    } else if (value === 255) {
+        return -NaN;
+    } else if (value === 0x7f) {
+        return NaN;
+    }
+    let expo = (value & 0x78) >> 3;
+    let mant = value & 0x07;
+    const sign = value & 0x80;
+    let res = sign << 24;
+    if (expo == 0) {
+        if (mant > 0) {
+            expo = 0x7F - exponent_bias;
+            if (mant & 0x4 == 0) {
+                mant &= 0x3;
+                mant <<= 1;
+                expo -= 1;
+            }
+            if (mant & 0x4 == 0) {
+                mant &= 0x3;
+                mant <<= 1;
+                expo -= 1;
+            }
+            res |= (mant & 0x3) << 21;
+            res |= expo << 23;
+        }
+    } else {
+        res |= mant << 20;
+        expo += 0x7F - exponent_bias;
+        res |= expo << 23;
+    }
+    DataView.__float8e4m3_uint32[0] = res;
+    return DataView.__float8e4m3_float32[0];
+};
+
+DataView.__float8e5m2_float32 = new Float32Array(1);
+DataView.__float8e5m2_uint32 = new Uint32Array(DataView.__float8e5m2_float32.buffer, DataView.__float8e5m2_float32.byteOffset, 1);
+DataView.prototype.getFloat8e5m2 = function(byteOffset, fn, uz) {
+    const value = this.getUint8(byteOffset);
+    let exponent_bias = NaN;
+    if (fn && uz) {
+        if (value == 0x80) {
+            return NaN;
+        }
+        exponent_bias = 16;
+    } else if (!fn && !uz) {
+        if (value >= 253 && value <= 255) {
+            return -NaN;
+        }
+        if (value >= 126 && value <= 127) {
+            return NaN;
+        }
+        if (value === 252) {
+            return -Infinity;
+        }
+        if (value === 124) {
+            return Infinity;
+        }
+        exponent_bias = 15;
+    }
+    let expo = (value & 0x7C) >> 2;
+    let mant = value & 0x03;
+    let res = (value & 0x80) << 24;
+    if (expo == 0) {
+        if (mant > 0) {
+            expo = 0x7F - exponent_bias;
+            if (mant & 0x2 == 0) {
+                mant &= 0x1;
+                mant <<= 1;
+                expo -= 1;
+            }
+            res |= (mant & 0x1) << 22;
+            res |= expo << 23;
+        }
+    } else {
+        res |= mant << 21;
+        expo += 0x7F - exponent_bias;
+        res |= expo << 23;
+    }
+    DataView.__float8e5m2_uint32[0] = res;
+    return DataView.__float8e5m2_float32[0];
+};
 
 DataView.prototype.getInt64 = DataView.prototype.getInt64 || function(byteOffset, littleEndian) {
     return littleEndian ?
@@ -839,7 +932,11 @@ base.BinaryReader = class {
 
 base.Telemetry = class {
 
-    constructor(window, measurement_id, client_id, session) {
+    constructor(window) {
+        this._window = window;
+        this._navigator = window.navigator;
+        this._config = new Map();
+        this._metadata = {};
         this._schema = new Map([
             [ 'protocol_version', 'v' ],
             [ 'tracking_id', 'tid' ],
@@ -870,15 +967,17 @@ base.Telemetry = class {
             [ 'is_session_start', '_ss' ],
             [ 'event_name', 'en' ]
         ]);
-        this._config = new Map();
-        this._metadata = {};
+    }
+
+    async start(measurement_id, client_id, session) {
         this._session = session && typeof session === 'string' ? session.replace(/^GS1\.1\./, '').split('.') : null;
         this._session = Array.isArray(this._session) && this._session.length >= 7 ? this._session : [ '0', '0', '0', '0', '0', '0', '0' ];
         this._session[0] = Date.now();
         this._session[1] = parseInt(this._session[1], 10) + 1;
         this._engagement_time_msec = 0;
-        this._navigator = window.navigator;
-        const navigator = this._navigator;
+        if (this._config.size > 0) {
+            throw new Error('Invalid session state.');
+        }
         this.set('protocol_version', 2);
         this.set('tracking_id', measurement_id);
         this.set('hash_info', '2oebu0');
@@ -894,13 +993,10 @@ base.Telemetry = class {
             this._metadata.is_first_visit = 1;
             this._metadata.is_new_to_site = 1;
         }
-        this.set('language', ((navigator && (navigator.language || navigator.browserLanguage)) || '').toLowerCase());
+        this.set('language', ((this._navigator && (this._navigator.language || this._navigator.browserLanguage)) || '').toLowerCase());
         this.set('screen_resolution', (window.screen ? window.screen.width : 0) + 'x' + (window.screen ? window.screen.height : 0));
-    }
-
-    start() {
-        const promise = navigator && navigator.userAgentData && navigator.userAgentData.getHighEntropyValues ? navigator.userAgentData.getHighEntropyValues([ 'platform', 'platformVersion', 'architecture', 'model', 'uaFullVersion', 'bitness', 'fullVersionList', 'wow64' ]) : Promise.resolve();
-        return promise.then((values) => {
+        if (this._navigator && this._navigator.userAgentData && this._navigator.userAgentData.getHighEntropyValues) {
+            const values = await this._navigator.userAgentData.getHighEntropyValues([ 'platform', 'platformVersion', 'architecture', 'model', 'uaFullVersion', 'bitness', 'fullVersionList', 'wow64' ]);
             if (values) {
                 this.set('_user_agent_architecture', values.architecture);
                 this.set('_user_agent_bitness', values.bitness);
@@ -911,23 +1007,23 @@ base.Telemetry = class {
                 this.set('_user_agent_platform_version', values.platformVersion);
                 this.set('_user_agent_wow64', values.wow64 ? 1 : 0);
             }
-            this.set('hit_count', 1);
-            this.set('session_id', this._session[0]);
-            this.set('session_number', this._session[1]);
-            this.set('session_engaged', 0);
-            this._metadata.is_session_start = 1;
-            this._metadata.is_external_event = 1;
-            window.addEventListener('focus', () => this._update(true, undefined, undefined));
-            window.addEventListener('blur', () => this._update(false, undefined, undefined));
-            window.addEventListener('pageshow', () => this._update(undefined, true, undefined));
-            window.addEventListener('pagehide', () => this._update(undefined, false, undefined));
-            window.addEventListener('visibilitychange', () => this._update(undefined, undefined, window.document.visibilityState !== 'hidden'));
-            window.addEventListener('beforeunload', () => this._update() && this.send('user_engagement', {}));
-        });
+        }
+        this.set('hit_count', 1);
+        this.set('session_id', this._session[0]);
+        this.set('session_number', this._session[1]);
+        this.set('session_engaged', 0);
+        this._metadata.is_session_start = 1;
+        this._metadata.is_external_event = 1;
+        window.addEventListener('focus', () => this._update(true, undefined, undefined));
+        window.addEventListener('blur', () => this._update(false, undefined, undefined));
+        window.addEventListener('pageshow', () => this._update(undefined, true, undefined));
+        window.addEventListener('pagehide', () => this._update(undefined, false, undefined));
+        window.addEventListener('visibilitychange', () => this._update(undefined, undefined, window.document.visibilityState !== 'hidden'));
+        window.addEventListener('beforeunload', () => this._update() && this.send('user_engagement', {}));
     }
 
     get session() {
-        return this._session.join('.');
+        return this._session ? this._session.join('.') : null;
     }
 
     set(name, value) {
@@ -946,17 +1042,23 @@ base.Telemetry = class {
     }
 
     send(name, params) {
-        params = Object.assign({ event_name: name }, this._metadata, /* { debug_mode: true },*/ params);
-        this._metadata = {};
-        this._update() && (params.engagement_time_msec = this._engagement_time_msec) && (this._engagement_time_msec = 0);
-        const build = (entires) => entires.map((entry) => entry[0] + '=' + encodeURIComponent(entry[1])).join('&');
-        this._cache = this._cache || build(Array.from(this._config));
-        const key = (name, value) => this._schema.get(name) || ('number' === typeof value && !isNaN(value) ? 'epn.' : 'ep.') + name;
-        const body = build(Object.entries(params).map((entry) => [ key(entry[0], entry[1]), entry[1] ]));
-        const url = 'https://analytics.google.com/g/collect?' + this._cache;
-        this._navigator.sendBeacon(url, body);
-        this._session[2] = this.get('session_engaged') || '0';
-        this.set('hit_count', this.get('hit_count') + 1);
+        if (this._session) {
+            try {
+                params = Object.assign({ event_name: name }, this._metadata, /* { debug_mode: true },*/ params);
+                this._metadata = {};
+                this._update() && (params.engagement_time_msec = this._engagement_time_msec) && (this._engagement_time_msec = 0);
+                const build = (entires) => entires.map((entry) => entry[0] + '=' + encodeURIComponent(entry[1])).join('&');
+                this._cache = this._cache || build(Array.from(this._config));
+                const key = (name, value) => this._schema.get(name) || ('number' === typeof value && !isNaN(value) ? 'epn.' : 'ep.') + name;
+                const body = build(Object.entries(params).map((entry) => [ key(entry[0], entry[1]), entry[1] ]));
+                const url = 'https://analytics.google.com/g/collect?' + this._cache;
+                this._navigator.sendBeacon(url, body);
+                this._session[2] = this.get('session_engaged') || '0';
+                this.set('hit_count', this.get('hit_count') + 1);
+            } catch (e) {
+                // continue regardless of error
+            }
+        }
     }
 
     _update(focused, page, visible) {
@@ -988,7 +1090,7 @@ base.Metadata = class {
             'mlnet', 'mar',  'meta', 'nn', 'ngf', 'hn', 'har',
             'param', 'params',
             'paddle', 'pdiparams', 'pdmodel', 'pdopt', 'pdparams', 'nb',
-            'pkl', 'joblib',
+            'pkl', 'joblib', 'safetensors',
             'ptl', 't7',
             'dlc', 'uff', 'armnn',
             'mnn', 'ms', 'ncnn', 'om', 'tm', 'mge', 'tmfile', 'tnnproto', 'xmodel', 'kmodel', 'rknn',

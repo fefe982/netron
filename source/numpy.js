@@ -32,10 +32,10 @@ numpy.ModelFactory = class {
         return undefined;
     }
 
-    open(context, match) {
+    async open(context, target) {
         let format = '';
         const graphs = [];
-        switch (match.name) {
+        switch (target.name) {
             case 'npy': {
                 format = 'NumPy Array';
                 const execution = new python.Execution();
@@ -51,7 +51,7 @@ numpy.ModelFactory = class {
                 format = 'NumPy Zip';
                 const layers = new Map();
                 const execution = new python.Execution();
-                for (const entry of match.value) {
+                for (const entry of target.value) {
                     if (!entry[0].endsWith('.npy')) {
                         throw new numpy.Error("Invalid file name '" + entry.name + "'.");
                     }
@@ -84,7 +84,7 @@ numpy.ModelFactory = class {
                     }
                     return layers.get(name);
                 };
-                const weights = match.value;
+                const weights = target.value;
                 let separator = undefined;
                 if (Array.from(weights.keys()).every((key) => key.indexOf('.') !== -1)) {
                     separator = '.';
@@ -117,14 +117,14 @@ numpy.ModelFactory = class {
                 format = 'NumPy NDArray';
                 const layer = {
                     type: 'numpy.ndarray',
-                    parameters: [ { name: 'value', tensor: { name: '', array: match.value } } ]
+                    parameters: [ { name: 'value', tensor: { name: '', array: target.value } } ]
                 };
                 graphs.push({ layers: [ layer ] });
                 break;
             }
             case 'dnnlib.tflib.network': {
                 format = 'dnnlib';
-                for (const obj of match.value) {
+                for (const obj of target.value) {
                     const layers = new Map();
                     for (const entry of obj.variables) {
                         const name = entry[0];
@@ -148,11 +148,10 @@ numpy.ModelFactory = class {
                 break;
             }
             default: {
-                throw new numpy.Error("Unsupported NumPy format '" + match.name + "'.");
+                throw new numpy.Error("Unsupported NumPy format '" + target.name + "'.");
             }
         }
-        const model = new numpy.Model(format, graphs);
-        return Promise.resolve(model);
+        return new numpy.Model(format, graphs);
     }
 };
 
@@ -196,31 +195,27 @@ numpy.Graph = class {
     }
 };
 
-numpy.Parameter = class {
+numpy.Argument = class {
 
-    constructor(name, args) {
+    constructor(name, value) {
         this._name = name;
-        this._arguments = args;
+        this._value = value;
     }
 
     get name() {
         return this._name;
     }
 
-    get visible() {
-        return true;
-    }
-
-    get arguments() {
-        return this._arguments;
+    get value() {
+        return this._value;
     }
 };
 
-numpy.Argument = class {
+numpy.Value = class {
 
     constructor(name, initializer) {
         if (typeof name !== 'string') {
-            throw new numpy.Error("Invalid argument identifier '" + JSON.stringify(name) + "'.");
+            throw new numpy.Error("Invalid value identifier '" + JSON.stringify(name) + "'.");
         }
         this._name = name;
         this._initializer = initializer || null;
@@ -247,8 +242,8 @@ numpy.Node = class {
         this._inputs = [];
         for (const parameter of layer.parameters) {
             const initializer = new numpy.Tensor(parameter.tensor.array);
-            this._inputs.push(new numpy.Parameter(parameter.name, [
-                new numpy.Argument(parameter.tensor.name || '', initializer)
+            this._inputs.push(new numpy.Argument(parameter.name, [
+                new numpy.Value(parameter.tensor.name || '', initializer)
             ]));
         }
     }
@@ -279,7 +274,7 @@ numpy.Tensor = class  {
     constructor(array) {
         this._type = new numpy.TensorType(array.dtype.__name__, new numpy.TensorShape(array.shape));
         this._byteorder = array.dtype.byteorder;
-        this._data = this._type.dataType == 'string' || this._type.dataType == 'object' ? array.tolist() : array.tobytes();
+        this._data = this._type.dataType == 'string' || this._type.dataType == 'object' ? array.flatten().tolist() : array.tobytes();
     }
 
     get type() {

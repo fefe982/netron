@@ -1,7 +1,5 @@
 
-/* eslint-env es2017 */
-
-const fs = require('fs');
+const fs = require('fs').promises;
 const path = require('path');
 const process = require('process');
 
@@ -9,13 +7,6 @@ const base = require('../source/base');
 const view = require('../source/view');
 const zip = require('../source/zip');
 const tar = require('../source/tar');
-
-global.protobuf = require('../source/protobuf');
-global.flatbuffers = require('../source/flatbuffers');
-global.TextDecoder = TextDecoder;
-
-const patterns = process.argv.length > 2 ? process.argv.slice(2) : [];
-const targets = JSON.parse(fs.readFileSync(__dirname + '/models.json', 'utf-8')).reverse();
 
 const host = {};
 
@@ -38,7 +29,7 @@ host.TestHost = class {
     async view(/* view */) {
     }
 
-    start() {
+    async start() {
     }
 
     environment(name) {
@@ -58,13 +49,14 @@ host.TestHost = class {
 
     async request(file, encoding, basename) {
         const pathname = path.join(basename || this._sourceDir, file);
-        if (!fs.existsSync(pathname)) {
+        if (!await exists([ pathname ])) {
             throw new Error("The file '" + file + "' does not exist.");
         }
         if (encoding) {
-            return fs.readFileSync(pathname, encoding);
+            const buffer = await fs.readFile(pathname, encoding);
+            return buffer;
         }
-        const buffer = fs.readFileSync(pathname, null);
+        const buffer = await fs.readFile(pathname, null);
         return new base.BinaryStream(buffer);
     }
 
@@ -280,6 +272,15 @@ const decompress = (buffer) => {
     return archive;
 };
 
+const exists = async (files) => {
+    try {
+        await Promise.all(files.map((file) => fs.access(file)));
+        return true;
+    } catch (error) {
+        return false;
+    }
+};
+
 const request = async (url, init) => {
     const response = await fetch(url, init);
     if (!response.ok) {
@@ -291,25 +292,26 @@ const request = async (url, init) => {
         let position = 0;
         const stream = new ReadableStream({
             start(controller) {
-                const read = () => {
-                    reader.read().then((result) => {
+                const read = async () => {
+                    try {
+                        const result = await reader.read();
                         if (result.done) {
                             clearLine();
                             controller.close();
-                            return;
-                        }
-                        position += result.value.length;
-                        if (length >= 0) {
-                            const label = url.length > 70 ? url.substring(0, 66) + '...' : url;
-                            write('  (' + ('  ' + Math.floor(100 * (position / length))).slice(-3) + '%) ' + label + '\r');
                         } else {
-                            write('  ' + position + ' bytes\r');
+                            position += result.value.length;
+                            if (length >= 0) {
+                                const label = url.length > 70 ? url.substring(0, 66) + '...' : url;
+                                write('  (' + ('  ' + Math.floor(100 * (position / length))).slice(-3) + '%) ' + label + '\r');
+                            } else {
+                                write('  ' + position + ' bytes\r');
+                            }
+                            controller.enqueue(result.value);
+                            read();
                         }
-                        controller.enqueue(result.value);
-                        read();
-                    }).catch(error => {
+                    } catch (error) {
                         controller.error(error);
-                    });
+                    }
                 };
                 read();
             }
@@ -323,14 +325,52 @@ const request = async (url, init) => {
     return response;
 };
 
+class Table {
+
+    constructor(schema) {
+        this.schema = schema;
+        const line = Array.from(this.schema).join(',') + '\n';
+        this.content = [ line ];
+    }
+
+    async add(row) {
+        row = new Map(row);
+        const line = Array.from(this.schema).map((key) => {
+            const value = row.has(key) ? row.get(key) : '';
+            row.delete(key);
+            return value;
+        }).join(',') + '\n';
+        if (row.size > 0) {
+            throw new Error();
+        }
+        this.content.push(line);
+        if (this.file) {
+            await fs.appendFile(this.file, line);
+        }
+    }
+
+    async log(file) {
+        if (file) {
+            await fs.mkdir(path.dirname(file), { recursive: true });
+            await fs.writeFile(file, this.content.join(''));
+            this.file = file;
+        }
+    }
+}
+
 class Target {
 
     constructor(host, item) {
         Object.assign(this, item);
         this.host = host;
-        this.target = item.target.split(',');
+        const target = item.target.split(',');
+        this.target = item.type ? target : target.map((target) => path.resolve(process.cwd(), target));
         this.action = new Set((this.action || '').split(';'));
-        this.folder = path.normalize(path.join(__dirname, '..', 'third_party' , 'test', item.type));
+        this.folder = item.type ? path.normalize(path.join(__dirname, '..', 'third_party' , 'test', item.type)) : '';
+        this.name = this.type ? this.type + '/' + this.target[0] : this.target[0];
+        this.measures = new Map([ [ 'name', this.name ] ]);
+        // TODO #1109 duplicate value name
+        this.skip1109 = [ 'coreml', 'kmodel', 'openvino' ].includes(this.type);
     }
 
     match(patterns) {
@@ -352,14 +392,28 @@ class Target {
     }
 
     async execute() {
-        write(this.type + '/' + this.target[0] + '\n');
+        const time = async (method) => {
+            const start = process.hrtime.bigint();
+            let err = null;
+            try {
+                await method.bind(this)();
+            } catch (error) {
+                err = error;
+            }
+            const duration = Number(process.hrtime.bigint() - start) / 1e9;
+            this.measures.set(method.name, duration);
+            if (err) {
+                throw err;
+            }
+        };
+        write(this.name + '\n');
         clearLine();
-        await this.download(Array.from(this.target), this.source);
+        await time(this.download);
         try {
-            await this.load();
-            this.validate();
+            await time(this.load);
+            await time(this.validate);
             if (!this.action.has('skip-render')) {
-                await this.render();
+                await time(this.render);
             }
             if (this.error) {
                 throw new Error('Expected error.');
@@ -372,7 +426,10 @@ class Target {
     }
 
     async download(targets, sources) {
-        if (targets.every((file) => fs.existsSync(this.folder + '/' + file))) {
+        targets = targets || Array.from(this.target);
+        sources = sources || this.source;
+        const files = targets.map((file) => path.join(this.folder, file));
+        if (await exists(files)) {
             return;
         }
         if (!sources) {
@@ -395,10 +452,10 @@ class Target {
                 sources = '';
             }
         }
-        for (const target of targets) {
+        await Promise.all(targets.map((target) => {
             const dir = path.dirname(this.folder + '/' + target);
-            fs.mkdirSync(dir, { recursive: true });
-        }
+            return fs.mkdir(dir, { recursive: true });
+        }));
         const response = await request(source);
         const buffer = await response.arrayBuffer();
         const data = new Uint8Array(buffer);
@@ -417,11 +474,15 @@ class Target {
                     const target = targets.shift();
                     const buffer = stream.peek();
                     const file = path.join(this.folder, target);
-                    fs.writeFileSync(file, buffer, null);
+                    /* eslint-disable no-await-in-loop */
+                    await fs.writeFile(file, buffer, null);
+                    /* eslint-enable no-await-in-loop */
                 } else {
                     const target = targets.shift();
                     const dir = path.join(this.folder, target);
-                    fs.mkdirSync(dir, { recursive: true });
+                    /* eslint-disable no-await-in-loop */
+                    await fs.mkdir(dir, { recursive: true });
+                    /* eslint-enable no-await-in-loop */
                 }
                 clearLine();
             }
@@ -429,10 +490,10 @@ class Target {
             const target = targets.shift();
             clearLine();
             write('  write ' + target + '\r');
-            fs.writeFileSync(this.folder + '/' + target, data, null);
+            await fs.writeFile(this.folder + '/' + target, data, null);
         }
         clearLine();
-        if (sources.length > 0) {
+        if (targets.length > 0 && sources.length > 0) {
             await this.download(targets, sources);
         }
     }
@@ -440,30 +501,35 @@ class Target {
     async load() {
         const target = path.join(this.folder, this.target[0]);
         const identifier = path.basename(target);
-        const stat = fs.statSync(target);
+        const stat = await fs.stat(target);
         let context = null;
         if (stat.isFile()) {
-            const buffer = fs.readFileSync(target, null);
+            const buffer = await fs.readFile(target, null);
             const reader = new base.BinaryStream(buffer);
             const dirname = path.dirname(target);
             context = new host.TestHost.Context(this.host, dirname, identifier, reader);
         } else if (stat.isDirectory()) {
             const entries = new Map();
-            const walk = (dir) => {
-                for (const item of fs.readdirSync(dir)) {
-                    const pathname = path.join(dir, item);
-                    const stat = fs.statSync(pathname);
+            const file = async (pathname) => {
+                const buffer = await fs.readFile(pathname, null);
+                const stream = new base.BinaryStream(buffer);
+                const name = pathname.split(path.sep).join(path.posix.sep);
+                entries.set(name, stream);
+            };
+            const walk = async (dir) => {
+                const stats = await fs.readdir(dir, { withFileTypes: true });
+                const promises = [];
+                for (const stat of stats) {
+                    const pathname = path.join(dir, stat.name);
                     if (stat.isDirectory()) {
-                        walk(pathname);
+                        promises.push(walk(pathname));
                     } else if (stat.isFile()) {
-                        const buffer = fs.readFileSync(pathname, null);
-                        const stream = new base.BinaryStream(buffer);
-                        const name = pathname.split(path.sep).join(path.posix.sep);
-                        entries.set(name, stream);
+                        promises.push(file(pathname));
                     }
                 }
+                await Promise.all(promises);
             };
-            walk(target);
+            await walk(target);
             context = new host.TestHost.Context(this.host, target, identifier, null, entries);
         }
         const modelFactoryService = new view.ModelFactoryService(this.host);
@@ -504,7 +570,7 @@ class Target {
                     throw new Error("Invalid property path: '" + parts[0]);
                 }
                 if (context !== value.toString()) {
-                    throw new Error("Invalid '" + value.toString() + "' != '" + assert + "'.");
+                    throw new Error("Invalid '" + context.toString() + "' != '" + assert + "'.");
                 }
             }
         }
@@ -512,29 +578,68 @@ class Target {
             // continue
         }
         for (const graph of this.model.graphs) {
+            const values = new Map();
+            const validateValue = (value) => {
+                value.name.toString();
+                value.name.length;
+                value.description;
+                value.quantization;
+                if (value.type) {
+                    value.type.toString();
+                }
+                if (value.initializer) {
+                    value.initializer.type.toString();
+                    const tensor = new view.Tensor(value.initializer);
+                    if (tensor.layout !== '<' && tensor.layout !== '>' && tensor.layout !== '|' && tensor.layout !== 'sparse' && tensor.layout !== 'sparse.coo') {
+                        throw new Error("Tensor layout '" + tensor.layout + "' is not implemented.");
+                    }
+                    if (!tensor.empty) {
+                        if (tensor.type && tensor.type.dataType === '?') {
+                            throw new Error('Tensor data type is not defined.');
+                        } else if (tensor.type && !tensor.type.shape) {
+                            throw new Error('Tensor shape is not defined.');
+                        } else {
+                            tensor.toString();
+                            /*
+                            const python = require('../source/python');
+                            const tensor = argument.initializer;
+                            if (tensor.type && tensor.type.dataType !== '?') {
+                                let data_type = tensor.type.dataType;
+                                switch (data_type) {
+                                    case 'boolean': data_type = 'bool'; break;
+                                }
+                                const execution = new python.Execution();
+                                const bytes = execution.invoke('io.BytesIO', []);
+                                const dtype = execution.invoke('numpy.dtype', [ data_type ]);
+                                const array = execution.invoke('numpy.asarray', [ tensor.value, dtype ]);
+                                execution.invoke('numpy.save', [ bytes, array ]);
+                            }
+                            */
+                        }
+                    }
+                } else if (value.name.length === 0) {
+                    throw new Error('Empty value name.');
+                }
+                if (value.name.length > 0 && value.initializer === null) {
+                    if (!values.has(value.name)) {
+                        values.set(value.name, value);
+                    } else if (value !== values.get(value.name) && !this.skip1109) {
+                        throw new Error("Duplicate value '" + value.name + "'.");
+                    }
+                }
+            };
             for (const input of graph.inputs) {
                 input.name.toString();
                 input.name.length;
-                for (const argument of input.arguments) {
-                    argument.name.toString();
-                    argument.name.length;
-                    if (argument.type) {
-                        argument.type.toString();
-                    }
-                    if (argument.quantization || argument.initializer) {
-                        // continue
-                    }
+                for (const value of input.value) {
+                    validateValue(value);
                 }
             }
             for (const output of graph.outputs) {
                 output.name.toString();
                 output.name.length;
-                for (const argument of output.arguments) {
-                    argument.name.toString();
-                    argument.name.length;
-                    if (argument.type) {
-                        argument.type.toString();
-                    }
+                for (const value of output.value) {
+                    validateValue(value);
                 }
             }
             for (const node of graph.nodes) {
@@ -558,55 +663,15 @@ class Target {
                 for (const input of node.inputs) {
                     input.name.toString();
                     input.name.length;
-                    for (const argument of input.arguments) {
-                        argument.name.toString();
-                        argument.name.length;
-                        argument.description;
-                        if (argument.type) {
-                            argument.type.toString();
-                        }
-                        if (argument.initializer) {
-                            argument.initializer.type.toString();
-                            const tensor = new view.Tensor(argument.initializer);
-                            if (tensor.layout !== '<' && tensor.layout !== '>' && tensor.layout !== '|' && tensor.layout !== 'sparse' && tensor.layout !== 'sparse.coo') {
-                                throw new Error("Tensor layout '" + tensor.layout + "' is not implemented.");
-                            }
-                            if (!tensor.empty) {
-                                if (tensor.type && tensor.type.dataType === '?') {
-                                    throw new Error('Tensor data type is not defined.');
-                                } else if (tensor.type && !tensor.type.shape) {
-                                    throw new Error('Tensor shape is not defined.');
-                                } else {
-                                    tensor.toString();
-                                    /*
-                                    const python = require('../source/python');
-                                    const tensor = argument.initializer;
-                                    if (tensor.type && tensor.type.dataType !== '?') {
-                                        let data_type = tensor.type.dataType;
-                                        switch (data_type) {
-                                            case 'boolean': data_type = 'bool'; break;
-                                        }
-                                        const execution = new python.Execution();
-                                        const bytes = execution.invoke('io.BytesIO', []);
-                                        const dtype = execution.invoke('numpy.dtype', [ data_type ]);
-                                        const array = execution.invoke('numpy.asarray', [ tensor.value, dtype ]);
-                                        execution.invoke('numpy.save', [ bytes, array ]);
-                                    }
-                                    */
-                                }
-                            }
-                        }
+                    for (const value of input.value) {
+                        validateValue(value);
                     }
                 }
                 for (const output of node.outputs) {
                     output.name.toString();
                     output.name.length;
-                    for (const argument of output.arguments) {
-                        argument.name.toString();
-                        argument.name.length;
-                        if (argument.type) {
-                            argument.type.toString();
-                        }
+                    for (const value of output.value) {
+                        validateValue(value);
                     }
                 }
                 if (node.chain) {
@@ -628,25 +693,43 @@ class Target {
     }
 }
 
-const next = async () => {
-    if (targets.length > 0) {
-        const item = targets.pop();
-        const target = new Target(global.window.__host__, item);
-        if (target.match(patterns)) {
-            await target.execute();
+const main = async () => {
+    try {
+        let patterns = process.argv.length > 2 ? process.argv.slice(2) : [];
+        const configuration = await fs.readFile(__dirname + '/models.json', 'utf-8');
+        let targets = JSON.parse(configuration).reverse();
+        if (patterns.length > 0 && await exists(patterns)) {
+            targets = patterns.map((path) => {
+                return { target: path };
+            });
+            patterns = [];
         }
-        next();
+        const __host__ = new host.TestHost();
+        const measures = new Table([ 'name', 'download', 'load', 'validate', 'render' ]);
+        // await measures.log(path.join(__dirname, '..', 'dist', 'test', 'measures.csv'));
+        while (targets.length > 0) {
+            const item = targets.pop();
+            const target = new Target(__host__, item);
+            if (target.match(patterns)) {
+                /* eslint-disable no-await-in-loop */
+                await target.execute();
+                await measures.add(target.measures);
+                /* eslint-enable no-await-in-loop */
+            }
+        }
+    } catch (error) {
+        /* eslint-disable no-console */
+        console.error(error.name + ': ' + error.message);
+        if (error.cause) {
+            console.error('  ' + error.cause.name + ': ' + error.cause.message);
+        }
+        /* eslint-enable no-console */
     }
 };
 
+global.protobuf = require('../source/protobuf');
+global.flatbuffers = require('../source/flatbuffers');
+global.TextDecoder = TextDecoder;
 global.window = new Window();
-global.window.__host__ = new host.TestHost();
 
-next().catch((error) => {
-    /* eslint-disable no-console */
-    console.error(error.name + ': ' + error.message);
-    if (error.cause) {
-        console.error('  ' + error.cause.name + ': ' + error.cause.message);
-    }
-    /* eslint-enable no-console */
-});
+main();

@@ -1,6 +1,4 @@
 
-/* eslint-env es2017 */
-
 var host = host || {};
 
 const electron = require('electron');
@@ -16,10 +14,10 @@ host.ElectronHost = class {
     constructor() {
         this._document = window.document;
         this._window = window;
+        this._telemetry = new base.Telemetry(this._window);
         process.on('uncaughtException', (err) => {
             this.exception(err, true);
-            this._message(err.message);
-            this.document.body.setAttribute('class', 'welcome message');
+            this._terminate(err.message);
         });
         this._window.eval = global.eval = () => {
             throw new Error('window.eval() not supported.');
@@ -39,10 +37,6 @@ host.ElectronHost = class {
         if (!/^\d\.\d\.\d$/.test(this.version)) {
             throw new Error('Invalid version.');
         }
-    }
-
-    static async create() {
-        return new host.ElectronHost();
     }
 
     get window() {
@@ -66,69 +60,64 @@ host.ElectronHost = class {
         electron.ipcRenderer.on('open', (_, data) => {
             this._open(data);
         });
-        await this._age();
-        await this._consent();
-        await this._telemetry();
-    }
-
-    async _age() {
-        const age = (new Date() - new Date(this._environment.date)) / (24 * 60 * 60 * 1000);
-        if (age > 180) {
-            this._view.show('welcome');
-            for (;;) {
-                /* eslint-disable no-await-in-loop */
-                await this._message('Please update to the newest version.', 'Download');
-                /* eslint-enable no-await-in-loop */
-                const link = this._element('logo-github').href;
-                this.openURL(link);
+        const age = async () => {
+            const days = (new Date() - new Date(this._environment.date)) / (24 * 60 * 60 * 1000);
+            if (days > 180) {
+                this._view.show('welcome');
+                this._terminate('Please update to the newest version.', 'Download', () => {
+                    const link = this._element('logo-github').href;
+                    this.openURL(link);
+                });
+                return new Promise(() => {});
             }
-        }
-    }
-
-    async _consent() {
-        const time = this._getConfiguration('consent');
-        if (!time || (Date.now() - time) > 30 * 24 * 60 * 60 * 1000) {
-            let consent = true;
-            try {
-                const content = await this._request('https://ipinfo.io/json', { 'Content-Type': 'application/json' }, 2000);
-                const json = JSON.parse(content);
-                const countries = ['AT', 'BE', 'BG', 'HR', 'CZ', 'CY', 'DK', 'EE', 'FI', 'FR', 'DE', 'EL', 'HU', 'IE', 'IT', 'LV', 'LT', 'LU', 'MT', 'NL', 'NO', 'PL', 'PT', 'SK', 'ES', 'SE', 'GB', 'UK', 'GR', 'EU', 'RO'];
-                if (json && json.country && countries.indexOf(json.country) === -1) {
-                    consent = false;
+            return Promise.resolve();
+        };
+        const consent = async () => {
+            const time = this.get('configuration', 'consent');
+            if (!time || (Date.now() - time) > 30 * 24 * 60 * 60 * 1000) {
+                let consent = true;
+                try {
+                    const content = await this._request('https://ipinfo.io/json', { 'Content-Type': 'application/json' }, 2000);
+                    const json = JSON.parse(content);
+                    const countries = ['AT', 'BE', 'BG', 'HR', 'CZ', 'CY', 'DK', 'EE', 'FI', 'FR', 'DE', 'EL', 'HU', 'IE', 'IT', 'LV', 'LT', 'LU', 'MT', 'NL', 'NO', 'PL', 'PT', 'SK', 'ES', 'SE', 'GB', 'UK', 'GR', 'EU', 'RO'];
+                    if (json && json.country && countries.indexOf(json.country) === -1) {
+                        consent = false;
+                    }
+                } catch (error) {
+                    // continue regardless of error
                 }
-            } catch (error) {
-                // continue regardless of error
+                if (consent) {
+                    await this._message('This app uses cookies to report errors and anonymous usage information.', 'Accept');
+                }
+                this.set('configuration', 'consent', Date.now());
             }
-            if (consent) {
-                await this._message('This app uses cookies to report errors and anonymous usage information.', 'Accept');
+        };
+        const telemetry = async () => {
+            if (this._environment.packaged) {
+                const measurement_id = '848W2NVWVH';
+                const user = this.get('configuration', 'user') || null;
+                const session = this.get('configuration', 'session') || null;
+                await this._telemetry.start('G-' + measurement_id, user && user.indexOf('.') !== -1 ? user : null, session);
+                this._telemetry.send('page_view', {
+                    app_name: this.type,
+                    app_version: this.version,
+                });
+                this._telemetry.send('scroll', {
+                    percent_scrolled: 90,
+                    app_name: this.type,
+                    app_version: this.version
+                });
+                this.set('configuration', 'user', this._telemetry.get('client_id'));
+                this.set('configuration', 'session', this._telemetry.session);
+                this._telemetry_ua = new host.Telemetry('UA-54146-13', this._telemetry.get('client_id'), navigator.userAgent, this.type, this.version);
             }
-            this._setConfiguration('consent', Date.now());
-        }
+        };
+        await age();
+        await consent();
+        await telemetry();
     }
 
-    async _telemetry() {
-        if (this._environment.packaged) {
-            const measurement_id = '848W2NVWVH';
-            const user = this._getConfiguration('user') || null;
-            const session = this._getConfiguration('session') || null;
-            this._telemetry_ga4 = new base.Telemetry(this._window, 'G-' + measurement_id, user && user.indexOf('.') !== -1 ? user : null, session);
-            await this._telemetry_ga4.start();
-            this._telemetry_ga4.send('page_view', {
-                app_name: this.type,
-                app_version: this.version,
-            });
-            this._telemetry_ga4.send('scroll', {
-                percent_scrolled: 90,
-                app_name: this.type,
-                app_version: this.version
-            });
-            this._setConfiguration('user', this._telemetry_ga4.get('client_id'));
-            this._setConfiguration('session', this._telemetry_ga4.session);
-            this._telemetry_ua = new host.Telemetry('UA-54146-13', this._telemetry_ga4.get('client_id'), navigator.userAgent, this.type, this.version);
-        }
-    }
-
-    start() {
+    async start() {
         if (this._files) {
             const files = this._files;
             delete this._files;
@@ -137,7 +126,6 @@ host.ElectronHost = class {
                 this._open(data);
             }
         }
-
         this._window.addEventListener('focus', () => {
             this._document.body.classList.add('active');
         });
@@ -187,7 +175,6 @@ host.ElectronHost = class {
         electron.ipcRenderer.on('about', () => {
             this._view.about();
         });
-
         this._element('titlebar-close').addEventListener('click', () => {
             electron.ipcRenderer.sendSync('window-close', {});
         });
@@ -216,14 +203,12 @@ host.ElectronHost = class {
             this._element('titlebar-toggle').setAttribute('title', data.maximized ? 'Restore' : 'Maximize');
         });
         electron.ipcRenderer.sendSync('update-window-state', {});
-
         const openFileButton = this._element('open-file-button');
         if (openFileButton) {
             openFileButton.addEventListener('click', () => {
                 this.execute('open');
             });
         }
-
         this.document.addEventListener('dragover', (e) => {
             e.preventDefault();
         });
@@ -245,17 +230,15 @@ host.ElectronHost = class {
         return this._environment[name];
     }
 
-    error(message, detail, url) {
+    async error(message, detail) {
         const options = {
             type: 'error',
             message: message,
             detail: detail,
             buttons: [ 'Report', 'Cancel' ]
         };
-        if (electron.ipcRenderer.sendSync('show-message-box', options) === 0) {
-            url = url || this.environment('repository') + '/issues';
-            this.openURL(url);
-        }
+        return electron.ipcRenderer.sendSync('show-message-box', options);
+        // return await this._message(message + ': ' + detail, 'Report');
     }
 
     confirm(message, detail) {
@@ -286,7 +269,7 @@ host.ElectronHost = class {
         }
     }
 
-    export(file, blob) {
+    async export(file, blob) {
         const reader = new FileReader();
         reader.onload = (e) => {
             const data = new Uint8Array(e.target.result);
@@ -307,7 +290,7 @@ host.ElectronHost = class {
 
         if (err) {
             this.exception(err, false);
-            this.error('Error exporting image.', err.message);
+            await this.error('Error exporting image.', err.message);
         } else {
             reader.readAsArrayBuffer(blob);
         }
@@ -317,7 +300,7 @@ host.ElectronHost = class {
         electron.ipcRenderer.send('execute', { name: name, value: value });
     }
 
-    request(file, encoding, basename) {
+    async request(file, encoding, basename) {
         return new Promise((resolve, reject) => {
             const pathname = path.join(basename || __dirname, file);
             fs.stat(pathname, (err, stat) => {
@@ -349,7 +332,7 @@ host.ElectronHost = class {
     }
 
     exception(error, fatal) {
-        if ((this._telemetry_ua || this._telemetry_ga4) && error) {
+        if ((this._telemetry_ua || this._telemetry) && error) {
             try {
                 const name = error.name ? error.name + ': ' : '';
                 const message = error.message ? error.message : JSON.stringify(error);
@@ -381,17 +364,15 @@ host.ElectronHost = class {
                 if (this._telemetry_ua) {
                     this._telemetry_ua.exception(stack ? description + ' @ ' + stack : description, fatal);
                 }
-                if (this._telemetry_ga4) {
-                    this._telemetry_ga4.send('exception', {
-                        app_name: this.type,
-                        app_version: this.version,
-                        error_name: name,
-                        error_message: message,
-                        error_context: context,
-                        error_stack: stack,
-                        error_fatal: fatal ? true : false
-                    });
-                }
+                this._telemetry.send('exception', {
+                    app_name: this.type,
+                    app_version: this.version,
+                    error_name: name,
+                    error_message: message,
+                    error_context: context,
+                    error_stack: stack,
+                    error_fatal: fatal ? true : false
+                });
             } catch (e) {
                 // continue regardless of error
             }
@@ -409,14 +390,10 @@ host.ElectronHost = class {
     }
 
     event(name, params) {
-        if (this._telemetry_ga4 && name && params) {
-            try {
-                params.app_name = this.type,
-                params.app_version = this.version,
-                this._telemetry_ga4.send(name, params);
-            } catch (e) {
-                // continue regardless of error
-            }
+        if (name && params) {
+            params.app_name = this.type;
+            params.app_version = this.version;
+            this._telemetry.send(name, params);
         }
     }
 
@@ -458,31 +435,31 @@ host.ElectronHost = class {
         const size = stat && stat.isFile() ? stat.size : 0;
         if (path && this._view.accept(path, size)) {
             this._view.show('welcome spinner');
+            let context = null;
             try {
-                const context = await this._context(path);
-                if (this._telemetry_ga4) {
-                    this._telemetry_ga4.set('session_engaged', 1);
-                }
-                try {
-                    const model = await this._view.open(context);
-                    this._view.show(null);
-                    const options = Object.assign({}, this._view.options);
-                    if (model) {
-                        options.path = path;
-                        this._title(location.label);
-                    }
-                    this._update(options);
-                } catch (error) {
-                    const options = Object.assign({}, this._view.options);
-                    if (error) {
-                        this._view.error(error, null, null);
-                        options.path = null;
-                    }
-                    this._update(options);
-                }
+                context = await this._context(path);
+                this._telemetry.set('session_engaged', 1);
             } catch (error) {
-                this._view.error(error, 'Error while reading file.', null);
+                await this._view.error(error, 'Error while reading file.', null);
                 this._update({ path: null });
+                return;
+            }
+            try {
+                const model = await this._view.open(context);
+                this._view.show(null);
+                const options = Object.assign({}, this._view.options);
+                if (model) {
+                    options.path = path;
+                    this._title(location.label);
+                }
+                this._update(options);
+            } catch (error) {
+                const options = Object.assign({}, this._view.options);
+                if (error) {
+                    await this._view.error(error, null, null);
+                    options.path = null;
+                }
+                this._update(options);
             }
         }
     }
@@ -530,12 +507,29 @@ host.ElectronHost = class {
         });
     }
 
-    _getConfiguration(name) {
-        return electron.ipcRenderer.sendSync('get-configuration', { name: name });
+    get(context, name) {
+        try {
+            return electron.ipcRenderer.sendSync('get-' + context, { name: name });
+        } catch (error) {
+            // continue regardless of error
+        }
+        return undefined;
     }
 
-    _setConfiguration(name, value) {
-        electron.ipcRenderer.sendSync('set-configuration', { name: name, value: value });
+    set(context, name, value) {
+        try {
+            electron.ipcRenderer.sendSync('set-' + context, { name: name, value: value });
+        } catch (error) {
+            // continue regardless of error
+        }
+    }
+
+    delete(context, name) {
+        try {
+            electron.ipcRenderer.sendSync('delete-' + context, { name: name });
+        } catch (error) {
+            // continue regardless of error
+        }
     }
 
     _title(label) {
@@ -561,26 +555,44 @@ host.ElectronHost = class {
         electron.ipcRenderer.send('window-update', data);
     }
 
+    _terminate(message, action, callback) {
+        this._element('message-text').innerText = message;
+        const button = this._element('message-button');
+        if (action && callback) {
+            button.style.removeProperty('display');
+            button.innerText = action;
+            button.onclick = () => callback(0);
+            button.focus();
+        } else {
+            button.style.display = 'none';
+            button.onclick = null;
+        }
+        if (this._view) {
+            try {
+                this._view.show('welcome message');
+            } catch (error) {
+                // continue regardless of error
+            }
+        }
+        this._document.body.setAttribute('class', 'welcome message');
+    }
+
     _message(message, action) {
         return new Promise((resolve) => {
-            const messageText = this._element('message-text');
-            if (messageText) {
-                messageText.innerText = message;
-            }
-            const messageButton = this._element('message-button');
-            if (messageButton) {
-                if (action) {
-                    messageButton.style.removeProperty('display');
-                    messageButton.innerText = action;
-                    messageButton.onclick = () => {
-                        messageButton.onclick = null;
-                        this._document.body.classList.remove('message');
-                        resolve();
-                    };
-                } else {
-                    messageButton.style.display = 'none';
-                    messageButton.onclick = null;
-                }
+            this._element('message-text').innerText = message;
+            const button = this._element('message-button');
+            if (action) {
+                button.style.removeProperty('display');
+                button.innerText = action;
+                button.onclick = () => {
+                    button.onclick = null;
+                    this._document.body.classList.remove('message');
+                    resolve(0);
+                };
+                button.focus();
+            } else {
+                button.style.display = 'none';
+                button.onclick = null;
             }
             this._document.body.classList.add('message');
         });
@@ -682,7 +694,7 @@ host.ElectronHost.FileStream = class {
 
     peek(length) {
         length = length !== undefined ? length : this._length - this._position;
-        if (length < 0x10000000) {
+        if (length < 0x1000000) {
             const position = this._fill(length);
             this._position -= length;
             return this._buffer.subarray(position, position + length);
@@ -699,7 +711,7 @@ host.ElectronHost.FileStream = class {
         length = length !== undefined ? length : this._length - this._position;
         if (length < 0x10000000) {
             const position = this._fill(length);
-            return this._buffer.subarray(position, position + length);
+            return this._buffer.slice(position, position + length);
         }
         const position = this._position;
         this.skip(length);
@@ -719,7 +731,10 @@ host.ElectronHost.FileStream = class {
         }
         if (!this._buffer || this._position < this._offset || this._position + length > this._offset + this._buffer.length) {
             this._offset = this._position;
-            this._buffer = new Uint8Array(Math.min(0x10000000, this._length - this._offset));
+            const length = Math.min(0x1000000, this._length - this._offset);
+            if (!this._buffer || length !== this._buffer.length) {
+                this._buffer = new Uint8Array(length);
+            }
             this._read(this._buffer, this._offset);
         }
         const position = this._position;
@@ -779,8 +794,8 @@ host.ElectronHost.Context = class {
 window.addEventListener('load', () => {
     global.protobuf = require('./protobuf');
     global.flatbuffers = require('./flatbuffers');
-    host.ElectronHost.create().then((host) => {
-        const view = require('./view');
-        window.__view__ = new view.View(host);
-    });
+    const value = new host.ElectronHost();
+    const view = require('./view');
+    window.__view__ = new view.View(value);
+    window.__view__.start();
 });

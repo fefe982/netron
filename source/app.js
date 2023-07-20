@@ -13,17 +13,19 @@ var app = {};
 app.Application = class {
 
     constructor() {
-
         this._views = new app.ViewCollection(this);
         this._configuration = new app.ConfigurationService();
         this._menu = new app.MenuService(this._views);
         this._openQueue = [];
+        this._package = {};
+    }
 
+    start() {
         const packageFile = path.join(path.dirname(__dirname), 'package.json');
         const packageContent = fs.readFileSync(packageFile, 'utf-8');
         this._package = JSON.parse(packageContent);
 
-        electron.app.setAppUserModelId(this._package.build.appId);
+        electron.app.setAppUserModelId('com.lutzroeder.netron');
         electron.app.allowRendererProcessReuse = true;
 
         if (!electron.app.requestSingleInstanceLock()) {
@@ -51,6 +53,11 @@ app.Application = class {
         });
         electron.ipcMain.on('set-configuration', (event, obj) => {
             this._configuration.set(obj.name, obj.value);
+            this._configuration.save();
+            event.returnValue = null;
+        });
+        electron.ipcMain.on('delete-configuration', (event, obj) => {
+            this._configuration.delete(obj.name);
             this._configuration.save();
             event.returnValue = null;
         });
@@ -300,8 +307,8 @@ app.Application = class {
         let updated = false;
         let recents = this._configuration.has('recents') ? this._configuration.get('recents') : [];
         if (path && (recents.length === 0 || recents[0] !== path)) {
-            recents = recents.filter((recent) => path !== recent.path);
-            recents.unshift({ path: path });
+            recents = recents.filter((recent) => path !== recent);
+            recents.unshift(path);
             updated = true;
         }
         const value = [];
@@ -310,12 +317,11 @@ app.Application = class {
                 updated = true;
                 break;
             }
-            const path = recent.path;
-            if (!fs.existsSync(path)) {
+            if (!fs.existsSync(recent)) {
                 updated = true;
                 continue;
             }
-            const stat = fs.statSync(path);
+            const stat = fs.statSync(recent);
             if (!stat.isFile() && !stat.isDirectory()) {
                 updated = true;
                 continue;
@@ -333,7 +339,7 @@ app.Application = class {
         let recents = [];
         if (this._configuration.has('recents')) {
             const value = this._configuration.get('recents');
-            recents = value.map((recent) => app.Application.location(recent.path));
+            recents = value.map((recent) => app.Application.location(recent));
         }
 
         if (this.environment.titlebar && recents.length > 0) {
@@ -667,8 +673,8 @@ app.View = class {
         this._window.on('restore', () => this.state());
         this._window.on('maximize', () => this.state());
         this._window.on('unmaximize', () => this.state());
-        this._window.on('enter-full-screen', () => this.state());
-        this._window.on('leave-full-screen', () => this.state());
+        this._window.on('enter-full-screen', () => this.state('enter-full-screen'));
+        this._window.on('leave-full-screen', () => this.state('leave-full-screen'));
         this._window.webContents.on('did-finish-load', () => {
             this._didFinishLoad = true;
         });
@@ -740,10 +746,22 @@ app.View = class {
         if (this._dispatch) {
             this._dispatch.push({ command: command, data: data });
         } else if (this._window && this._window.webContents) {
-            const contents = this._window.webContents;
+            const window = this._window;
+            const contents = window.webContents;
             switch (command) {
-                case 'toggle-developer-tools': contents.isDevToolsOpened() ? contents.closeDevTools() : contents.openDevTools(); break;
-                default: contents.send(command, data); break;
+                case 'toggle-developer-tools':
+                    if (contents.isDevToolsOpened()) {
+                        contents.closeDevTools();
+                    } else {
+                        contents.openDevTools();
+                    }
+                    break;
+                case 'fullscreen':
+                    window.setFullScreen(!window.isFullScreen());
+                    break;
+                default:
+                    contents.send(command, data);
+                    break;
             }
         }
     }
@@ -790,11 +808,11 @@ app.View = class {
         }
     }
 
-    state() {
+    state(event) {
         this.execute('window-state', {
             minimized: this._window.isMinimized(),
             maximized: this._window.isMaximized(),
-            fullscreen: this._window.isFullScreen()
+            fullscreen: event === 'enter-full-screen' ? true : event === 'leave-full-screen' ? false : this._window.isFullScreen()
         });
         if (this._dispatch) {
             const dispatch = this._dispatch;
@@ -935,6 +953,9 @@ app.ConfigurationService = class {
             if (data) {
                 try {
                     this._data = JSON.parse(data);
+                    if (Array.isArray(this._data.recents)) {
+                        this._data.recents = this._data.recents.map((recent) => typeof recent === 'string' ? recent : (recent && recent.path ? recent.path : recent));
+                    }
                 } catch (error) {
                     // continue regardless of error
                 }
@@ -959,6 +980,10 @@ app.ConfigurationService = class {
 
     get(name) {
         return this._data[name];
+    }
+
+    delete(name) {
+        delete this._data[name];
     }
 };
 
@@ -1042,3 +1067,4 @@ app.MenuService = class {
 };
 
 global.application = new app.Application();
+global.application.start();
