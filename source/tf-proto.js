@@ -1843,6 +1843,8 @@ $root.tensorflow.DataType = {
     "DT_UINT64": 23,
     "DT_FLOAT8_E5M2": 24,
     "DT_FLOAT8_E4M3FN": 25,
+    "DT_INT4": 29,
+    "DT_UINT4": 30,
     "DT_FLOAT_REF": 101,
     "DT_DOUBLE_REF": 102,
     "DT_INT32_REF": 103,
@@ -1867,7 +1869,9 @@ $root.tensorflow.DataType = {
     "DT_UINT32_REF": 122,
     "DT_UINT64_REF": 123,
     "DT_FLOAT8_E5M2_REF": 124,
-    "DT_FLOAT8_E4M3FN_REF": 125
+    "DT_FLOAT8_E4M3FN_REF": 125,
+    "DT_INT4_REF": 129,
+    "DT_UINT4_REF": 130
 };
 
 $root.tensorflow.SerializedDType = class SerializedDType {
@@ -2549,7 +2553,10 @@ $root.tensorflow.GraphDebugInfo = class GraphDebugInfo {
 
     constructor() {
         this.files = [];
+        this.frames_by_id = {};
+        this.traces_by_id = {};
         this.traces = {};
+        this.name_to_trace_id = {};
     }
 
     static decode(reader, length) {
@@ -2561,8 +2568,17 @@ $root.tensorflow.GraphDebugInfo = class GraphDebugInfo {
                 case 1:
                     message.files.push(reader.string());
                     break;
+                case 4:
+                    reader.entry(message.frames_by_id, () => reader.fixed64(), () => $root.tensorflow.GraphDebugInfo.FileLineCol.decode(reader, reader.uint32()));
+                    break;
+                case 6:
+                    reader.entry(message.traces_by_id, () => reader.fixed64(), () => $root.tensorflow.GraphDebugInfo.StackTrace.decode(reader, reader.uint32()));
+                    break;
                 case 2:
                     reader.entry(message.traces, () => reader.string(), () => $root.tensorflow.GraphDebugInfo.StackTrace.decode(reader, reader.uint32()));
+                    break;
+                case 5:
+                    reader.entry(message.name_to_trace_id, () => reader.string(), () => reader.fixed64());
                     break;
                 default:
                     reader.skipType(tag & 7);
@@ -2581,8 +2597,17 @@ $root.tensorflow.GraphDebugInfo = class GraphDebugInfo {
                 case "files":
                     reader.array(message.files, () => reader.string());
                     break;
+                case "frames_by_id":
+                    reader.entry(message.frames_by_id, () => reader.fixed64(), () => $root.tensorflow.GraphDebugInfo.FileLineCol.decodeText(reader));
+                    break;
+                case "traces_by_id":
+                    reader.entry(message.traces_by_id, () => reader.fixed64(), () => $root.tensorflow.GraphDebugInfo.StackTrace.decodeText(reader));
+                    break;
                 case "traces":
                     reader.entry(message.traces, () => reader.string(), () => $root.tensorflow.GraphDebugInfo.StackTrace.decodeText(reader));
+                    break;
+                case "name_to_trace_id":
+                    reader.entry(message.name_to_trace_id, () => reader.string(), () => reader.fixed64());
                     break;
                 default:
                     reader.field(tag, message);
@@ -2667,6 +2692,7 @@ $root.tensorflow.GraphDebugInfo.StackTrace = class StackTrace {
 
     constructor() {
         this.file_line_cols = [];
+        this.frame_id = [];
     }
 
     static decode(reader, length) {
@@ -2677,6 +2703,9 @@ $root.tensorflow.GraphDebugInfo.StackTrace = class StackTrace {
             switch (tag >>> 3) {
                 case 1:
                     message.file_line_cols.push($root.tensorflow.GraphDebugInfo.FileLineCol.decode(reader, reader.uint32()));
+                    break;
+                case 2:
+                    message.frame_id = reader.array(message.frame_id, () => reader.fixed64(), tag);
                     break;
                 default:
                     reader.skipType(tag & 7);
@@ -2694,6 +2723,9 @@ $root.tensorflow.GraphDebugInfo.StackTrace = class StackTrace {
             switch (tag) {
                 case "file_line_cols":
                     message.file_line_cols.push($root.tensorflow.GraphDebugInfo.FileLineCol.decodeText(reader));
+                    break;
+                case "frame_id":
+                    reader.array(message.frame_id, () => reader.fixed64());
                     break;
                 default:
                     reader.field(tag, message);
@@ -6344,6 +6376,9 @@ $root.tensorflow.GPUOptions.Experimental = class Experimental {
                 case 1:
                     message.virtual_devices.push($root.tensorflow.GPUOptions.Experimental.VirtualDevices.decode(reader, reader.uint32()));
                     break;
+                case 15:
+                    message.num_virtual_devices_per_gpu = reader.int32();
+                    break;
                 case 2:
                     message.use_unified_memory = reader.bool();
                     break;
@@ -6380,6 +6415,9 @@ $root.tensorflow.GPUOptions.Experimental = class Experimental {
                 case 14:
                     message.gpu_host_mem_disallow_growth = reader.bool();
                     break;
+                case 16:
+                    message.gpu_system_memory_size_in_mb = reader.int32();
+                    break;
                 default:
                     reader.skipType(tag & 7);
                     break;
@@ -6396,6 +6434,9 @@ $root.tensorflow.GPUOptions.Experimental = class Experimental {
             switch (tag) {
                 case "virtual_devices":
                     message.virtual_devices.push($root.tensorflow.GPUOptions.Experimental.VirtualDevices.decodeText(reader));
+                    break;
+                case "num_virtual_devices_per_gpu":
+                    message.num_virtual_devices_per_gpu = reader.int32();
                     break;
                 case "use_unified_memory":
                     message.use_unified_memory = reader.bool();
@@ -6433,6 +6474,9 @@ $root.tensorflow.GPUOptions.Experimental = class Experimental {
                 case "gpu_host_mem_disallow_growth":
                     message.gpu_host_mem_disallow_growth = reader.bool();
                     break;
+                case "gpu_system_memory_size_in_mb":
+                    message.gpu_system_memory_size_in_mb = reader.int32();
+                    break;
                 default:
                     reader.field(tag, message);
                     break;
@@ -6442,6 +6486,7 @@ $root.tensorflow.GPUOptions.Experimental = class Experimental {
     }
 };
 
+$root.tensorflow.GPUOptions.Experimental.prototype.num_virtual_devices_per_gpu = 0;
 $root.tensorflow.GPUOptions.Experimental.prototype.use_unified_memory = false;
 $root.tensorflow.GPUOptions.Experimental.prototype.num_dev_to_dev_copy_streams = 0;
 $root.tensorflow.GPUOptions.Experimental.prototype.collective_ring_order = "";
@@ -6454,6 +6499,7 @@ $root.tensorflow.GPUOptions.Experimental.prototype.use_cuda_malloc_async = false
 $root.tensorflow.GPUOptions.Experimental.prototype.disallow_retry_on_allocation_failure = false;
 $root.tensorflow.GPUOptions.Experimental.prototype.gpu_host_mem_limit_in_mb = 0;
 $root.tensorflow.GPUOptions.Experimental.prototype.gpu_host_mem_disallow_growth = false;
+$root.tensorflow.GPUOptions.Experimental.prototype.gpu_system_memory_size_in_mb = 0;
 
 $root.tensorflow.GPUOptions.Experimental.VirtualDevices = class VirtualDevices {
 
@@ -7030,6 +7076,9 @@ $root.tensorflow.ConfigProto.Experimental = class Experimental {
                 case 24:
                     message.disable_optimize_for_static_graph = reader.bool();
                     break;
+                case 26:
+                    message.disable_eager_executor_streaming_enqueue = reader.bool();
+                    break;
                 default:
                     reader.skipType(tag & 7);
                     break;
@@ -7107,6 +7156,9 @@ $root.tensorflow.ConfigProto.Experimental = class Experimental {
                 case "disable_optimize_for_static_graph":
                     message.disable_optimize_for_static_graph = reader.bool();
                     break;
+                case "disable_eager_executor_streaming_enqueue":
+                    message.disable_eager_executor_streaming_enqueue = reader.bool();
+                    break;
                 default:
                     reader.field(tag, message);
                     break;
@@ -7137,6 +7189,7 @@ $root.tensorflow.ConfigProto.Experimental.prototype.disable_functional_ops_lower
 $root.tensorflow.ConfigProto.Experimental.prototype.xla_prefer_single_graph_cluster = false;
 $root.tensorflow.ConfigProto.Experimental.prototype.coordination_config = null;
 $root.tensorflow.ConfigProto.Experimental.prototype.disable_optimize_for_static_graph = false;
+$root.tensorflow.ConfigProto.Experimental.prototype.disable_eager_executor_streaming_enqueue = false;
 
 $root.tensorflow.ConfigProto.Experimental.MlirBridgeRollout = {
     "MLIR_BRIDGE_ROLLOUT_UNSPECIFIED": 0,
@@ -9608,6 +9661,9 @@ $root.tensorflow.CoordinationServiceConfig = class CoordinationServiceConfig {
                 case 11:
                     message.allow_new_incarnation_to_reconnect = reader.bool();
                     break;
+                case 12:
+                    message.force_disable = reader.bool();
+                    break;
                 default:
                     reader.skipType(tag & 7);
                     break;
@@ -9652,6 +9708,9 @@ $root.tensorflow.CoordinationServiceConfig = class CoordinationServiceConfig {
                 case "allow_new_incarnation_to_reconnect":
                     message.allow_new_incarnation_to_reconnect = reader.bool();
                     break;
+                case "force_disable":
+                    message.force_disable = reader.bool();
+                    break;
                 default:
                     reader.field(tag, message);
                     break;
@@ -9669,6 +9728,7 @@ $root.tensorflow.CoordinationServiceConfig.prototype.heartbeat_timeout_in_ms = p
 $root.tensorflow.CoordinationServiceConfig.prototype.shutdown_barrier_timeout_in_ms = protobuf.Int64.create(0);
 $root.tensorflow.CoordinationServiceConfig.prototype.agent_destruction_without_shutdown = false;
 $root.tensorflow.CoordinationServiceConfig.prototype.allow_new_incarnation_to_reconnect = false;
+$root.tensorflow.CoordinationServiceConfig.prototype.force_disable = false;
 
 $root.tensorflow.MemmappedFileSystemDirectoryElement = class MemmappedFileSystemDirectoryElement {
 
@@ -9767,6 +9827,83 @@ $root.tensorflow.MemmappedFileSystemDirectory = class MemmappedFileSystemDirecto
     }
 };
 
+$root.tensorflow.FingerprintDef = class FingerprintDef {
+
+    constructor() {
+    }
+
+    static decode(reader, length) {
+        const message = new $root.tensorflow.FingerprintDef();
+        const end = length !== undefined ? reader.position + length : reader.length;
+        while (reader.position < end) {
+            const tag = reader.uint32();
+            switch (tag >>> 3) {
+                case 1:
+                    message.saved_model_checksum = reader.uint64();
+                    break;
+                case 2:
+                    message.graph_def_program_hash = reader.uint64();
+                    break;
+                case 3:
+                    message.signature_def_hash = reader.uint64();
+                    break;
+                case 4:
+                    message.saved_object_graph_hash = reader.uint64();
+                    break;
+                case 5:
+                    message.checkpoint_hash = reader.uint64();
+                    break;
+                case 6:
+                    message.version = $root.tensorflow.VersionDef.decode(reader, reader.uint32());
+                    break;
+                default:
+                    reader.skipType(tag & 7);
+                    break;
+            }
+        }
+        return message;
+    }
+
+    static decodeText(reader) {
+        const message = new $root.tensorflow.FingerprintDef();
+        reader.start();
+        while (!reader.end()) {
+            const tag = reader.tag();
+            switch (tag) {
+                case "saved_model_checksum":
+                    message.saved_model_checksum = reader.uint64();
+                    break;
+                case "graph_def_program_hash":
+                    message.graph_def_program_hash = reader.uint64();
+                    break;
+                case "signature_def_hash":
+                    message.signature_def_hash = reader.uint64();
+                    break;
+                case "saved_object_graph_hash":
+                    message.saved_object_graph_hash = reader.uint64();
+                    break;
+                case "checkpoint_hash":
+                    message.checkpoint_hash = reader.uint64();
+                    break;
+                case "version":
+                    message.version = $root.tensorflow.VersionDef.decodeText(reader);
+                    break;
+                default:
+                    reader.field(tag, message);
+                    break;
+            }
+        }
+        return message;
+    }
+};
+
+$root.tensorflow.FingerprintDef.prototype.saved_model_checksum = protobuf.Uint64.create(0);
+$root.tensorflow.FingerprintDef.prototype.graph_def_program_hash = protobuf.Uint64.create(0);
+$root.tensorflow.FingerprintDef.prototype.signature_def_hash = protobuf.Uint64.create(0);
+$root.tensorflow.FingerprintDef.prototype.saved_object_graph_hash = protobuf.Uint64.create(0);
+$root.tensorflow.FingerprintDef.prototype.checkpoint_hash = protobuf.Uint64.create(0);
+$root.tensorflow.FingerprintDef.prototype.version = null;
+
 $root.google = {};
 
 $root.google.protobuf = {};
@@ -9845,180 +9982,3 @@ $root.google.protobuf.BoolValue = class BoolValue {
 };
 
 $root.google.protobuf.BoolValue.prototype.value = false;
-
-$root.third_party = {};
-
-$root.third_party.tensorflow = {};
-
-$root.third_party.tensorflow.python = {};
-
-$root.third_party.tensorflow.python.keras = {};
-
-$root.third_party.tensorflow.python.keras.protobuf = {};
-
-$root.third_party.tensorflow.python.keras.protobuf.SavedMetadata = class SavedMetadata {
-
-    constructor() {
-        this.nodes = [];
-    }
-
-    static decode(reader, length) {
-        const message = new $root.third_party.tensorflow.python.keras.protobuf.SavedMetadata();
-        const end = length !== undefined ? reader.position + length : reader.length;
-        while (reader.position < end) {
-            const tag = reader.uint32();
-            switch (tag >>> 3) {
-                case 1:
-                    message.nodes.push($root.third_party.tensorflow.python.keras.protobuf.SavedObject.decode(reader, reader.uint32()));
-                    break;
-                default:
-                    reader.skipType(tag & 7);
-                    break;
-            }
-        }
-        return message;
-    }
-
-    static decodeText(reader) {
-        const message = new $root.third_party.tensorflow.python.keras.protobuf.SavedMetadata();
-        reader.start();
-        while (!reader.end()) {
-            const tag = reader.tag();
-            switch (tag) {
-                case "nodes":
-                    message.nodes.push($root.third_party.tensorflow.python.keras.protobuf.SavedObject.decodeText(reader));
-                    break;
-                default:
-                    reader.field(tag, message);
-                    break;
-            }
-        }
-        return message;
-    }
-};
-
-$root.third_party.tensorflow.python.keras.protobuf.SavedObject = class SavedObject {
-
-    constructor() {
-    }
-
-    static decode(reader, length) {
-        const message = new $root.third_party.tensorflow.python.keras.protobuf.SavedObject();
-        const end = length !== undefined ? reader.position + length : reader.length;
-        while (reader.position < end) {
-            const tag = reader.uint32();
-            switch (tag >>> 3) {
-                case 2:
-                    message.node_id = reader.int32();
-                    break;
-                case 3:
-                    message.node_path = reader.string();
-                    break;
-                case 4:
-                    message.identifier = reader.string();
-                    break;
-                case 5:
-                    message.metadata = reader.string();
-                    break;
-                case 6:
-                    message.version = $root.third_party.tensorflow.python.keras.protobuf.VersionDef.decode(reader, reader.uint32());
-                    break;
-                default:
-                    reader.skipType(tag & 7);
-                    break;
-            }
-        }
-        return message;
-    }
-
-    static decodeText(reader) {
-        const message = new $root.third_party.tensorflow.python.keras.protobuf.SavedObject();
-        reader.start();
-        while (!reader.end()) {
-            const tag = reader.tag();
-            switch (tag) {
-                case "node_id":
-                    message.node_id = reader.int32();
-                    break;
-                case "node_path":
-                    message.node_path = reader.string();
-                    break;
-                case "identifier":
-                    message.identifier = reader.string();
-                    break;
-                case "metadata":
-                    message.metadata = reader.string();
-                    break;
-                case "version":
-                    message.version = $root.third_party.tensorflow.python.keras.protobuf.VersionDef.decodeText(reader);
-                    break;
-                default:
-                    reader.field(tag, message);
-                    break;
-            }
-        }
-        return message;
-    }
-};
-
-$root.third_party.tensorflow.python.keras.protobuf.SavedObject.prototype.node_id = 0;
-$root.third_party.tensorflow.python.keras.protobuf.SavedObject.prototype.node_path = "";
-$root.third_party.tensorflow.python.keras.protobuf.SavedObject.prototype.identifier = "";
-$root.third_party.tensorflow.python.keras.protobuf.SavedObject.prototype.metadata = "";
-$root.third_party.tensorflow.python.keras.protobuf.SavedObject.prototype.version = null;
-
-$root.third_party.tensorflow.python.keras.protobuf.VersionDef = class VersionDef {
-
-    constructor() {
-        this.bad_consumers = [];
-    }
-
-    static decode(reader, length) {
-        const message = new $root.third_party.tensorflow.python.keras.protobuf.VersionDef();
-        const end = length !== undefined ? reader.position + length : reader.length;
-        while (reader.position < end) {
-            const tag = reader.uint32();
-            switch (tag >>> 3) {
-                case 1:
-                    message.producer = reader.int32();
-                    break;
-                case 2:
-                    message.min_consumer = reader.int32();
-                    break;
-                case 3:
-                    message.bad_consumers = reader.array(message.bad_consumers, () => reader.int32(), tag);
-                    break;
-                default:
-                    reader.skipType(tag & 7);
-                    break;
-            }
-        }
-        return message;
-    }
-
-    static decodeText(reader) {
-        const message = new $root.third_party.tensorflow.python.keras.protobuf.VersionDef();
-        reader.start();
-        while (!reader.end()) {
-            const tag = reader.tag();
-            switch (tag) {
-                case "producer":
-                    message.producer = reader.int32();
-                    break;
-                case "min_consumer":
-                    message.min_consumer = reader.int32();
-                    break;
-                case "bad_consumers":
-                    reader.array(message.bad_consumers, () => reader.int32());
-                    break;
-                default:
-                    reader.field(tag, message);
-                    break;
-            }
-        }
-        return message;
-    }
-};
-
-$root.third_party.tensorflow.python.keras.protobuf.VersionDef.prototype.producer = 0;
-$root.third_party.tensorflow.python.keras.protobuf.VersionDef.prototype.min_consumer = 0;

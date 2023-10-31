@@ -20,6 +20,7 @@ flax.ModelFactory = class {
     async open(context) {
         const stream = context.stream;
         const packed = stream.peek();
+        const execution = new python.Execution();
         // https://github.com/google/flax/blob/main/flax/serialization.py
         const ext_hook = (code, data) => {
             switch (code) {
@@ -34,7 +35,6 @@ flax.ModelFactory = class {
                 }
             }
         };
-        const execution = new python.Execution();
         const obj = execution.invoke('msgpack.unpackb', [ packed, ext_hook ]);
         return new flax.Model(obj);
     }
@@ -256,7 +256,7 @@ flax.Tensor = class {
         return this._type;
     }
 
-    get layout() {
+    get encoding() {
         switch (this._type.dataType) {
             case 'string':
             case 'object':

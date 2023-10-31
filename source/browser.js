@@ -1,4 +1,4 @@
-
+﻿
 var host = {};
 
 host.BrowserHost = class {
@@ -92,48 +92,24 @@ host.BrowserHost = class {
                     const error = event instanceof ErrorEvent && event.error && event.error instanceof Error ? event.error : new Error(event && event.message ? event.message : JSON.stringify(event));
                     this.exception(error, true);
                 });
-                const ga4 = async () => {
-                    const measurement_id = '848W2NVWVH';
-                    const user = this._getCookie('_ga').replace(/^(GA1\.\d\.)*/, '');
-                    const session = this._getCookie('_ga' + measurement_id);
-                    await this._telemetry.start('G-' + measurement_id, user, session);
-                    this._telemetry.set('page_location', this._document.location && this._document.location.href ? this._document.location.href : null);
-                    this._telemetry.set('page_title', this._document.title ? this._document.title : null);
-                    this._telemetry.set('page_referrer', this._document.referrer ? this._document.referrer : null);
-                    this._telemetry.send('page_view', {
-                        app_name: this.type,
-                        app_version: this.version,
-                    });
-                    this._telemetry.send('scroll', {
-                        percent_scrolled: 90,
-                        app_name: this.type,
-                        app_version: this.version
-                    });
-                    this._setCookie('_ga', 'GA1.2.' + this._telemetry.get('client_id'), 1200);
-                    this._setCookie('_ga' + measurement_id, 'GS1.1.' + this._telemetry.session, 1200);
-                };
-                const ua = async () => {
-                    return new Promise((resolve) => {
-                        this._telemetry_ua = true;
-                        const script = this.document.createElement('script');
-                        script.setAttribute('type', 'text/javascript');
-                        script.setAttribute('src', 'https://www.google-analytics.com/analytics.js');
-                        script.onload = () => {
-                            if (this.window.ga) {
-                                this.window.ga.l = 1 * new Date();
-                                this.window.ga('create', 'UA-54146-13', 'auto');
-                                this.window.ga('set', 'anonymizeIp', true);
-                            }
-                            resolve();
-                        };
-                        script.onerror = () => {
-                            resolve();
-                        };
-                        this.document.body.appendChild(script);
-                    });
-                };
-                await ga4();
-                await ua();
+                const measurement_id = '848W2NVWVH';
+                const user = this._getCookie('_ga').replace(/^(GA1\.\d\.)*/, '');
+                const session = this._getCookie('_ga' + measurement_id);
+                await this._telemetry.start('G-' + measurement_id, user, session);
+                this._telemetry.set('page_location', this._document.location && this._document.location.href ? this._document.location.href : null);
+                this._telemetry.set('page_title', this._document.title ? this._document.title : null);
+                this._telemetry.set('page_referrer', this._document.referrer ? this._document.referrer : null);
+                this._telemetry.send('page_view', {
+                    app_name: this.type,
+                    app_version: this.version,
+                });
+                this._telemetry.send('scroll', {
+                    percent_scrolled: 90,
+                    app_name: this.type,
+                    app_version: this.version
+                });
+                this._setCookie('_ga', 'GA1.2.' + this._telemetry.get('client_id'), 1200);
+                this._setCookie('_ga' + measurement_id, 'GS1.1.' + this._telemetry.session, 1200);
             }
         };
         const capabilities = async () => {
@@ -252,7 +228,7 @@ host.BrowserHost = class {
         return this._environment[name];
     }
 
-    async error(message, detail) {
+    async error(message, detail /*, cancel */) {
         alert((message == 'Error' ? '' : message + ' ') + detail);
         return 0;
     }
@@ -314,10 +290,9 @@ host.BrowserHost = class {
     }
 
     exception(error, fatal) {
-        if ((this._telemetry_ua || this._telemetry) && error) {
+        if (this._telemetry && error) {
             const name = error.name ? error.name + ': ' : '';
             const message = error.message ? error.message : JSON.stringify(error);
-            const description = name + message;
             let context = '';
             let stack = '';
             if (error.stack) {
@@ -352,14 +327,6 @@ host.BrowserHost = class {
             if (error.context) {
                 context = typeof error.context === 'string' ? error.context : JSON.stringify(error.context);
             }
-            if (this._telemetry_ua && this.window.ga) {
-                this.window.ga('send', 'exception', {
-                    exDescription: stack ? description + ' @ ' + stack : description,
-                    exFatal: fatal,
-                    appName: this.type,
-                    appVersion: this.version
-                });
-            }
             this._telemetry.send('exception', {
                 app_name: this.type,
                 app_version: this.version,
@@ -368,19 +335,6 @@ host.BrowserHost = class {
                 error_context: context,
                 error_stack: stack,
                 error_fatal: fatal ? true : false
-            });
-        }
-    }
-
-    event_ua(category, action, label, value) {
-        if (this._telemetry_ua && this.window.ga && category && action && label) {
-            this.window.ga('send', 'event', {
-                eventCategory: category,
-                eventAction: action,
-                eventLabel: label,
-                eventValue: value,
-                appName: this.type,
-                appVersion: this.version
             });
         }
     }
@@ -570,35 +524,35 @@ host.BrowserHost = class {
         return '';
     }
 
-    get(context, name) {
-        if (context === 'configuration' && typeof localStorage !== 'undefined') {
-            try {
-                const content = localStorage.getItem(name);
+    get(name) {
+        try {
+            if (typeof this.window.localStorage !== 'undefined') {
+                const content = this.window.localStorage.getItem(name);
                 return JSON.parse(content);
-            } catch (error) {
-                // continue regardless of error
             }
+        } catch (error) {
+            // continue regardless of error
         }
         return undefined;
     }
 
-    set(context, name, value) {
-        if (context === 'configuration' && typeof localStorage !== 'undefined') {
-            try {
-                localStorage.setItem(name, JSON.stringify(value));
-            } catch (error) {
-                // continue regardless of error
+    set(name, value) {
+        try {
+            if (typeof this.window.localStorage !== 'undefined') {
+                this.window.localStorage.setItem(name, JSON.stringify(value));
             }
+        } catch (error) {
+            // continue regardless of error
         }
     }
 
-    delete(context, name) {
-        if (context === 'configuration' && typeof localStorage !== 'undefined') {
-            try {
-                localStorage.removeItem(name);
-            } catch (error) {
-                // continue regardless of error
+    delete(name) {
+        try {
+            if (typeof this.window.localStorage !== 'undefined') {
+                this.window.localStorage.removeItem(name);
             }
+        } catch (error) {
+            // continue regardless of error
         }
     }
 
@@ -657,7 +611,7 @@ host.BrowserHost.BrowserFileContext = class {
         }
         return new Promise((resolve, reject) => {
             const reader = new FileReader();
-            const size = 1024 * 1024 * 1024;
+            const size = 0x10000000;
             let position = 0;
             const chunks = [];
             reader.onload = (e) => {
@@ -743,7 +697,7 @@ host.BrowserHost.FileStream = class {
     }
 
     stream(length) {
-        const file = new host.BrowserHost.FileStream(this._chunks, this._size, this._position, length);
+        const file = new host.BrowserHost.FileStream(this._chunks, this._size, this._start + this._position, length);
         this.skip(length);
         return file;
     }
@@ -766,7 +720,7 @@ host.BrowserHost.FileStream = class {
             this._position -= length;
             return this._buffer.subarray(position, position + length);
         }
-        const position = this._position;
+        const position = this._start + this._position;
         this.skip(length);
         this.seek(position);
         const buffer = new Uint8Array(length);
@@ -780,7 +734,7 @@ host.BrowserHost.FileStream = class {
             const position = this._fill(length);
             return this._buffer.subarray(position, position + length);
         }
-        const position = this._position;
+        const position = this._start + this._position;
         this.skip(length);
         const buffer = new Uint8Array(length);
         this._read(buffer, position);
@@ -797,22 +751,26 @@ host.BrowserHost.FileStream = class {
             throw new Error('Expected ' + (this._position + length - this._length) + ' more bytes. The file might be corrupted. Unexpected end of file.');
         }
         if (!this._buffer || this._position < this._offset || this._position + length > this._offset + this._buffer.length) {
-            this._offset = this._position;
-            this._buffer = new Uint8Array(Math.min(0x10000000, this._size, this._length - this._offset));
+            this._offset = this._start + this._position;
+            this._buffer = new Uint8Array(Math.min(0x10000000, this._start + this._length - this._offset));
             this._read(this._buffer, this._offset);
         }
-        const position = this._position;
+        const position = this._start + this._position - this._offset;
         this._position += length;
-        return position - this._offset;
+        return position;
     }
 
     _read(buffer, offset) {
-        const index = Math.floor(offset / this._size);
+        let index = Math.floor(offset / this._size);
         offset = offset - (index * this._size);
-        const length = Math.min(this._chunks[index].length - offset, buffer.length);
-        buffer.set(this._chunks[index].subarray(offset, offset + length), 0);
-        if (length !== buffer.length) {
-            buffer.set(this._chunks[index + 1].subarray(0, buffer.length - length), length);
+        const chunk = this._chunks[index++];
+        let destination = Math.min(chunk.length - offset, buffer.length);
+        buffer.set(chunk.subarray(offset, offset + destination), 0);
+        while (destination < buffer.length) {
+            const chunk = this._chunks[index++];
+            const size = Math.min(this._size, buffer.length - destination);
+            buffer.set(chunk.subarray(0, size), destination);
+            destination += size;
         }
     }
 };

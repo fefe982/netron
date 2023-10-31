@@ -4,18 +4,14 @@ var dagre = require('./dagre');
 
 grapher.Graph = class {
 
-    constructor(compound, options) {
+    constructor(compound, layout) {
+        this._layout = layout;
         this._isCompound = compound;
-        this._options = options;
         this._nodes = new Map();
         this._edges = new Map();
         this._children = {};
         this._children['\x00'] = {};
         this._parent = {};
-    }
-
-    get options() {
-        return this._options;
     }
 
     setNode(node) {
@@ -140,23 +136,23 @@ grapher.Graph = class {
         edgePathGroupDefs.appendChild(marker("arrowhead-hover"));
 
         for (const nodeId of this.nodes.keys()) {
-            const node = this.node(nodeId);
+            const entry = this.node(nodeId);
+            const node = entry.label;
             if (this.children(nodeId).length == 0) {
-                // node
-                node.label.build(document, nodeGroup);
+                node.build(document, nodeGroup);
             } else {
                 // cluster
-                node.label.rectangle = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-                if (node.label.rx) {
-                    node.label.rectangle.setAttribute('rx', node.rx);
+                node.rectangle = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+                if (node.rx) {
+                    node.rectangle.setAttribute('rx', entry.rx);
                 }
-                if (node.label.ry) {
-                    node.label.rectangle.setAttribute('ry', node.ry);
+                if (node.ry) {
+                    node.rectangle.setAttribute('ry', entry.ry);
                 }
-                node.label.element = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-                node.label.element.setAttribute('class', 'cluster');
-                node.label.element.appendChild(node.label.rectangle);
-                clusterGroup.appendChild(node.label.element);
+                node.element = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+                node.element.setAttribute('class', 'cluster');
+                node.element.appendChild(node.rectangle);
+                clusterGroup.appendChild(node.element);
             }
         }
 
@@ -165,21 +161,24 @@ grapher.Graph = class {
         }
     }
 
+    layout() {
+        dagre.layout(this, this._layout);
+    }
+
     update() {
-        dagre.layout(this);
         for (const nodeId of this.nodes.keys()) {
-            const node = this.node(nodeId);
+            const entry = this.node(nodeId);
+            const node = entry.label;
             if (this.children(nodeId).length == 0) {
                 // node
-                node.label.update();
+                node.update();
             } else {
                 // cluster
-                const node = this.node(nodeId);
-                node.label.element.setAttribute('transform', 'translate(' + node.label.x + ',' + node.label.y + ')');
-                node.label.rectangle.setAttribute('x', - node.label.width / 2);
-                node.label.rectangle.setAttribute('y', - node.label.height / 2);
-                node.label.rectangle.setAttribute('width', node.label.width);
-                node.label.rectangle.setAttribute('height', node.label.height);
+                node.element.setAttribute('transform', 'translate(' + node.x + ',' + node.y + ')');
+                node.rectangle.setAttribute('x', - node.width / 2);
+                node.rectangle.setAttribute('y', - node.height / 2);
+                node.rectangle.setAttribute('width', node.width);
+                node.rectangle.setAttribute('height', node.height);
             }
         }
         for (const edge of this.edges.values()) {
@@ -248,17 +247,25 @@ grapher.Node = class {
     }
 
     update() {
+        // for (const block of this._blocks) {
+        //     block.update();
+        // }
         this.element.setAttribute('transform', 'translate(' + (this.x - (this.width / 2)) + ',' + (this.y - (this.height / 2)) + ')');
         this.element.style.opacity = 1;
     }
 
     select() {
-        this.element.classList.add('select');
-        return [ this.element ];
+        if (this.element) {
+            this.element.classList.add('select');
+            return [ this.element ];
+        }
+        return [];
     }
 
     deselect() {
-        this.element.classList.remove('select');
+        if (this.element) {
+            this.element.classList.remove('select');
+        }
     }
 
     static roundedRect(x, y, width, height, r1, r2, r3, r4) {
@@ -425,8 +432,8 @@ grapher.Node.List = class {
         this._events = {};
     }
 
-    add(id, name, value, tooltip, separator) {
-        const item = new grapher.Node.List.Item(id, name, value, tooltip, separator);
+    add(name, value, tooltip, separator) {
+        const item = new grapher.Node.List.Item(name, value, tooltip, separator);
         this._items.push(item);
         return item;
     }
@@ -464,9 +471,6 @@ grapher.Node.List = class {
             const yPadding = 1;
             const xPadding = 6;
             const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-            if (item.id) {
-                text.setAttribute('id', item.id);
-            }
             text.setAttribute('xml:space', 'preserve');
             this.element.appendChild(text);
             if (item.tooltip) {
@@ -476,19 +480,27 @@ grapher.Node.List = class {
             }
             const name = document.createElementNS('http://www.w3.org/2000/svg', 'tspan');
             name.textContent = item.name;
-            if (item.separator.trim() != '=') {
+            if (item.separator.trim() !== '=') {
                 name.style.fontWeight = 'bold';
             }
             text.appendChild(name);
-            const textValueElement = document.createElementNS('http://www.w3.org/2000/svg', 'tspan');
-            textValueElement.textContent = item.separator + item.value;
-            text.appendChild(textValueElement);
+            if (item.value instanceof grapher.Node) {
+                const node = item.value;
+                node.build(document, this.element);
+            } else {
+                const element = document.createElementNS('http://www.w3.org/2000/svg', 'tspan');
+                element.textContent = item.separator + item.value;
+                text.appendChild(element);
+            }
             const size = text.getBBox();
             const width = xPadding + size.width + xPadding;
             this.width = Math.max(width, this.width);
             text.setAttribute('x', x + xPadding);
             text.setAttribute('y', this.height + yPadding - size.y);
             this.height += yPadding + size.height + yPadding;
+            if (item.height !== undefined) {
+                this.height += item.height;
+            }
         }
         this.height += 3;
         this.width = Math.max(75, this.width);
@@ -513,8 +525,7 @@ grapher.Node.List = class {
 
 grapher.Node.List.Item = class {
 
-    constructor(id, name, value, tooltip, separator) {
-        this.id = id;
+    constructor(name, value, tooltip, separator) {
         this.name = name;
         this.value = value;
         this.tooltip = tooltip;
@@ -526,7 +537,7 @@ grapher.Node.Canvas = class {
 
     constructor() {
         this.width = 0;
-        this.height = 0;
+        this.height = 80;
     }
 
     build(/* document, parent */) {
@@ -557,6 +568,7 @@ grapher.Edge = class {
         this.hitTest.setAttribute('class', 'edge-path-hit-test');
         this.hitTest.addEventListener('pointerover', () => this.emit('pointerover'));
         this.hitTest.addEventListener('pointerleave', () => this.emit('pointerleave'));
+        this.hitTest.addEventListener('click', () => this.emit('click'));
         edgePathGroupElement.appendChild(this.hitTest);
         if (this.label) {
             const tspan = createElement('tspan');

@@ -1,5 +1,6 @@
 
 var view =  {};
+var markdown = {};
 var base = require('./base');
 var zip = require('./zip');
 var tar = require('./tar');
@@ -34,7 +35,7 @@ view.View = class {
     async start() {
         try {
             await this._host.view(this);
-            const options = this._host.get('configuration', 'options') || {};
+            const options = this._host.get('options') || {};
             for (const entry of Object.entries(options)) {
                 const name = entry[0];
                 this._options[name] = entry[1];
@@ -314,9 +315,9 @@ view.View = class {
             }
         }
         if (Object.entries(options).length == 0) {
-            this._host.delete('configuration', 'options');
+            this._host.delete('options');
         } else {
-            this._host.set('configuration', 'options', options);
+            this._host.set('options', options);
         }
     }
 
@@ -449,6 +450,10 @@ view.View = class {
                     }
                 }
             };
+            const clickHandler = (e) => {
+                e.stopPropagation();
+                document.removeEventListener('click', clickHandler, true);
+            };
             const pointerUpHandler = (e) => {
                 e.target.releasePointerCapture(e.pointerId);
                 container.style.removeProperty('cursor');
@@ -461,10 +466,6 @@ view.View = class {
                     delete this._mousePosition;
                     document.addEventListener('click', clickHandler, true);
                 }
-            };
-            const clickHandler = (e) => {
-                e.stopPropagation();
-                document.removeEventListener('click', clickHandler, true);
             };
             container.addEventListener('pointermove', pointerMoveHandler);
             container.addEventListener('pointerup', pointerUpHandler);
@@ -497,6 +498,7 @@ view.View = class {
                 }
             }
         };
+        const container = this._element('graph');
         const touchEndHandler = () => {
             container.removeEventListener('touchmove', touchMoveHandler, { passive: true });
             container.removeEventListener('touchcancel', touchEndHandler, { passive: true });
@@ -504,7 +506,6 @@ view.View = class {
             delete this._touchPoints;
             delete this._touchZoom;
         };
-        const container = this._element('graph');
         container.addEventListener('touchmove', touchMoveHandler, { passive: true });
         container.addEventListener('touchcancel', touchEndHandler, { passive: true });
         container.addEventListener('touchend', touchEndHandler, { passive: true });
@@ -587,22 +588,23 @@ view.View = class {
             { name: 'Error loading model.', message: /^Unsupported Protocol Buffers text content/, url: 'https://github.com/lutzroeder/netron/issues/594' },
             { name: 'Error loading model.', message: /^Unsupported JSON content/, url: 'https://github.com/lutzroeder/netron/issues/595' },
             { name: 'Error loading Caffe model.', message: /^File format is not caffe\.NetParameter/, url: 'https://github.com/lutzroeder/netron/issues/563' },
-            { name: 'Error loading Darknet model.', message: /^Invalid tensor shape/, url: 'https://github.com/lutzroeder/netron/issues/541' },
-            { name: 'Error loading DaVinci model.', message: /^Unsupported attribute type/, url: 'https://github.com/lutzroeder/netron/issues/926' },
-            { name: 'Error loading Keras model.', message: /^Unsupported data object header version/, url: 'https://github.com/lutzroeder/netron/issues/548' },
+            { name: 'Error loading DaVinci OM model.', message: /^Unsupported DaVinci OM partition type\./, url: 'https://github.com/lutzroeder/netron/issues/1154' },
             { name: 'Error loading MNN model.', message: /^File format is not mnn\.Net/, url: 'https://github.com/lutzroeder/netron/issues/746' },
             { name: 'Error loading NNEF model.', message: /^.*/, url: 'https://github.com/lutzroeder/netron/issues/992' },
             { name: 'Error loading PyTorch model.', message: /^File does not contain root module or state dictionary/, url: 'https://github.com/lutzroeder/netron/issues/543' },
             { name: 'Error loading PyTorch model.', message: /^Module does not contain modules/, url: 'https://github.com/lutzroeder/netron/issues/544' },
             { name: 'Error loading PyTorch model.', message: /^Unknown type name/, url: 'https://github.com/lutzroeder/netron/issues/969' },
+            { name: 'Error loading ONNX model.', message: /^File format is not onnx\.ModelProto \(Unexpected end of file\)\./, url: 'https://github.com/lutzroeder/netron/issues/1155' },
+            { name: 'Error loading ONNX model.', message: /^File format is not onnx\.ModelProto \(Cannot read properties of undefined \(reading 'ModelProto'\)\)\./, url: 'https://github.com/lutzroeder/netron/issues/1156' },
             { name: 'Error loading ONNX model.', message: /^File format is not onnx\.ModelProto/, url: 'https://github.com/lutzroeder/netron/issues/549' },
             { name: 'Error loading TensorFlow Lite model.', message: /^Offset is outside the bounds of the DataView/, url: 'https://github.com/lutzroeder/netron/issues/563' },
+            { name: 'Error loading TensorRT model.', message: /^Invalid file content. File contains undocumented TensorRT engine data\./, url: 'https://github.com/lutzroeder/netron/issues/725' },
         ];
         const known = knowns.find((known) => (known.name.length === 0 || known.name === err.name) && err.message.match(known.message));
+        const url = known && known.url ? known.url : null;
         const message = err.message;
         name = name || err.name;
-        const button = await this._host.error(name, message);
-        const url = known && known.url ? known.url : null;
+        const button = await this._host.error(name, message, url === null);
         if (button === 0 && (url || this._host.type == 'Electron')) {
             this._host.openURL(url || this._host.environment('repository') + '/issues');
         }
@@ -626,7 +628,6 @@ view.View = class {
                 format.push('(' + model.producer + ')');
             }
             if (format.length > 0) {
-                this._host.event_ua('Model', 'Format', format.join(' '));
                 this._host.event('model_open', {
                     model_format: model.format || '',
                     model_producer: model.producer || ''
@@ -679,44 +680,45 @@ view.View = class {
                 }
             }
         }
-        const update = () => {
+        const update = async (model, graphs) => {
+            this._model = model;
+            this._graphs = graphs;
+            await this.renderGraph(this._model, this.activeGraph, this._options);
+            if (this._page !== 'default') {
+                this.show('default');
+            }
             const nameButton = this._element('name-button');
             const backButton = this._element('back-button');
-            if (this._graphs.length > 1) {
-                const graph = this.activeGraph;
-                nameButton.innerHTML = graph ? graph.name : '';
-                backButton.style.opacity = 1;
-                nameButton.style.opacity = 1;
-            } else {
+            if (this._graphs.length <= 1) {
                 backButton.style.opacity = 0;
                 nameButton.style.opacity = 0;
+            } else {
+                const graph = this.activeGraph;
+                const name = graph ? graph.name : '';
+                if (name.length > 61) {
+                    nameButton.setAttribute('title', name);
+                    nameButton.innerHTML = '\u2026' + name.substring(name.length - 61, name.length);
+                } else {
+                    nameButton.removeAttribute('title');
+                    nameButton.innerHTML = name;
+                }
+                backButton.style.opacity = 1;
+                nameButton.style.opacity = 1;
             }
         };
         const lastModel = this._model;
         const lastGraphs = this._graphs;
-        this._model = model;
-        this._graphs = graphs;
         try {
-            await this.renderGraph(this._model, this.activeGraph);
-            if (this._page !== 'default') {
-                this.show('default');
-            }
-            update();
+            await update(model, graphs);
             return this._model;
         } catch (error) {
-            this._model = lastModel;
-            this._graphs = lastGraphs;
-            await this.renderGraph(this._model, this.activeGraph);
-            if (this._page !== 'default') {
-                this.show('default');
-            }
-            update();
+            await update(lastModel, lastGraphs);
             throw error;
         }
     }
 
     pushGraph(graph) {
-        if (graph !== this.activeGraph) {
+        if (graph && graph !== this.activeGraph && Array.isArray(graph.nodes)) {
             this._sidebar.close();
             this._updateGraph(this._model, [ graph ].concat(this._graphs));
         }
@@ -730,7 +732,7 @@ view.View = class {
         return null;
     }
 
-    async renderGraph(model, graph) {
+    async renderGraph(model, graph, options) {
         this._graph = null;
 
         const canvas = this._element('canvas');
@@ -749,19 +751,19 @@ view.View = class {
             graph_skip: 0
         });
 
-        const options = {};
-        options.nodesep = 20;
-        options.ranksep = 20;
+        const layout = {};
+        layout.nodesep = 20;
+        layout.ranksep = 20;
         const rotate = graph.nodes.every((node) => node.inputs.filter((input) => input.value.every((argument) => !argument.initializer)).length === 0 && node.outputs.length === 0);
-        const horizontal = rotate ? this._options.direction === 'vertical' : this._options.direction !== 'vertical';
+        const horizontal = rotate ? options.direction === 'vertical' : options.direction !== 'vertical';
         if (horizontal) {
-            options.rankdir = "LR";
+            layout.rankdir = "LR";
         }
         if (nodes.length > 3000) {
-            options.ranker = 'longest-path';
+            layout.ranker = 'longest-path';
         }
 
-        const viewGraph = new view.Graph(this, model, groups, options);
+        const viewGraph = new view.Graph(this, model, options, groups, layout);
         viewGraph.add(graph);
 
         // Workaround for Safari background drag/zoom issue:
@@ -777,11 +779,8 @@ view.View = class {
         canvas.appendChild(origin);
 
         viewGraph.build(this._host.document, origin);
-
-        this._zoom = 1;
-
         await this._timeout(20);
-
+        viewGraph.layout();
         viewGraph.update();
 
         const elements = Array.from(canvas.getElementsByClassName('graph-input') || []);
@@ -948,7 +947,7 @@ view.View = class {
         }
     }
 
-    showNodeProperties(node, input) {
+    showNodeProperties(node) {
         if (node) {
             try {
                 if (this._menu) {
@@ -988,15 +987,15 @@ view.View = class {
                     }
                     this.error(error, null, null);
                 });
-                nodeSidebar.on('activate', (sender, argument) => {
-                    this._graph.select([ argument ]);
+                nodeSidebar.on('activate', (sender, value) => {
+                    this._graph.select([ value ]);
                 });
                 nodeSidebar.on('deactivate', () => {
                     this._graph.select(null);
                 });
-                if (input) {
-                    nodeSidebar.toggleInput(input.name);
-                }
+                nodeSidebar.on('select', (sender, value) => {
+                    this.scrollTo(this._graph.activate(value));
+                });
                 this._sidebar.open(nodeSidebar.render(), 'Node Properties');
             } catch (error) {
                 if (error) {
@@ -1004,6 +1003,36 @@ view.View = class {
                 }
                 this.error(error, 'Error showing node properties.', null);
             }
+        }
+    }
+
+    showConnectionProperties(value, from, to) {
+        try {
+            if (this._menu) {
+                this._menu.close();
+            }
+            const connectionSidebar = new view.ConnectionSidebar(this._host, value, from, to);
+            connectionSidebar.on('activate', (sender, value) => {
+                this._graph.select([ value ]);
+            });
+            connectionSidebar.on('deactivate', () => {
+                this._graph.select(null);
+            });
+            connectionSidebar.on('select', (sender, value) => {
+                this.scrollTo(this._graph.activate(value));
+            });
+            connectionSidebar.on('error', (sender, error) => {
+                if (this._model) {
+                    error.context = this._model.identifier;
+                }
+                this.error(error, null, null);
+            });
+            this._sidebar.open(connectionSidebar.render(), 'Connection Properties');
+        } catch (error) {
+            if (error) {
+                error.context = this._model.identifier;
+            }
+            this.error(error, 'Error showing connection properties.', null);
         }
     }
 
@@ -1195,7 +1224,7 @@ view.Menu = class {
             this.unregister(this._pop);
             this.unregister(this._push);
             this._element.style.opacity = 0;
-            this._element.style.left = '-16em';
+            this._element.style.left = '-17em';
             const button = this._element.ownerDocument.activeElement;
             if (this._buttons.indexOf(button) > 0) {
                 button.blur();
@@ -1550,10 +1579,11 @@ view.Menu.Separator = class {
 
 view.Graph = class extends grapher.Graph {
 
-    constructor(view, model, compound, options) {
-        super(compound, options);
+    constructor(view, model, options, compound, layout) {
+        super(compound, layout);
         this.view = view;
         this.model = model;
+        this.options = options;
         this._nodeKey = 0;
         this._values = new Map();
         this._table = new Map();
@@ -1563,7 +1593,6 @@ view.Graph = class extends grapher.Graph {
     createNode(node) {
         const value = new view.Node(this, node);
         value.name = (this._nodeKey++).toString();
-        this.setNode(value);
         this._table.set(node, value);
         return value;
     }
@@ -1571,7 +1600,6 @@ view.Graph = class extends grapher.Graph {
     createInput(input) {
         const value = new view.Input(this, input);
         value.name = (this._nodeKey++).toString();
-        this.setNode(value);
         this._table.set(input, value);
         return value;
     }
@@ -1579,7 +1607,6 @@ view.Graph = class extends grapher.Graph {
     createOutput(output) {
         const value = new view.Output(this, output);
         value.name = (this._nodeKey++).toString();
-        this.setNode(value);
         this._table.set(output, value);
         return value;
     }
@@ -1616,17 +1643,19 @@ view.Graph = class extends grapher.Graph {
         }
         for (const input of graph.inputs) {
             const viewInput = this.createInput(input);
+            this.setNode(viewInput);
             for (const value of input.value) {
-                this.createValue(value).from(viewInput);
+                this.createValue(value).from = viewInput;
             }
         }
         for (const node of graph.nodes) {
             const viewNode = this.createNode(node);
+            this.setNode(viewNode);
             const inputs = node.inputs;
             for (const input of inputs) {
                 for (const value of input.value) {
                     if (value.name != '' && !value.initializer) {
-                        this.createValue(value).to(viewNode);
+                        this.createValue(value).to.push(viewNode);
                     }
                 }
             }
@@ -1645,14 +1674,14 @@ view.Graph = class extends grapher.Graph {
                         throw error;
                     }
                     if (value.name != '') {
-                        this.createValue(value).from(viewNode);
+                        this.createValue(value).from = viewNode;
                     }
                 }
             }
 
             if (node.controlDependencies && node.controlDependencies.length > 0) {
                 for (const value of node.controlDependencies) {
-                    this.createValue(value).to(viewNode, true);
+                    this.createValue(value).controlDependency(viewNode);
                 }
             }
             const createCluster = (name) => {
@@ -1689,8 +1718,9 @@ view.Graph = class extends grapher.Graph {
         }
         for (const output of graph.outputs) {
             const viewOutput = this.createOutput(output);
+            this.setNode(viewOutput);
             for (const value of output.value) {
-                this.createValue(value).to(viewOutput);
+                this.createValue(value).to.push(viewOutput);
             }
         }
     }
@@ -1703,12 +1733,14 @@ view.Graph = class extends grapher.Graph {
     }
 
     select(selection) {
-        for (const element of this._selection) {
-            element.deselect();
+        if (this._selection.size > 0) {
+            for (const element of this._selection) {
+                element.deselect();
+            }
+            this._selection.clear();
         }
-        this._selection.clear();
-        let array = [];
         if (selection) {
+            let array = [];
             for (const value of selection) {
                 if (this._table.has(value)) {
                     const element = this._table.get(value);
@@ -1716,8 +1748,19 @@ view.Graph = class extends grapher.Graph {
                     this._selection.add(element);
                 }
             }
+            return array;
         }
-        return array;
+        return null;
+    }
+
+    activate(value) {
+        if (this._table.has(value)) {
+            this.select(null);
+            const element = this._table.get(value);
+            element.activate();
+            return this.select([ value ]);
+        }
+        return [];
     }
 
     focus(selection) {
@@ -1763,6 +1806,7 @@ view.Node = class extends grapher.Node {
     }
 
     _add(node) {
+        const options = this.context.options;
         const header =  this.header();
         const styles = [ 'node-item-type' ];
         const type = node.type;
@@ -1777,10 +1821,10 @@ view.Node = class extends grapher.Node {
             }
             throw error;
         }
-        const content = this.context.view.options.names && (node.name || node.location) ? (node.name || node.location) : type.name.split('.').pop();
-        const tooltip = this.context.view.options.names && (node.name || node.location) ? type.name : (node.name || node.location);
+        const content = options.names && (node.name || node.location) ? (node.name || node.location) : type.name.split('.').pop();
+        const tooltip = options.names && (node.name || node.location) ? type.name : (node.name || node.location);
         const title = header.add(null, styles, content, tooltip);
-        title.on('click', () => this.context.view.showNodeProperties(node, null));
+        title.on('click', () => this.context.activate(node));
         if (node.type.nodes && node.type.nodes.length > 0) {
             const definition = header.add(null, styles, '\u0192', 'Show Function Definition');
             definition.on('click', () => this.context.view.pushGraph(node.type));
@@ -1791,7 +1835,7 @@ view.Node = class extends grapher.Node {
         }
         const initializers = [];
         let hiddenInitializers = false;
-        if (this.context.view.options.weights) {
+        if (options.weights) {
             for (const input of node.inputs) {
                 if (input.visible !== false && input.value.length === 1 && input.value[0].initializer != null) {
                     initializers.push(input);
@@ -1802,21 +1846,30 @@ view.Node = class extends grapher.Node {
                 }
             }
         }
-        let sortedAttributes = [];
-        const attributes = node.attributes || [];
-        if (this.context.view.options.attributes) {
-            sortedAttributes = attributes.filter((attribute) => attribute.visible !== false).slice();
+        const objects = [];
+        const attributes = [];
+        if (Array.isArray(node.attributes) && node.attributes.length > 0) {
+            for (const attribute of node.attributes) {
+                switch (attribute.type) {
+                    /* case 'object':
+                    case 'function': {
+                        objects.push(attribute);
+                        break;
+                    } */
+                    default: {
+                        if (options.attributes && attribute.visible !== false) {
+                            attributes.push(attribute);
+                        }
+                    }
+                }
+            }
+            attributes.sort((a, b) => a.name.toUpperCase().localeCompare(b.name.toUpperCase()));
         }
-        sortedAttributes.sort((a, b) => {
-            const au = a.name.toUpperCase();
-            const bu = b.name.toUpperCase();
-            return (au < bu) ? -1 : (au > bu) ? 1 : 0;
-        });
-        if (initializers.length > 0 || hiddenInitializers || sortedAttributes.length > 0) {
+        if (initializers.length > 0 || hiddenInitializers || attributes.length > 0 || objects.length > 0) {
             const list = this.list();
-            list.on('click', () => this.context.view.showNodeProperties(node));
-            for (const initializer of initializers) {
-                const value = initializer.value[0];
+            list.on('click', () => this.context.activate(node));
+            for (const argument of initializers) {
+                const value = argument.value[0];
                 const type = value.type;
                 let shape = '';
                 let separator = '';
@@ -1826,7 +1879,8 @@ view.Node = class extends grapher.Node {
                         try {
                             const initializer = value.initializer;
                             const tensor = new view.Tensor(initializer);
-                            if ((tensor.layout === '<' || tensor.layout === '>' || tensor.layout === '|') && !tensor.empty && tensor.type.dataType !== '?') {
+                            const encoding = tensor.encoding;
+                            if ((encoding === '<' || encoding === '>' || encoding === '|') && !tensor.empty && tensor.type.dataType !== '?') {
                                 shape = tensor.toString();
                                 if (shape && shape.length > 10) {
                                     shape = shape.substring(0, 10) + '\u2026';
@@ -1848,38 +1902,46 @@ view.Node = class extends grapher.Node {
                         }
                     }
                 }
-                list.add(value.name ? 'initializer-' + value.name : '', initializer.name, shape, type ? type.toString() : '', separator);
+                list.add(argument.name, shape, type ? type.toString() : '', separator);
             }
             if (hiddenInitializers) {
-                list.add(null, '\u3008' + '\u2026' + '\u3009', '', null, '');
+                list.add('\u3008\u2026\u3009', '', null, '');
             }
-
-            for (const attribute of sortedAttributes) {
+            for (const attribute of attributes) {
                 if (attribute.visible !== false) {
                     let value = new view.Formatter(attribute.value, attribute.type).toString();
                     if (value && value.length > 25) {
                         value = value.substring(0, 25) + '\u2026';
                     }
-                    list.add(null, attribute.name, value, attribute.type, ' = ');
+                    list.add(attribute.name, value, attribute.type, ' = ');
+                }
+            }
+            for (const attribute of objects) {
+                if (attribute.type === 'function' || attribute.type === 'object') {
+                    const node = this.context.createNode(attribute.value);
+                    const item = list.add(attribute.name, node, '', '');
+                    item.height = 20;
                 }
             }
         }
+        if (Array.isArray(node.nodes) && node.nodes.length > 0) {
+            // this.canvas = this.canvas();
+        }
         if (Array.isArray(node.chain) && node.chain.length > 0) {
             for (const innerNode of node.chain) {
+                this.context.createNode(innerNode);
                 this._add(innerNode);
             }
         }
         if (node.inner) {
+            this.context.createNode(node.inner);
             this._add(node.inner);
-        }
-        if (node.nodes) {
-            // this.canvas = this.canvas();
         }
     }
 
     toggle() {
         this._expand.content = '-';
-        this._graph = new view.Graph(this.context.view, this.context.model, false, {});
+        this._graph = new view.Graph(this.context.view, this.context.model, this.context.options, false, {});
         this._graph.add(this.value);
         // const document = this.element.ownerDocument;
         // const parent = this.element.parentElement;
@@ -1889,6 +1951,10 @@ view.Node = class extends grapher.Node {
         this.canvas.height = 300;
         this.layout();
         this.context.update();
+    }
+
+    activate() {
+        this.context.view.showNodeProperties(this.value);
     }
 };
 
@@ -1921,6 +1987,10 @@ view.Input = class extends grapher.Node {
     get outputs() {
         return [ this.value ];
     }
+
+    activate() {
+        this.context.view.showModelProperties();
+    }
 };
 
 view.Output = class extends grapher.Node {
@@ -1946,6 +2016,10 @@ view.Output = class extends grapher.Node {
     get outputs() {
         return [];
     }
+
+    activate() {
+        this.context.view.showModelProperties();
+    }
 };
 
 view.Value = class {
@@ -1953,26 +2027,21 @@ view.Value = class {
     constructor(context, argument) {
         this.context = context;
         this.value = argument;
+        this.from = null;
+        this.to = [];
     }
 
-    from(node) {
-        this._from = node;
-    }
-
-    to(node, controlDependency) {
-        this._to = this._to || [];
-        if (controlDependency) {
-            this._controlDependencies = this._controlDependencies || new Set();
-            this._controlDependencies.add(this._to.length);
-        }
-        this._to.push(node);
+    controlDependency(node) {
+        this._controlDependencies = this._controlDependencies || new Set();
+        this._controlDependencies.add(this.to.length);
+        this.to.push(node);
     }
 
     build() {
         this._edges = this._edges || [];
-        if (this._from && this._to) {
-            for (let i = 0; i < this._to.length; i++) {
-                const to = this._to[i];
+        if (this.from && Array.isArray(this.to)) {
+            for (let i = 0; i < this.to.length; i++) {
+                const to = this.to[i];
                 let content = '';
                 const type = this.value.type;
                 if (type &&
@@ -1982,11 +2051,11 @@ view.Value = class {
                     type.shape.dimensions.every((dim) => !dim || Number.isInteger(dim) || dim instanceof base.Int64 || (typeof dim === 'string'))) {
                     content = type.shape.dimensions.map((dim) => (dim !== null && dim !== undefined) ? dim : '?').join('\u00D7');
                 }
-                if (this.context.view.options.names) {
+                if (this.context.options.names) {
                     content = this.value.name.split('\n').shift(); // custom argument id
                 }
-                const edge = new view.Edge(this, this._from, to);
-                edge.v = this._from.name;
+                const edge = new view.Edge(this, this.from, to);
+                edge.v = this.from.name;
                 edge.w = to.name;
                 if (content) {
                     edge.label = content;
@@ -2014,17 +2083,26 @@ view.Value = class {
             edge.deselect();
         }
     }
+
+    activate() {
+        if (this.value && this.from && Array.isArray(this.to)) {
+            const value = this.value;
+            const from = this.from.value;
+            const to = this.to.map((node) => node.value);
+            this.context.view.showConnectionProperties(value, from, to);
+        }
+    }
 };
 
 view.Edge = class extends grapher.Edge {
 
-    constructor(argument, from, to) {
+    constructor(value, from, to) {
         super(from, to);
-        this.argument = argument;
+        this.value = value;
     }
 
     get minlen() {
-        if (this.from.inputs.every((parameter) => parameter.value.every((argument) => argument.initializer))) {
+        if (this.from.inputs.every((argument) => argument.value.every((value) => value.initializer))) {
             return 2;
         }
         return 1;
@@ -2032,12 +2110,18 @@ view.Edge = class extends grapher.Edge {
 
     emit(event) {
         switch (event) {
-            case 'pointerover':
-                this.argument.context.focus([ this.argument.value ]);
+            case 'pointerover': {
+                this.value.context.focus([ this.value.value ]);
                 break;
-            case 'pointerleave':
-                this.argument.context.blur([ this.argument.value ]);
+            }
+            case 'pointerleave': {
+                this.value.context.blur([ this.value.value ]);
                 break;
+            }
+            case 'click': {
+                this.value.context.activate(this.value.value);
+                break;
+            }
             default:
                 break;
         }
@@ -2125,6 +2209,18 @@ view.Sidebar = class {
 
 view.Control = class {
 
+    constructor(host) {
+        this._host = host;
+    }
+
+    createElement(tagName, className) {
+        const element = this._host.document.createElement(tagName);
+        if (className) {
+            element.setAttribute('class', className);
+        }
+        return element;
+    }
+
     on(event, callback) {
         this._events = this._events || {};
         this._events[event] = this._events[event] || [];
@@ -2140,169 +2236,171 @@ view.Control = class {
     }
 };
 
-view.NodeSidebar = class extends view.Control {
+view.ObjectSidebar = class extends view.Control {
+
+    constructor(host) {
+        super(host);
+        this._container = this.createElement('div', 'sidebar-object');
+    }
+
+    add(name, item) {
+        const entry = new view.NameValueView(this._host, name, item);
+        const element = entry.render();
+        this._container.appendChild(element);
+    }
+
+    addProperty(name, value, style) {
+        const item = new view.ValueTextView(this._host, value, style);
+        this.add(name, item);
+        return item;
+    }
+
+    addHeader(title) {
+        const element = this.createElement('div', 'sidebar-header');
+        element.innerText = title;
+        this._container.appendChild(element);
+    }
+
+    render() {
+        return [ this._container ];
+    }
+};
+
+view.NodeSidebar = class extends view.ObjectSidebar {
 
     constructor(host, node) {
-        super();
-        this._host = host;
+        super(host);
         this._node = node;
-        this._elements = [];
         this._attributes = [];
         this._inputs = [];
         this._outputs = [];
-
-        const container = this._host.document.createElement('div');
-        container.className = 'sidebar-node';
-        this._elements.push(container);
-
         if (node.type) {
-            let showDocumentation = null;
             const type = node.type;
+            const item = this.addProperty('type', node.type.identifier || node.type.name);
             if (type && (type.description || type.inputs || type.outputs || type.attributes)) {
-                showDocumentation = {};
-                showDocumentation.text = type.nodes ? '\u0192': '?';
-                showDocumentation.callback = () => {
+                item.action(type.nodes ? '\u0192': '?', () => {
                     this.emit('show-documentation', null);
-                };
+                });
             }
-            this._addProperty('type', new view.ValueTextView(this._host, node.type.identifier || node.type.name, showDocumentation));
             if (node.type.module) {
-                this._addProperty('module', new view.ValueTextView(this._host, node.type.module));
+                this.addProperty('module', node.type.module);
             }
         }
-
         if (node.name) {
-            this._addProperty('name', new view.ValueTextView(this._host, node.name));
+            this.addProperty('name', node.name);
         }
-
         if (node.location) {
-            this._addProperty('location', new view.ValueTextView(this._host, node.location));
+            this.addProperty('location', node.location);
         }
-
         if (node.description) {
-            this._addProperty('description', new view.ValueTextView(this._host, node.description));
+            this.addProperty('description', node.description);
         }
-
         if (node.device) {
-            this._addProperty('device', new view.ValueTextView(this._host, node.device));
+            this.addProperty('device', node.device);
         }
-
         const attributes = node.attributes;
-        if (attributes && attributes.length > 0) {
-            const sortedAttributes = node.attributes.slice();
-            sortedAttributes.sort((a, b) => {
+        if (Array.isArray(attributes) && attributes.length > 0) {
+            this.addHeader('Attributes');
+            attributes.sort((a, b) => {
                 const au = a.name.toUpperCase();
                 const bu = b.name.toUpperCase();
                 return (au < bu) ? -1 : (au > bu) ? 1 : 0;
             });
-            this._addHeader('Attributes');
-            for (const attribute of sortedAttributes) {
+            for (const attribute of attributes) {
                 this._addAttribute(attribute.name, attribute);
             }
         }
-
         const inputs = node.inputs;
-        if (inputs && inputs.length > 0) {
-            this._addHeader('Inputs');
+        if (Array.isArray(inputs) && inputs.length > 0) {
+            this.addHeader('Inputs');
             for (const input of inputs) {
                 this._addInput(input.name, input);
             }
         }
-
         const outputs = node.outputs;
-        if (outputs && outputs.length > 0) {
-            this._addHeader('Outputs');
+        if (Array.isArray(outputs) && outputs.length > 0) {
+            this.addHeader('Outputs');
             for (const output of outputs) {
                 this._addOutput(output.name, output);
             }
         }
     }
 
-    render() {
-        return this._elements;
-    }
-
-    _addHeader(title) {
-        const element = this._host.document.createElement('div');
-        element.className = 'sidebar-header';
-        element.innerText = title;
-        this._elements[0].appendChild(element);
-    }
-
-    _addProperty(name, value) {
-        const item = new view.NameValueView(this._host, name, value);
-        this._elements[0].appendChild(item.render());
-    }
-
     _addAttribute(name, attribute) {
-        const value = new view.AttributeView(this._host, attribute);
-        value.on('show-graph', (sender, graph) => {
-            this.emit('show-graph', graph);
-        });
+        let value = null;
+        switch (attribute.type) {
+            case 'tensor': {
+                value = new view.ValueView(this._host, { type: attribute.value.type, initializer: attribute.value }, '');
+                value.on('export-tensor', (sender, value) => this.emit('export-tensor', value));
+                value.on('error', (sender, value) => this.emit('error', value));
+                break;
+            }
+            case 'tensor[]': {
+                const values = attribute.value.map((value) => {
+                    return { type: value.type, initializer: value };
+                });
+                value = new view.ArgumentView(this._host, { value: values }, '');
+                break;
+            }
+            default: {
+                value = new view.AttributeView(this._host, attribute);
+                value.on('show-graph', (sender, graph) => {
+                    this.emit('show-graph', graph);
+                });
+                break;
+            }
+        }
         const item = new view.NameValueView(this._host, name, value);
         this._attributes.push(item);
-        this._elements[0].appendChild(item.render());
+        this._container.appendChild(item.render());
     }
 
     _addInput(name, input) {
         if (input.value.length > 0) {
-            const value = new view.ParameterView(this._host, input);
+            const value = new view.ArgumentView(this._host, input);
             value.on('export-tensor', (sender, value) => this.emit('export-tensor', value));
             value.on('error', (sender, value) => this.emit('error', value));
             value.on('activate', (sender, value) => this.emit('activate', value));
             value.on('deactivate', (sender, value) => this.emit('deactivate', value));
+            value.on('select', (sender, value) => this.emit('select', value));
             const item = new view.NameValueView(this._host, name, value);
             this._inputs.push(item);
-            this._elements[0].appendChild(item.render());
+            this._container.appendChild(item.render());
         }
     }
 
     _addOutput(name, output) {
         if (output.value.length > 0) {
-            const value = new view.ParameterView(this._host, output);
+            const value = new view.ArgumentView(this._host, output);
             value.on('activate', (sender, value) => this.emit('activate', value));
             value.on('deactivate', (sender, value) => this.emit('deactivate', value));
+            value.on('select', (sender, value) => this.emit('select', value));
             const item = new view.NameValueView(this._host, name, value);
             this._outputs.push(item);
-            this._elements[0].appendChild(item.render());
-        }
-    }
-
-    toggleInput(name) {
-        for (const input of this._inputs) {
-            if (name == input.name) {
-                input.toggle();
-            }
+            this._container.appendChild(item.render());
         }
     }
 };
 
-view.NameValueView = class {
+view.NameValueView = class extends view.Control {
 
     constructor(host, name, value) {
+        super(host);
         this._host = host;
         this._name = name;
         this._value = value;
-
-        const nameElement = this._host.document.createElement('div');
-        nameElement.className = 'sidebar-item-name';
-
-        const nameInputElement = this._host.document.createElement('input');
-        nameInputElement.setAttribute('type', 'text');
-        nameInputElement.setAttribute('value', name);
-        nameInputElement.setAttribute('title', name);
-        nameInputElement.setAttribute('readonly', 'true');
-        nameElement.appendChild(nameInputElement);
-
-        const valueElement = this._host.document.createElement('div');
-        valueElement.className = 'sidebar-item-value-list';
-
+        const nameElement = this.createElement('div', 'sidebar-item-name');
+        const input = this.createElement('input');
+        input.setAttribute('type', 'text');
+        input.setAttribute('value', name);
+        input.setAttribute('title', name);
+        input.setAttribute('readonly', 'true');
+        nameElement.appendChild(input);
+        const valueElement = this.createElement('div', 'sidebar-item-value-list');
         for (const element of value.render()) {
             valueElement.appendChild(element);
         }
-
-        this._element = this._host.document.createElement('div');
-        this._element.className = 'sidebar-item';
+        this._element = this.createElement('div', 'sidebar-item');
         this._element.appendChild(nameElement);
         this._element.appendChild(valueElement);
     }
@@ -2328,15 +2426,14 @@ view.SelectView = class extends view.Control {
         this._elements = [];
         this._values = values;
 
-        const selectElement = this._host.document.createElement('select');
-        selectElement.setAttribute('class', 'sidebar-item-select');
+        const selectElement = this.createElement('select', 'sidebar-item-select');
         selectElement.addEventListener('change', (e) => {
             this.emit('change', this._values[e.target.selectedIndex]);
         });
         this._elements.push(selectElement);
 
         for (const value of values) {
-            const optionElement = this._host.document.createElement('option');
+            const optionElement = this.createElement('option');
             optionElement.innerText = value.name || '';
             if (value == selected) {
                 optionElement.setAttribute('selected', 'selected');
@@ -2350,131 +2447,59 @@ view.SelectView = class extends view.Control {
     }
 };
 
-view.ValueTextView = class {
+view.ValueTextView = class extends view.Control {
 
-    constructor(host, value, action) {
-        this._host = host;
-        this._elements = [];
-        const element = this._host.document.createElement('div');
-        element.className = 'sidebar-item-value';
-        this._elements.push(element);
-
-        if (action) {
-            this._action = this._host.document.createElement('div');
-            this._action.className = 'sidebar-item-value-expander';
-            this._action.innerHTML = action.text;
-            this._action.addEventListener('click', () => {
-                action.callback();
-            });
-            element.appendChild(this._action);
-        }
-
-        const list = Array.isArray(value) ? value : [ value ];
-        let className = 'sidebar-item-value-line';
-        for (const item of list) {
-            const line = this._host.document.createElement('div');
-            line.className = className;
-            line.innerText = item;
-            element.appendChild(line);
-            className = 'sidebar-item-value-line-border';
+    constructor(host, value, style) {
+        super(host);
+        this._element = this.createElement('div', 'sidebar-item-value');
+        if (value) {
+            const list = Array.isArray(value) ? value : [ value ];
+            let className = 'sidebar-item-value-line';
+            for (const item of list) {
+                const line = this.createElement('div', className);
+                switch (style) {
+                    case 'code':
+                        line.innerHTML = '<code>' + item + '<code>';
+                        break;
+                    case 'bold':
+                        line.innerHTML = '<b>' + item + '<b>';
+                        break;
+                    default:
+                        line.innerText = item;
+                        break;
+                }
+                this._element.appendChild(line);
+                className = 'sidebar-item-value-line-border';
+            }
         }
     }
 
+    action(text, callback) {
+        this._action = this.createElement('div', 'sidebar-item-value-expander');
+        this._action.innerHTML = text;
+        this._action.addEventListener('click', () => {
+            callback();
+        });
+        this._element.insertBefore(this._action, this._element.childNodes[0]);
+    }
+
     render() {
-        return this._elements;
+        return [ this._element ];
     }
 
     toggle() {
     }
 };
 
-view.ValueView = class extends view.Control {
-
-    _bold(name, value) {
-        const line = this._host.document.createElement('div');
-        line.innerHTML = name + ': ' + '<b>' + value + '</b>';
-        this._add(line);
-    }
-
-    _code(name, value) {
-        const line = this._host.document.createElement('div');
-        line.innerHTML = name + ': ' + '<code><b>' + value + '</b></code>';
-        this._add(line);
-    }
-
-    _add(child) {
-        child.className = this._element.childNodes.length < 2 ? 'sidebar-item-value-line' : 'sidebar-item-value-line-border';
-        this._element.appendChild(child);
-    }
-
-    _tensor(value) {
-        const contentLine = this._host.document.createElement('pre');
-        try {
-            const tensor = new view.Tensor(value);
-            const layout = tensor.layout;
-            if (layout) {
-                const layouts = new Map([
-                    [ 'sparse', 'Sparse' ],
-                    [ 'sparse.coo', 'Sparse COO' ],
-                    [ 'sparse.csr', 'Sparse CSR' ],
-                    [ 'sparse.csc', 'Sparse CSC' ],
-                    [ 'sparse.bsr', 'Sparse BSR' ],
-                    [ 'sparse.bsc', 'Sparse BSC' ]
-                ]);
-                if (layouts.has(layout)) {
-                    this._bold('layout', layouts.get(layout));
-                }
-            }
-            if (Array.isArray(tensor.stride) && tensor.stride.length > 0) {
-                this._code('stride', tensor.stride.join(','));
-            }
-            if (tensor.layout !== '<' && tensor.layout !== '>' && tensor.layout !== '|' && tensor.layout !== 'sparse' && tensor.layout !== 'sparse.coo') {
-                contentLine.innerHTML = "Tensor layout '" + tensor.layout + "' is not implemented.";
-            } else if (tensor.empty) {
-                contentLine.innerHTML = 'Tensor data is empty.';
-            } else if (tensor.type && tensor.type.dataType === '?') {
-                contentLine.innerHTML = 'Tensor data type is not defined.';
-            } else if (tensor.type && !tensor.type.shape) {
-                contentLine.innerHTML = 'Tensor shape is not defined.';
-            } else {
-                contentLine.innerHTML = tensor.toString();
-
-                if (this._host.save &&
-                    value.type.shape && value.type.shape.dimensions &&
-                    value.type.shape.dimensions.length > 0) {
-                    this._saveButton = this._host.document.createElement('div');
-                    this._saveButton.className = 'sidebar-item-value-expander';
-                    this._saveButton.innerHTML = '&#x1F4BE;';
-                    this._saveButton.addEventListener('click', () => {
-                        this.emit('export-tensor', tensor);
-                    });
-                    this._element.appendChild(this._saveButton);
-                }
-            }
-        } catch (err) {
-            contentLine.innerHTML = err.toString();
-            this.emit('error', err);
-        }
-        const valueLine = this._host.document.createElement('div');
-        valueLine.className = 'sidebar-item-value-line-border';
-        valueLine.appendChild(contentLine);
-        this._element.appendChild(valueLine);
-    }
-};
-
-view.AttributeView = class extends view.ValueView {
+view.AttributeView = class extends view.Control {
 
     constructor(host, attribute) {
-        super();
-        this._host = host;
+        super(host);
         this._attribute = attribute;
-        this._element = this._host.document.createElement('div');
-        this._element.className = 'sidebar-item-value';
-
+        this._element = this.createElement('div', 'sidebar-item-value');
         const type = this._attribute.type;
-        if (type) {
-            this._expander = this._host.document.createElement('div');
-            this._expander.className = 'sidebar-item-value-expander';
+        if (type && type !== 'tensor') {
+            this._expander = this.createElement('div', 'sidebar-item-value-expander');
             this._expander.innerText = '+';
             this._expander.addEventListener('click', () => {
                 this.toggle();
@@ -2484,8 +2509,7 @@ view.AttributeView = class extends view.ValueView {
         const value = this._attribute.value;
         switch (type) {
             case 'graph': {
-                const line = this._host.document.createElement('div');
-                line.className = 'sidebar-item-value-line-link';
+                const line = this.createElement('div', 'sidebar-item-value-line-link');
                 line.innerHTML = value.name;
                 line.addEventListener('click', () => {
                     this.emit('show-graph', value);
@@ -2494,14 +2518,16 @@ view.AttributeView = class extends view.ValueView {
                 break;
             }
             case 'function': {
-                const line = this._host.document.createElement('div');
-                line.className = 'sidebar-item-value-line-link';
+                const line = this.createElement('div', 'sidebar-item-value-line-link');
                 line.innerHTML = value.type.name;
                 line.addEventListener('click', () => {
                     this.emit('show-graph', value.type);
                 });
                 this._element.appendChild(line);
                 break;
+            }
+            case 'tensor': {
+                throw new view.Error('Attribute view tensor not implemented.');
             }
             default: {
                 let content = new view.Formatter(value, type).toString();
@@ -2511,8 +2537,7 @@ view.AttributeView = class extends view.ValueView {
                 if (content && typeof content === 'string') {
                     content = content.split('<').join('&lt;').split('>').join('&gt;');
                 }
-                const line = this._host.document.createElement('div');
-                line.className = 'sidebar-item-value-line';
+                const line = this.createElement('div', 'sidebar-item-value-line');
                 line.innerHTML = content ? content : '&nbsp;';
                 this._element.appendChild(line);
             }
@@ -2526,25 +2551,17 @@ view.AttributeView = class extends view.ValueView {
     toggle() {
         if (this._expander.innerText == '+') {
             this._expander.innerText = '-';
-
             const type = this._attribute.type;
             const value = this._attribute.value;
             const content = type == 'tensor' && value && value.type ? value.type.toString() : this._attribute.type;
-            const typeLine = this._host.document.createElement('div');
-            typeLine.className = 'sidebar-item-value-line-border';
+            const typeLine = this.createElement('div', 'sidebar-item-value-line-border');
             typeLine.innerHTML = 'type: ' + '<code><b>' + content + '</b></code>';
             this._element.appendChild(typeLine);
-
             const description = this._attribute.description;
             if (description) {
-                const descriptionLine = this._host.document.createElement('div');
-                descriptionLine.className = 'sidebar-item-value-line-border';
+                const descriptionLine = this.createElement('div', 'sidebar-item-value-line-border');
                 descriptionLine.innerHTML = description;
                 this._element.appendChild(descriptionLine);
-            }
-
-            if (this._attribute.type == 'tensor' && value) {
-                this._tensor(value);
             }
         } else {
             this._expander.innerText = '+';
@@ -2555,21 +2572,24 @@ view.AttributeView = class extends view.ValueView {
     }
 };
 
-view.ParameterView = class extends view.Control {
+view.ArgumentView = class extends view.Control {
 
-    constructor(host, list) {
+    constructor(host, argument) {
         super();
-        this._list = list;
+        this._argument = argument;
         this._elements = [];
         this._items = [];
-        for (const value of list.value) {
-            const item = new view.ArgumentView(host, value);
+        for (const value of argument.value) {
+            const item = new view.ValueView(host, value);
             item.on('export-tensor', (sender, value) => this.emit('export-tensor', value));
             item.on('error', (sender, value) => this.emit('error', value));
             item.on('activate', (sender, value) => this.emit('activate', value));
             item.on('deactivate', (sender, value) => this.emit('deactivate', value));
+            item.on('select', (sender, value) => this.emit('select', value));
             this._items.push(item);
-            this._elements.push(item.render());
+            for (const element of item.render()) {
+                this._elements.push(element);
+            }
         }
     }
 
@@ -2584,105 +2604,105 @@ view.ParameterView = class extends view.Control {
     }
 };
 
-view.ArgumentView = class extends view.ValueView {
+view.ValueView = class extends view.Control {
 
-    constructor(host, argument) {
-        super();
-        this._host = host;
-        this._argument = argument;
-
-        this._element = this._host.document.createElement('div');
-        this._element.className = 'sidebar-item-value';
-
-        const type = this._argument.type;
-        const initializer = this._argument.initializer;
-        const quantization = this._argument.quantization;
-        const location = this._argument.location !== undefined;
-
+    constructor(host, value, name) {
+        super(host);
+        this._value = value;
+        this._element = this.createElement('div', 'sidebar-item-value');
+        const type = this._value.type;
+        const initializer = this._value.initializer;
+        const quantization = this._value.quantization;
+        const location = this._value.location !== undefined;
         if (initializer) {
             this._element.classList.add('sidebar-item-value-dark');
         }
-
-        if (type || initializer || quantization || location) {
-            this._expander = this._host.document.createElement('div');
-            this._expander.className = 'sidebar-item-value-expander';
+        if (type || initializer || quantization || location || name === undefined) {
+            this._expander = this.createElement('div', 'sidebar-item-value-expander');
             this._expander.innerText = '+';
             this._expander.addEventListener('click', () => {
                 this.toggle();
             });
             this._element.appendChild(this._expander);
         }
-
-        const name = this._argument.name ? this._argument.name.split('\n').shift() : ''; // custom argument id
-        this._hasId = name ? true : false;
+        const tensor = name !== undefined;
+        name = this._value.name ? this._value.name.split('\n').shift() : ''; // custom argument id
+        this._hasId = name && !tensor ? true : false;
         this._hasCategory = initializer && initializer.category ? true : false;
-        if (this._hasId || (!this._hasCategory && !type)) {
+        if (this._hasId || (!this._hasCategory && !type && !tensor)) {
             this._hasId = true;
-            const nameLine = this._host.document.createElement('div');
-            nameLine.className = 'sidebar-item-value-line';
+            const nameLine = this.createElement('div', 'sidebar-item-value-line');
             if (typeof name !== 'string') {
                 throw new Error("Invalid value identifier '" + JSON.stringify(name) + "'.");
             }
             nameLine.innerHTML = '<span class=\'sidebar-item-value-line-content\'>name: <b>' + (name || ' ') + '</b></span>';
-            nameLine.addEventListener('pointerenter', () => this.emit('activate', this._argument));
-            nameLine.addEventListener('pointerleave', () => this.emit('deactivate', this._argument));
+            nameLine.addEventListener('pointerenter', () => this.emit('activate', this._value));
+            nameLine.addEventListener('pointerleave', () => this.emit('deactivate', this._value));
+            if (!initializer) {
+                nameLine.style.cursor = 'pointer';
+                nameLine.addEventListener('click', () => this.emit('select', this._value));
+            }
             this._element.appendChild(nameLine);
         } else if (this._hasCategory) {
             this._bold('category', initializer.category);
         } else if (type) {
-            this._code('type', type.toString().split('<').join('&lt;').split('>').join('&gt;'));
+            this._code('tensor', type.toString().split('<').join('&lt;').split('>').join('&gt;'));
         }
     }
 
     render() {
-        return this._element;
+        return [ this._element ];
     }
 
     toggle() {
         if (this._expander) {
             if (this._expander.innerText == '+') {
                 this._expander.innerText = '-';
-
-                const initializer = this._argument.initializer;
+                const initializer = this._value.initializer;
                 if (this._hasId && this._hasCategory) {
                     this._bold('category', initializer.category);
                 }
-
                 let type = null;
                 let denotation = null;
-                if (this._argument.type) {
-                    type = this._argument.type.toString();
-                    denotation = this._argument.type.denotation || null;
+                if (this._value.type) {
+                    type = this._value.type.toString();
+                    denotation = this._value.type.denotation || null;
                 }
                 if (type && (this._hasId || this._hasCategory)) {
-                    this._code('type', type.split('<').join('&lt;').split('>').join('&gt;'));
+                    this._code('tensor', type.split('<').join('&lt;').split('>').join('&gt;'));
                 }
                 if (denotation) {
                     this._code('denotation', denotation);
                 }
-
-                const description = this._argument.description;
+                const description = this._value.description;
                 if (description) {
-                    const descriptionLine = this._host.document.createElement('div');
-                    descriptionLine.className = 'sidebar-item-value-line-border';
+                    const descriptionLine = this.createElement('div', 'sidebar-item-value-line-border');
                     descriptionLine.innerHTML = description;
                     this._element.appendChild(descriptionLine);
                 }
-
-                const quantization = this._argument.quantization;
+                const quantization = this._value.quantization;
                 if (quantization) {
-                    const quantizationLine = this._host.document.createElement('div');
-                    quantizationLine.className = 'sidebar-item-value-line-border';
+                    const quantizationLine = this.createElement('div', 'sidebar-item-value-line-border');
                     const content = !Array.isArray(quantization) ? quantization : '<br><br>' + quantization.map((value) => '  ' + value).join('<br>');
                     quantizationLine.innerHTML = '<span class=\'sidebar-item-value-line-content\'>quantization: ' + '<b>' + content + '</b></span>';
                     this._element.appendChild(quantizationLine);
                 }
-
-                const location = this._argument.location;
+                const location = this._value.location;
                 if (location !== undefined) {
                     this._bold('location', location);
                 }
-
+                const layout = this._value.type ? this._value.type.layout : null;
+                if (layout) {
+                    const layouts = new Map([
+                        [ 'sparse', 'sparse' ],
+                        [ 'sparse.coo', 'sparse coo' ],
+                        [ 'sparse.csr', 'sparse csr' ],
+                        [ 'sparse.csc', 'sparse csc' ],
+                        [ 'sparse.bsr', 'sparse bsr' ],
+                        [ 'sparse.bsc', 'sparse bsc' ]
+                    ]);
+                    this._bold('layout', layouts.get(layout));
+                }
                 if (initializer) {
                     this._tensor(initializer);
                 }
@@ -2694,77 +2714,249 @@ view.ArgumentView = class extends view.ValueView {
             }
         }
     }
+
+    _bold(name, value) {
+        const line = this.createElement('div');
+        line.innerHTML = name + ': ' + '<b>' + value + '</b>';
+        this._add(line);
+    }
+
+    _code(name, value) {
+        const line = this.createElement('div');
+        line.innerHTML = name + ': ' + '<code><b>' + value + '</b></code>';
+        this._add(line);
+    }
+
+    _add(child) {
+        child.className = this._element.childNodes.length < 2 ? 'sidebar-item-value-line' : 'sidebar-item-value-line-border';
+        this._element.appendChild(child);
+    }
+
+    _tensor(value) {
+        const contentLine = this.createElement('pre');
+        try {
+            const tensor = new view.Tensor(value);
+            if (Array.isArray(tensor.stride) && tensor.stride.length > 0) {
+                this._code('stride', tensor.stride.join(','));
+            }
+            if (tensor.encoding !== '<' && tensor.encoding !== '>' && tensor.encoding !== '|') {
+                contentLine.innerHTML = "Tensor encoding '" + tensor.layout + "' is not implemented.";
+            } else if (tensor.layout && (tensor.layout !== 'sparse' && tensor.layout !== 'sparse.coo')) {
+                contentLine.innerHTML = "Tensor layout '" + tensor.layout + "' is not implemented.";
+            } else if (tensor.empty) {
+                contentLine.innerHTML = 'Tensor data is empty.';
+            } else if (tensor.type && tensor.type.dataType === '?') {
+                contentLine.innerHTML = 'Tensor data type is not defined.';
+            } else if (tensor.type && !tensor.type.shape) {
+                contentLine.innerHTML = 'Tensor shape is not defined.';
+            } else {
+                contentLine.innerHTML = tensor.toString();
+                if (this._host.save &&
+                    value.type.shape && value.type.shape.dimensions &&
+                    value.type.shape.dimensions.length > 0) {
+                    this._saveButton = this.createElement('div', 'sidebar-item-value-expander');
+                    this._saveButton.innerHTML = '&#x1F4BE;';
+                    this._saveButton.addEventListener('click', () => {
+                        this.emit('export-tensor', tensor);
+                    });
+                    this._element.appendChild(this._saveButton);
+                }
+            }
+        } catch (err) {
+            contentLine.innerHTML = err.toString();
+            this.emit('error', err);
+        }
+        const valueLine = this.createElement('div', 'sidebar-item-value-line-border');
+        valueLine.appendChild(contentLine);
+        this._element.appendChild(valueLine);
+    }
 };
 
-view.ModelSidebar = class extends view.Control {
+view.NodeView = class extends view.Control {
 
-    constructor(host, model, graph) {
+    constructor(host, node) {
+        super(host);
+        this._node = node;
+        this._element = this.createElement('div', 'sidebar-item-value');
+        const name = node.name;
+        const type = node.type ? node.type.name : '';
+        if (name && type) {
+            this._expander = this.createElement('div', 'sidebar-item-value-expander');
+            this._expander.innerText = '+';
+            this._expander.addEventListener('click', () => {
+                this.toggle();
+            });
+            this._element.appendChild(this._expander);
+        }
+        if (type) {
+            const type = node.type.name;
+            const element = this.createElement('div', 'sidebar-item-value-line');
+            element.innerHTML = '<span class=\'sidebar-item-value-line-content\'>node: <b>' + (type || ' ') + '</b></span>';
+            element.addEventListener('pointerenter', () => this.emit('activate', this._node));
+            element.addEventListener('pointerleave', () => this.emit('deactivate', this._node));
+            element.addEventListener('click', () => this.emit('select', this._node));
+            element.style.cursor = 'pointer';
+            this._element.appendChild(element);
+        } else {
+            const element = this.createElement('div', 'sidebar-item-value-line');
+            element.innerHTML = '<span class=\'sidebar-item-value-line-content\'>name: <b>' + (name || ' ') + '</b></span>';
+            element.addEventListener('pointerenter', () => this.emit('activate', this._node));
+            element.addEventListener('pointerleave', () => this.emit('deactivate', this._node));
+            element.addEventListener('click', () => this.emit('select', this._node));
+            element.style.cursor = 'pointer';
+            this._element.appendChild(element);
+        }
+    }
+
+    render() {
+        return [ this._element ];
+    }
+
+    toggle() {
+        if (this._expander) {
+            if (this._expander.innerText == '+') {
+                this._expander.innerText = '-';
+                const name = this._node.name;
+                const element = this.createElement('div', 'sidebar-item-value-line-border');
+                element.innerHTML = '<span class=\'sidebar-item-value-line-content\'>name: <b>' + name + '</b></span>';
+                element.addEventListener('pointerenter', () => this.emit('activate', this._node));
+                element.addEventListener('pointerleave', () => this.emit('deactivate', this._node));
+                element.addEventListener('click', () => this.emit('select', this._node));
+                element.style.cursor = 'pointer';
+                this._element.appendChild(element);
+            } else {
+                this._expander.innerText = '+';
+                while (this._element.childElementCount > 2) {
+                    this._element.removeChild(this._element.lastChild);
+                }
+            }
+        }
+    }
+};
+
+view.NodeListView = class extends view.Control {
+
+    constructor(host, list) {
         super();
         this._host = host;
+        this._elements = [];
+        for (const node of list) {
+            const item = new view.NodeView(host, node);
+            item.on('activate', (sender, value) => this.emit('activate', value));
+            item.on('deactivate', (sender, value) => this.emit('deactivate', value));
+            item.on('select', (sender, value) => this.emit('select', value));
+            item.toggle();
+            for (const element of item.render()) {
+                this._elements.push(element);
+            }
+        }
+    }
+
+    render() {
+        return this._elements;
+    }
+};
+
+view.ConnectionSidebar = class extends view.ObjectSidebar {
+
+    constructor(host, value, from, to) {
+        super(host);
+        this._host = host;
+        this._value = value;
+        this._from = from;
+        this._to = to;
+        const name = value.name.split('\n')[0];
+        this.addProperty('name', name);
+        if (value.type) {
+            const item = new view.ValueView(this._host, value, '');
+            this.add('type', item);
+            item.toggle();
+        }
+        if (from) {
+            this.addHeader('Inputs');
+            const list = new view.NodeListView(host, [ from ]);
+            list.on('activate', (sender, value) => this.emit('activate', value));
+            list.on('deactivate', (sender, value) => this.emit('deactivate', value));
+            list.on('select', (sender, value) => this.emit('select', value));
+            const item = new view.NameValueView(this._host, 'from', list);
+            this._container.appendChild(item.render());
+        }
+        if (Array.isArray(to) && to.length > 0) {
+            this.addHeader('Outputs');
+            const list = new view.NodeListView(this._host, to);
+            list.on('activate', (sender, value) => this.emit('activate', value));
+            list.on('deactivate', (sender, value) => this.emit('deactivate', value));
+            list.on('select', (sender, value) => this.emit('select', value));
+            const item = new view.NameValueView(this._host, 'to', list);
+            this._container.appendChild(item.render());
+        }
+    }
+};
+
+view.ModelSidebar = class extends view.ObjectSidebar {
+
+    constructor(host, model, graph) {
+        super(host);
         this._model = model;
 
-        this._container = this._host.document.createElement('div');
-        this._container.className = 'sidebar-node';
-
         if (model.format) {
-            this._addProperty('format', new view.ValueTextView(this._host, model.format));
+            this.addProperty('format', model.format);
         }
         if (model.producer) {
-            this._addProperty('producer', new view.ValueTextView(this._host, model.producer));
+            this.addProperty('producer', model.producer);
         }
         if (model.name) {
-            this._addProperty('name', new view.ValueTextView(this._host, model.name));
+            this.addProperty('name', model.name);
         }
         if (model.version) {
-            this._addProperty('version', new view.ValueTextView(this._host, model.version));
+            this.addProperty('version', model.version);
         }
         if (model.description) {
-            this._addProperty('description', new view.ValueTextView(this._host, model.description));
+            this.addProperty('description', model.description);
         }
         if (model.domain) {
-            this._addProperty('domain', new view.ValueTextView(this._host, model.domain));
+            this.addProperty('domain', model.domain);
         }
         if (model.imports) {
-            this._addProperty('imports', new view.ValueTextView(this._host, model.imports));
+            this.addProperty('imports', model.imports);
         }
         if (model.runtime) {
-            this._addProperty('runtime', new view.ValueTextView(this._host, model.runtime));
+            this.addProperty('runtime', model.runtime);
         }
         if (model.metadata) {
             for (const entry of model.metadata) {
-                this._addProperty(entry.name, new view.ValueTextView(this._host, entry.value));
+                this.addProperty(entry.name, entry.value);
             }
         }
         const graphs = Array.isArray(model.graphs) ? model.graphs : [];
-        if (graphs.length > 1) {
-            const graphSelector = new view.SelectView(this._host, model.graphs, graph);
-            graphSelector.on('change', (sender, data) => {
-                this.emit('update-active-graph', data);
-            });
-            this._addProperty('subgraph', graphSelector);
+        if (graphs.length === 1 && graphs[0].name) {
+            this.addProperty('graph', graphs[0].name);
+        } else if (graphs.length > 1) {
+            const selector = new view.SelectView(this._host, model.graphs, graph);
+            selector.on('change', (sender, data) => this.emit('update-active-graph', data));
+            this.add('graph', selector);
         }
-
         if (graph) {
             if (graph.version) {
-                this._addProperty('version', new view.ValueTextView(this._host, graph.version));
+                this.addProperty('version', graph.version);
             }
             if (graph.type) {
-                this._addProperty('type', new view.ValueTextView(this._host, graph.type));
+                this.addProperty('type', graph.type);
             }
             if (graph.tags) {
-                this._addProperty('tags', new view.ValueTextView(this._host, graph.tags));
+                this.addProperty('tags', graph.tags);
             }
             if (graph.description) {
-                this._addProperty('description', new view.ValueTextView(this._host, graph.description));
+                this.addProperty('description', graph.description);
             }
             if (Array.isArray(graph.inputs) && graph.inputs.length > 0) {
-                this._addHeader('Inputs');
+                this.addHeader('Inputs');
                 for (const input of graph.inputs) {
                     this.addArgument(input.name, input);
                 }
             }
             if (Array.isArray(graph.outputs) && graph.outputs.length > 0) {
-                this._addHeader('Outputs');
+                this.addHeader('Outputs');
                 for (const output of graph.outputs) {
                     this.addArgument(output.name, output);
                 }
@@ -2776,20 +2968,8 @@ view.ModelSidebar = class extends view.Control {
         return [ this._container ];
     }
 
-    _addHeader(title) {
-        const element = this._host.document.createElement('div');
-        element.className = 'sidebar-header';
-        element.innerText = title;
-        this._container.appendChild(element);
-    }
-
-    _addProperty(name, value) {
-        const item = new view.NameValueView(this._host, name, value);
-        this._container.appendChild(item.render());
-    }
-
     addArgument(name, argument) {
-        const value = new view.ParameterView(this._host, argument);
+        const value = new view.ArgumentView(this._host, argument);
         value.toggle();
         const item = new view.NameValueView(this._host, name, value);
         this._container.appendChild(item.render());
@@ -2807,22 +2987,15 @@ view.DocumentationSidebar = class extends view.Control {
     render() {
         if (!this._elements) {
             this._elements = [];
-
             const type = view.Documentation.format(this._type);
-
-            const element = this._host.document.createElement('div');
-            element.setAttribute('class', 'sidebar-documentation');
-
+            const element = this.createElement('div', 'sidebar-documentation');
             this._append(element, 'h1', type.name);
-
             if (type.summary) {
                 this._append(element, 'p', type.summary);
             }
-
             if (type.description) {
                 this._append(element, 'p', type.description);
             }
-
             if (Array.isArray(type.attributes) && type.attributes.length > 0) {
                 this._append(element, 'h2', 'Attributes');
                 const attributes = this._append(element, 'dl');
@@ -2832,7 +3005,6 @@ view.DocumentationSidebar = class extends view.Control {
                 }
                 element.appendChild(attributes);
             }
-
             if (Array.isArray(type.inputs) && type.inputs.length > 0) {
                 this._append(element, 'h2', 'Inputs' + (type.inputs_range ? ' (' + type.inputs_range + ')' : ''));
                 const inputs = this._append(element, 'dl');
@@ -2841,7 +3013,6 @@ view.DocumentationSidebar = class extends view.Control {
                     this._append(inputs, 'dd', input.description);
                 }
             }
-
             if (Array.isArray(type.outputs) && type.outputs.length > 0) {
                 this._append(element, 'h2', 'Outputs' + (type.outputs_range ? ' (' + type.outputs_range + ')' : ''));
                 const outputs = this._append(element, 'dl');
@@ -2850,7 +3021,6 @@ view.DocumentationSidebar = class extends view.Control {
                     this._append(outputs, 'dd', output.description);
                 }
             }
-
             if (Array.isArray(type.type_constraints) && type.type_constraints.length > 0) {
                 this._append(element, 'h2', 'Type Constraints');
                 const type_constraints = this._append(element, 'dl');
@@ -2859,7 +3029,6 @@ view.DocumentationSidebar = class extends view.Control {
                     this._append(type_constraints, 'dd', type_constraint.description);
                 }
             }
-
             if (Array.isArray(type.examples) && type.examples.length > 0) {
                 this._append(element, 'h2', 'Examples');
                 for (const example of type.examples) {
@@ -2867,7 +3036,6 @@ view.DocumentationSidebar = class extends view.Control {
                     this._append(element, 'pre', example.code);
                 }
             }
-
             if (Array.isArray(type.references) && type.references.length > 0) {
                 this._append(element, 'h2', 'References');
                 const references = this._append(element, 'ul');
@@ -2875,12 +3043,10 @@ view.DocumentationSidebar = class extends view.Control {
                     this._append(references, 'li', reference.description);
                 }
             }
-
             if (type.domain && type.version && type.support_level) {
                 this._append(element, 'h2', 'Support');
                 this._append(element, 'dl', 'In domain <tt>' + type.domain + '</tt> since version <tt>' + type.version + '</tt> at support level <tt>' + type.support_level + '</tt>.');
             }
-
             if (this._host.type === 'Electron') {
                 element.addEventListener('click', (e) => {
                     if (e.target && e.target.href) {
@@ -2892,14 +3058,13 @@ view.DocumentationSidebar = class extends view.Control {
                     }
                 });
             }
-
             this._elements = [ element ];
         }
         return this._elements;
     }
 
     _append(parent, type, content) {
-        const element = this._host.document.createElement(type);
+        const element = this.createElement(type);
         if (content) {
             element.innerHTML = content;
         }
@@ -2911,12 +3076,10 @@ view.DocumentationSidebar = class extends view.Control {
 view.FindSidebar = class extends view.Control {
 
     constructor(host, graph) {
-        super();
-        this._host = host;
+        super(host);
         this._graph = graph;
         this._table = new Map();
-        this._searchElement = this._host.document.createElement('input');
-        this._searchElement.setAttribute('class', 'sidebar-find-search');
+        this._searchElement = this.createElement('input', 'sidebar-find-search');
         this._searchElement.setAttribute('id', 'search');
         this._searchElement.setAttribute('type', 'text');
         this._searchElement.setAttribute('spellcheck', 'false');
@@ -2925,8 +3088,7 @@ view.FindSidebar = class extends view.Control {
             this.update(e.target.value);
             this.emit('search-text-changed', e.target.value);
         });
-        this._contentElement = this._host.document.createElement('ol');
-        this._contentElement.setAttribute('class', 'sidebar-find-content');
+        this._contentElement = this.createElement('ol', 'sidebar-find-content');
         this._contentElement.addEventListener('click', (e) => {
             const identifier = e.target.getAttribute('data');
             if (this._table.has(identifier)) {
@@ -2966,7 +3128,7 @@ view.FindSidebar = class extends view.Control {
             const key = index.toString();
             index++;
             this._table.set(key, value);
-            const element = this._host.document.createElement('li');
+            const element = this.createElement('li');
             element.innerText = content;
             element.setAttribute('data', key);
             element.addEventListener('pointerover', (e) => {
@@ -3086,41 +3248,41 @@ view.Tensor = class {
     constructor(tensor) {
         this._tensor = tensor;
         this._type = tensor.type;
+        this._encoding = tensor.encoding;
+        this._layout = tensor.type.layout;
         this._stride = tensor.stride;
-        switch (tensor.layout) {
+        switch (this._encoding) {
             case undefined:
             case '':
             case '<': {
                 this._data = this._tensor.values;
-                this._layout = '<';
+                this._encoding = '<';
                 this._littleEndian = true;
                 break;
             }
             case '>': {
                 this._data = this._tensor.values;
-                this._layout = '>';
+                this._encoding = '>';
                 this._littleEndian = false;
                 break;
             }
             case '|': {
                 this._values = this._tensor.values;
-                this._layout = '|';
-                break;
-            }
-            case 'sparse': {
-                this._indices = this._tensor.indices;
-                this._values = this._tensor.values;
-                this._layout = 'sparse';
-                break;
-            }
-            case 'sparse.coo': {
-                this._indices = this._tensor.indices;
-                this._values = this._tensor.values;
-                this._layout = 'sparse.coo';
+                this._encoding = '|';
                 break;
             }
             default: {
-                this._layout = tensor.layout;
+                throw new view.Error("Unsupported tensor encoding '" + this._encoding + "'.");
+            }
+        }
+        switch (this._layout) {
+            case 'sparse':
+            case 'sparse.coo': {
+                this._indices = this._tensor.indices;
+                this._values = this._tensor.values;
+                break;
+            }
+            default: {
                 break;
             }
         }
@@ -3141,6 +3303,10 @@ view.Tensor = class {
         return this._type;
     }
 
+    get encoding() {
+        return this._encoding;
+    }
+
     get layout() {
         return this._layout;
     }
@@ -3151,19 +3317,20 @@ view.Tensor = class {
 
     get empty() {
         switch (this._layout) {
-            case '<':
-            case '>': {
-                return !(Array.isArray(this._data) || this._data instanceof Uint8Array || this._data instanceof Int8Array) || this._data.length === 0;
-            }
-            case '|': {
-                return !(Array.isArray(this._values) || ArrayBuffer.isView(this._values)) || this._values.length === 0;
-            }
             case 'sparse':
             case 'sparse.coo': {
-                return !this._values || this.indices || this._values.values.length === 0;
+                return !this._values || this.indices || this._values.values === null || this._values.values.length === 0;
             }
             default: {
-                throw new Error("Unsupported tensor format '" + this._format + "'.");
+                switch (this._encoding) {
+                    case '<':
+                    case '>':
+                        return !(Array.isArray(this._data) || this._data instanceof Uint8Array || this._data instanceof Int8Array) || this._data.length === 0;
+                    case '|':
+                        return !(Array.isArray(this._values) || ArrayBuffer.isView(this._values)) || this._values.length === 0;
+                    default:
+                        throw new Error("Unsupported tensor encoding '" + this._encoding + "'.");
+                }
             }
         }
     }
@@ -3171,16 +3338,16 @@ view.Tensor = class {
     get value() {
         const context = this._context();
         context.limit = Number.MAX_SAFE_INTEGER;
-        switch (context.layout) {
+        switch (context.encoding) {
             case '<':
             case '>': {
-                return this._decodeData(context, 0);
+                return this._decodeData(context, 0, 0);
             }
             case '|': {
-                return this._decodeValues(context, 0);
+                return this._decodeValues(context, 0, 0);
             }
             default: {
-                throw new Error("Unsupported tensor format '" + this._format + "'.");
+                throw new Error("Unsupported tensor encoding '" + context.encoding + "'.");
             }
         }
     }
@@ -3188,70 +3355,50 @@ view.Tensor = class {
     toString() {
         const context = this._context();
         context.limit = 10000;
-        switch (context.layout) {
+        switch (context.encoding) {
             case '<':
             case '>': {
-                const value = this._decodeData(context, 0);
+                const value = this._decodeData(context, 0, 0);
                 return view.Tensor._stringify(value, '', '    ');
             }
             case '|': {
-                const value = this._decodeValues(context, 0);
+                const value = this._decodeValues(context, 0, 0);
                 return view.Tensor._stringify(value, '', '    ');
             }
             default: {
-                throw new Error("Unsupported tensor format '" + this._format + "'.");
+                throw new Error("Unsupported tensor encoding '" + context.encoding + "'.");
             }
         }
     }
 
     _context() {
-        if (this._layout !== '<' && this._layout !== '>' && this._layout !== '|' && this._layout !== 'sparse' && this._layout !== 'sparse.coo') {
+        if (this._encoding !== '<' && this._encoding !== '>' && this._encoding !== '|') {
+            throw new Error("Tensor encoding '" + this._encoding + "' is not supported.");
+        }
+        if (this._layout && (this._layout !== 'sparse' && this._layout !== 'sparse.coo')) {
             throw new Error("Tensor layout '" + this._layout + "' is not supported.");
         }
         const dataType = this._type.dataType;
         const context = {};
-        context.layout = this._layout;
+        context.encoding = this._encoding;
         context.dimensions = this._type.shape.dimensions.map((value) => !Number.isInteger(value) && value.toNumber ? value.toNumber() : value);
         context.dataType = dataType;
-        const size = context.dimensions.reduce((a, b) => a * b, 1);
+        const shape = context.dimensions;
+        context.stride = this._stride;
+        if (!Array.isArray(context.stride)) {
+            context.stride = new Array(shape.length);
+            let value = 1;
+            for (let i = shape.length - 1; i >= 0; i--) {
+                context.stride[i] = value;
+                value *= shape[i];
+            }
+        }
         switch (this._layout) {
-            case '<':
-            case '>': {
-                context.data = (this._data instanceof Uint8Array || this._data instanceof Int8Array) ? this._data : this._data.peek();
-                context.view = new DataView(context.data.buffer, context.data.byteOffset, context.data.byteLength);
-                if (view.Tensor.dataTypes.has(dataType)) {
-                    context.itemsize = view.Tensor.dataTypes.get(dataType);
-                    if (context.data.length < (context.itemsize * size)) {
-                        throw new Error('Invalid tensor data size.');
-                    }
-                } else if (dataType.startsWith('uint') && !isNaN(parseInt(dataType.substring(4), 10))) {
-                    context.dataType = 'uint';
-                    context.bits = parseInt(dataType.substring(4), 10);
-                    context.itemsize = 1;
-                } else if (dataType.startsWith('int') && !isNaN(parseInt(dataType.substring(3), 10))) {
-                    context.dataType = 'int';
-                    context.bits = parseInt(dataType.substring(3), 10);
-                    context.itemsize = 1;
-                } else {
-                    throw new Error("Tensor data type '" + dataType + "' is not implemented.");
-                }
-                break;
-            }
-            case '|': {
-                context.data = this._values;
-                if (!view.Tensor.dataTypes.has(dataType) && dataType !== 'string' && dataType !== 'object') {
-                    throw new Error("Tensor data type '" + dataType + "' is not implemented.");
-                }
-                if (size !== this._values.length) {
-                    throw new Error('Invalid tensor data length.');
-                }
-                break;
-            }
             case 'sparse': {
                 const indices = new view.Tensor(this._indices).value;
                 const values = new view.Tensor(this._values).value;
                 context.data = this._decodeSparse(dataType, context.dimensions, indices, values);
-                context.layout = '|';
+                context.encoding = '|';
                 break;
             }
             case 'sparse.coo': {
@@ -3273,11 +3420,55 @@ view.Tensor = class {
                     }
                 }
                 context.data = this._decodeSparse(dataType, context.dimensions, indices, values);
-                context.layout = '|';
+                context.encoding = '|';
                 break;
             }
             default: {
-                throw new view.Tensor("Unsupported tensor layout '" + this._layout + "'.");
+                switch (this._encoding) {
+                    case '<':
+                    case '>': {
+                        context.data = (this._data instanceof Uint8Array || this._data instanceof Int8Array) ? this._data : this._data.peek();
+                        context.view = new DataView(context.data.buffer, context.data.byteOffset, context.data.byteLength);
+                        if (view.Tensor.dataTypes.has(dataType)) {
+                            const itemsize = view.Tensor.dataTypes.get(dataType);
+                            const length = context.data.length;
+                            const stride = context.stride;
+                            if (length < (itemsize * shape.reduce((a, v) => a * v, 1))) {
+                                const max = stride.reduce((a, v, i) => v > stride[i] ? i : a, 0);
+                                if (length !== (itemsize * stride[max] * shape[max])) {
+                                    throw new Error('Invalid tensor data size.');
+                                }
+                            }
+                            context.itemsize = itemsize;
+                            context.stride = stride.map((v) => v * itemsize);
+                        } else if (dataType.startsWith('uint') && !isNaN(parseInt(dataType.substring(4), 10))) {
+                            context.dataType = 'uint';
+                            context.bits = parseInt(dataType.substring(4), 10);
+                            context.itemsize = 1;
+                        } else if (dataType.startsWith('int') && !isNaN(parseInt(dataType.substring(3), 10))) {
+                            context.dataType = 'int';
+                            context.bits = parseInt(dataType.substring(3), 10);
+                            context.itemsize = 1;
+                        } else {
+                            throw new Error("Tensor data type '" + dataType + "' is not implemented.");
+                        }
+                        break;
+                    }
+                    case '|': {
+                        context.data = this._values;
+                        if (!view.Tensor.dataTypes.has(dataType) && dataType !== 'string' && dataType !== 'object') {
+                            throw new Error("Tensor data type '" + dataType + "' is not implemented.");
+                        }
+                        const size = context.dimensions.reduce((a, v) => a * v, 1);
+                        if (size !== this._values.length) {
+                            throw new Error('Invalid tensor data length.');
+                        }
+                        break;
+                    }
+                    default: {
+                        throw new view.Tensor("Unsupported tensor encoding '" + this._encoding + "'.");
+                    }
+                }
             }
         }
         context.index = 0;
@@ -3311,135 +3502,133 @@ view.Tensor = class {
         return array;
     }
 
-    _decodeData(context, dimension) {
+    _decodeData(context, dimension, offset) {
         const results = [];
-        const dimensions = (context.dimensions.length == 0) ? [ 1 ] : context.dimensions;
-        const size = dimensions[dimension];
+        const shape = context.dimensions.length == 0 ? [ 1 ] : context.dimensions;
+        const size = shape[dimension];
         const dataType = context.dataType;
         const view = context.view;
-        if (dimension == dimensions.length - 1) {
+        const stride = context.stride[dimension];
+        if (dimension == shape.length - 1) {
             const ellipsis = (context.count + size) > context.limit;
             const length = ellipsis ? context.limit - context.count : size;
-            let i = context.index;
-            const max = i + (length * context.itemsize);
+            const max = offset + (length * context.itemsize);
             switch (dataType) {
                 case 'boolean':
-                    for (; i < max; i += 1) {
-                        results.push(view.getUint8(i) === 0 ? false : true);
+                    for (; offset < max; offset += stride) {
+                        results.push(view.getUint8(offset) === 0 ? false : true);
                     }
                     break;
                 case 'qint8':
                 case 'xint8':
                 case 'int8':
-                    for (; i < max; i++) {
-                        results.push(view.getInt8(i));
+                    for (; offset < max; offset += stride) {
+                        results.push(view.getInt8(offset));
                     }
                     break;
                 case 'qint16':
                 case 'int16':
-                    for (; i < max; i += 2) {
-                        results.push(view.getInt16(i, this._littleEndian));
+                    for (; offset < max; offset += stride) {
+                        results.push(view.getInt16(offset, this._littleEndian));
                     }
                     break;
                 case 'qint32':
                 case 'int32':
-                    for (; i < max; i += 4) {
-                        results.push(view.getInt32(i, this._littleEndian));
+                    for (; offset < max; offset += stride) {
+                        results.push(view.getInt32(offset, this._littleEndian));
                     }
                     break;
                 case 'int64':
-                    for (; i < max; i += 8) {
-                        results.push(view.getInt64(i, this._littleEndian));
+                    for (; offset < max; offset += stride) {
+                        results.push(view.getInt64(offset, this._littleEndian));
                     }
                     break;
                 case 'int':
-                    for (; i < size; i++) {
-                        results.push(view.getIntBits(i, context.bits));
+                    for (; offset < size; offset += stride) {
+                        results.push(view.getIntBits(offset, context.bits));
                     }
                     break;
                 case 'quint8':
                 case 'uint8':
-                    for (; i < max; i++) {
-                        results.push(view.getUint8(i));
+                    for (; offset < max; offset += stride) {
+                        results.push(view.getUint8(offset));
                     }
                     break;
                 case 'quint16':
                 case 'uint16':
-                    for (; i < max; i += 2) {
-                        results.push(view.getUint16(i, true));
+                    for (; offset < max; offset += stride) {
+                        results.push(view.getUint16(offset, true));
                     }
                     break;
                 case 'quint32':
                 case 'uint32':
-                    for (; i < max; i += 4) {
-                        results.push(view.getUint32(i, true));
+                    for (; offset < max; offset += stride) {
+                        results.push(view.getUint32(offset, true));
                     }
                     break;
                 case 'uint64':
-                    for (; i < max; i += 8) {
-                        results.push(view.getUint64(i, true));
+                    for (; offset < max; offset += stride) {
+                        results.push(view.getUint64(offset, true));
                     }
                     break;
                 case 'uint':
-                    for (; i < max; i++) {
-                        results.push(view.getUintBits(i, context.bits));
+                    for (; offset < max; offset += stride) {
+                        results.push(view.getUintBits(offset, context.bits));
                     }
                     break;
                 case 'float16':
-                    for (; i < max; i += 2) {
-                        results.push(view.getFloat16(i, this._littleEndian));
+                    for (; offset < max; offset += stride) {
+                        results.push(view.getFloat16(offset, this._littleEndian));
                     }
                     break;
                 case 'float32':
-                    for (; i < max; i += 4) {
-                        results.push(view.getFloat32(i, this._littleEndian));
+                    for (; offset < max; offset += stride) {
+                        results.push(view.getFloat32(offset, this._littleEndian));
                     }
                     break;
                 case 'float64':
-                    for (; i < max; i += 8) {
-                        results.push(view.getFloat64(i, this._littleEndian));
+                    for (; offset < max; offset += stride) {
+                        results.push(view.getFloat64(offset, this._littleEndian));
                     }
                     break;
                 case 'bfloat16':
-                    for (; i < max; i += 2) {
-                        results.push(view.getBfloat16(i, this._littleEndian));
+                    for (; offset < max; offset += stride) {
+                        results.push(view.getBfloat16(offset, this._littleEndian));
                     }
                     break;
                 case 'complex64':
-                    for (; i < max; i += 8) {
-                        results.push(view.getComplex64(i, this._littleEndian));
-                        context.index += 8;
+                    for (; offset < max; offset += stride) {
+                        results.push(view.getComplex64(offset, this._littleEndian));
                     }
                     break;
                 case 'complex128':
-                    for (; i < size; i += 16) {
-                        results.push(view.getComplex128(i, this._littleEndian));
+                    for (; offset < size; offset += stride) {
+                        results.push(view.getComplex128(offset, this._littleEndian));
                     }
                     break;
                 case 'float8e4m3fn':
-                    for (; i < size; i++) {
-                        results.push(view.getFloat8e4m3(i, true, false));
+                    for (; offset < size; offset += stride) {
+                        results.push(view.getFloat8e4m3(offset, true, false));
                     }
                     break;
                 case 'float8e4m3fnuz':
-                    for (; i < size; i++) {
-                        results.push(view.getFloat8e4m3(i, true, true));
+                    for (; offset < size; offset += stride) {
+                        results.push(view.getFloat8e4m3(offset, true, true));
                     }
                     break;
                 case 'float8e5m2':
-                    for (; i < size; i++) {
-                        results.push(view.getFloat8e5m2(i, false, false));
+                    for (; offset < size; offset += stride) {
+                        results.push(view.getFloat8e5m2(offset, false, false));
                     }
                     break;
                 case 'float8e5m2fnuz':
-                    for (; i < size; i++) {
-                        results.push(view.getFloat8e5m2(i, true, true));
+                    for (; offset < size; offset += stride) {
+                        results.push(view.getFloat8e5m2(offset, true, true));
                     }
                     break;
                 default:
                     throw new Error("Unsupported tensor data type '" + dataType + "'.");
             }
-            context.index = i;
             context.count += length;
             if (ellipsis) {
                 results.push('...');
@@ -3450,7 +3639,8 @@ view.Tensor = class {
                     results.push('...');
                     return results;
                 }
-                results.push(this._decodeData(context, dimension + 1));
+                const nextOffset = offset + (j * stride);
+                results.push(this._decodeData(context, dimension + 1, nextOffset));
             }
         }
         if (context.dimensions.length == 0) {
@@ -3459,35 +3649,40 @@ view.Tensor = class {
         return results;
     }
 
-    _decodeValues(context, dimension) {
+    _decodeValues(context, dimension, position) {
         const results = [];
-        const dimensions = (context.dimensions.length == 0) ? [ 1 ] : context.dimensions;
-        const size = dimensions[dimension];
+        const shape = (context.dimensions.length == 0) ? [ 1 ] : context.dimensions;
+        const size = shape[dimension];
         const dataType = context.dataType;
-        if (dimension == dimensions.length - 1) {
-            for (let i = 0; i < size; i++) {
+        const stride = context.stride[dimension];
+        if (dimension == shape.length - 1) {
+            const ellipsis = (context.count + size) > context.limit;
+            const length = ellipsis ? context.limit - context.count : size;
+            const data = context.data;
+            for (let i = 0; i < length; i++) {
                 if (context.count > context.limit) {
                     results.push('...');
                     return results;
                 }
                 switch (dataType) {
                     case 'boolean':
-                        results.push(context.data[context.index] === 0 ? false : true);
+                        results.push(data[position] === 0 ? false : true);
                         break;
                     default:
-                        results.push(context.data[context.index]);
+                        results.push(data[position]);
                         break;
                 }
-                context.index++;
+                position += stride;
                 context.count++;
             }
         } else {
-            for (let j = 0; j < size; j++) {
-                if (context.count > context.limit) {
+            for (let i = 0; i < size; i++) {
+                if (context.count >= context.limit) {
                     results.push('...');
                     return results;
                 }
-                results.push(this._decodeValues(context, dimension + 1));
+                const nextPosition = position + (i * stride);
+                results.push(this._decodeValues(context, dimension + 1, nextPosition));
             }
         }
         if (context.dimensions.length == 0) {
@@ -3770,8 +3965,10 @@ view.Formatter = class {
                     return value.toString();
                 }
                 return '[...]';
+            case 'object':
             case 'function':
                 return value.type.name;
+            case 'object[]':
             case 'function[]':
                 return value ? value.map((item) => item.type.name).join(', ') : '(null)';
             case 'type':
@@ -3850,8 +4047,6 @@ view.Formatter = class {
         }
     }
 };
-
-const markdown = {};
 
 markdown.Generator = class {
 
@@ -4640,21 +4835,25 @@ view.ModelContext = class {
             const stream = this.stream;
             if (stream) {
                 const position = stream.position;
-                const signatures = [
-                    [ 0x80, undefined, 0x8a, 0x0a, 0x6c, 0xfc, 0x9c, 0x46, 0xf9, 0x20, 0x6a, 0xa8, 0x50, 0x19 ] // PyTorch
-                ];
+                const match = (buffer, signature) => {
+                    return signature.length <= buffer.length && buffer.every((value, index) => signature[index] === undefined || signature[index] === value);
+                };
+                const buffer = stream.peek(Math.min(stream.length, 16));
                 const skip =
-                    signatures.some((signature) => signature.length <= stream.length && stream.peek(signature.length).every((value, index) => signature[index] === undefined || signature[index] === value)) ||
+                    match(buffer, [ 0x80, undefined, 0x8a, 0x0a, 0x6c, 0xfc, 0x9c, 0x46, 0xf9, 0x20, 0x6a, 0xa8, 0x50, 0x19 ]) || // PyTorch
+                    match(buffer, [ 0x50, 0x4B, 0x03, 0x04 ]) || // Zip
+                    type !== 'hdf5' && match(buffer, [ 0x89, 0x48, 0x44, 0x46, 0x0D, 0x0A, 0x1A, 0x0A ]) || // \x89HDF\r\n\x1A\n
                     Array.from(this._tags).some((entry) => entry[0] !== 'flatbuffers' && entry[1].size > 0) ||
                     Array.from(this._content.values()).some((obj) => obj !== undefined);
                 if (!skip) {
                     switch (type) {
                         case 'json': {
                             try {
-                                const buffer = this.stream.peek(Math.min(this.stream.length, 0x1000));
-                                if ((buffer.length < 8 || String.fromCharCode.apply(null, buffer.slice(0, 8)) !== '\x89HDF\r\n\x1A\n') &&
+                                const buffer = stream.peek(Math.min(this.stream.length, 0x1000));
+                                if (stream.length < 0x7ffff000 &&
+                                    (buffer.length < 8 || String.fromCharCode.apply(null, buffer.slice(0, 8)) !== '\x89HDF\r\n\x1A\n') &&
                                     (buffer.some((v) => v === 0x22 || v === 0x5b || v === 0x5d || v === 0x7b || v === 0x7d))) {
-                                    const reader = json.TextReader.open(this.stream);
+                                    const reader = json.TextReader.open(stream);
                                     if (reader) {
                                         const obj = reader.read();
                                         this._content.set(type, obj);
@@ -4667,7 +4866,7 @@ view.ModelContext = class {
                         }
                         case 'json.gz': {
                             try {
-                                const archive = zip.Archive.open(this.stream, 'gzip');
+                                const archive = zip.Archive.open(stream, 'gzip');
                                 if (archive && archive.entries.size === 1) {
                                     const stream = archive.entries.values().next().value;
                                     const reader = json.TextReader.open(stream);
@@ -4683,6 +4882,7 @@ view.ModelContext = class {
                         }
                         case 'pkl': {
                             let unpickler = null;
+                            const types = new Set();
                             try {
                                 const archive = zip.Archive.open(stream, 'zlib');
                                 const data = archive ? archive.entries.get('') : stream;
@@ -4698,14 +4898,8 @@ view.ModelContext = class {
                                     }
                                 }
                                 if (condition) {
-                                    const signature = [ 0x80, undefined, 0x63, 0x5F, 0x5F, 0x74, 0x6F, 0x72, 0x63, 0x68, 0x5F, 0x5F, 0x2E]; // __torch__.
-                                    const torch = signature.length <= data.length && data.peek(signature.length).every((value, index) => signature[index] === undefined || signature[index] === value);
                                     const execution = new python.Execution();
-                                    execution.on('resolve', (_, name) => {
-                                        if (!torch || !name.startsWith('__torch__.')) {
-                                            this.exception(new view.Error("Unknown type name '" + name + "'."));
-                                        }
-                                    });
+                                    execution.on('resolve', (_, name) => types.add(name));
                                     const pickle = execution.__import__('pickle');
                                     unpickler = new pickle.Unpickler(data);
                                 }
@@ -4713,16 +4907,51 @@ view.ModelContext = class {
                                 // continue regardless of error
                             }
                             if (unpickler) {
-                                unpickler.persistent_load = (saved_id) => saved_id;
-                                const obj = unpickler.load();
-                                this._content.set(type, obj);
+                                const storages = new Map();
+                                unpickler.persistent_load = (saved_id) => {
+                                    if (Array.isArray(saved_id) && saved_id.length > 3) {
+                                        switch (saved_id[0]) {
+                                            case 'storage': {
+                                                const storage_type = saved_id[1];
+                                                const key = saved_id[2];
+                                                const size = saved_id[4];
+                                                if (!storages.has(key)) {
+                                                    const storage = new storage_type(size);
+                                                    storages.set(key, storage);
+                                                }
+                                                return storages.get(key);
+                                            }
+                                            default: {
+                                                throw new python.Error("Unsupported persistent load type '" + saved_id[0] + "'.");
+                                            }
+                                        }
+                                    }
+                                    throw new view.Error("Unsupported 'persistent_load'.");
+                                };
+                                try {
+                                    const obj = unpickler.load();
+                                    this._content.set(type, obj);
+                                } catch (error) {
+                                    this._content.set(type, error);
+                                }
+                                if (Array.from(types).every((name) => !name.startsWith('__torch__.'))) {
+                                    for (const name of types) {
+                                        this.exception(new view.Error("Unknown type name '" + name + "'."));
+                                    }
+                                } else {
+                                    this._content.set(type, new view.Error("PyTorch standalone 'data.pkl' format not supported."));
+                                }
                             }
                             break;
                         }
                         case 'hdf5': {
                             const file = hdf5.File.open(stream);
-                            if (file && file.rootGroup && file.rootGroup.attributes) {
-                                this._content.set(type, file.rootGroup);
+                            if (file) {
+                                try {
+                                    this._content.set(type, file.read());
+                                } catch (error) {
+                                    this._content.set(type, error);
+                                }
                             }
                             break;
                         }
@@ -4754,8 +4983,9 @@ view.ModelContext = class {
                 const skip =
                     signatures.some((signature) => signature.length <= stream.length && stream.peek(signature.length).every((value, index) => signature[index] === undefined || signature[index] === value)) ||
                     (Array.from(this._tags).some((pair) => pair[0] !== 'flatbuffers' && pair[1].size > 0) && type !== 'pb+') ||
-                    Array.from(this._content.values()).some((obj) => obj !== undefined);
-                if (!skip) {
+                    Array.from(this._content.values()).some((obj) => obj !== undefined) ||
+                    (stream.length < 0x7ffff000 && json.TextReader.open(stream));
+                if (!skip && stream.length < 0x7ffff000) {
                     try {
                         switch (type) {
                             case 'pbtxt': {
@@ -4884,8 +5114,8 @@ view.ModelFactoryService = class {
         this._extensions = new Set([ '.zip', '.tar', '.tar.gz', '.tgz', '.gz' ]);
         this._factories = [];
         this.register('./server', [ '.netron']);
-        this.register('./pytorch', [ '.pt', '.pth', '.ptl', '.pt1', '.pyt', '.pyth', '.pkl', '.pickle', '.h5', '.t7', '.model', '.dms', '.tar', '.ckpt', '.chkpt', '.tckpt', '.bin', '.pb', '.zip', '.nn', '.torchmodel', '.torchscript', '.pytorch', '.ot', '.params', '.trt', '.ff', '.ptmf' ], [ '.model' ]);
-        this.register('./onnx', [ '.onnx', '.onn', '.pb', '.onnxtxt', '.pbtxt', '.prototxt', '.txt', '.model', '.pt', '.pth', '.pkl', '.ort', '.ort.onnx', 'onnxmodel', 'ngf' ]);
+        this.register('./pytorch', [ '.pt', '.pth', '.ptl', '.pt1', '.pyt', '.pyth', '.pkl', '.pickle', '.h5', '.t7', '.model', '.dms', '.tar', '.ckpt', '.chkpt', '.tckpt', '.bin', '.pb', '.zip', '.nn', '.torchmodel', '.torchscript', '.pytorch', '.ot', '.params', '.trt', '.ff', '.ptmf', '.jit', '.pte' ], [ '.model' ]);
+        this.register('./onnx', [ '.onnx', '.onn', '.pb', '.onnxtxt', '.pbtxt', '.prototxt', '.txt', '.model', '.pt', '.pth', '.pkl', '.ort', '.ort.onnx', 'onnxmodel', 'ngf', 'json' ]);
         this.register('./mxnet', [ '.json', '.params' ], [ '.mar']);
         this.register('./coreml', [ '.mlmodel', '.bin', 'manifest.json', 'metadata.json', 'featuredescriptions.json', '.pb' ], [ '.mlpackage' ]);
         this.register('./caffe', [ '.caffemodel', '.pbtxt', '.prototxt', '.pt', '.txt' ]);
@@ -4896,12 +5126,12 @@ view.ModelFactoryService = class {
         this.register('./tf', [ '.pb', '.meta', '.pbtxt', '.prototxt', '.txt', '.pt', '.json', '.index', '.ckpt', '.graphdef', '.pbmm', /.data-[0-9][0-9][0-9][0-9][0-9]-of-[0-9][0-9][0-9][0-9][0-9]$/, /^events.out.tfevents./ ], [ '.zip' ]);
         this.register('./mediapipe', [ '.pbtxt' ]);
         this.register('./uff', [ '.uff', '.pb', '.pbtxt', '.uff.txt', '.trt', '.engine' ]);
-        this.register('./tensorrt', [ '.trt', '.trtmodel', '.engine', '.model', '.txt', '.uff', '.pb', '.tmfile', '.onnx', '.pth', '.dnn', '.plan' ]);
-        this.register('./numpy', [ '.npz', '.npy', '.pkl', '.pickle', '.model', '.model2', '.mge' ]);
+        this.register('./tensorrt', [ '.trt', '.trtmodel', '.engine', '.model', '.txt', '.uff', '.pb', '.tmfile', '.onnx', '.pth', '.dnn', '.plan', '.pt', '.dat' ]);
+        this.register('./numpy', [ '.npz', '.npy', '.pkl', '.pickle', '.model', '.model2', '.mge', '.joblib' ]);
         this.register('./lasagne', [ '.pkl', '.pickle', '.joblib', '.model', '.pkl.z', '.joblib.z' ]);
         this.register('./lightgbm', [ '.txt', '.pkl', '.model' ]);
-        this.register('./keras', [ '.h5', '.hd5', '.hdf5', '.keras', '.json', '.cfg', '.model', '.pb', '.pth', '.weights', '.pkl', '.lite', '.tflite', '.ckpt' ], [ '.zip' ]);
-        this.register('./sklearn', [ '.pkl', '.pickle', '.joblib', '.model', '.meta', '.pb', '.pt', '.h5', '.pkl.z', '.joblib.z' ]);
+        this.register('./keras', [ '.h5', '.hd5', '.hdf5', '.keras', '.json', '.cfg', '.model', '.pb', '.pth', '.weights', '.pkl', '.lite', '.tflite', '.ckpt', '.pb' ], [ '.zip' ]);
+        this.register('./sklearn', [ '.pkl', '.pickle', '.joblib', '.model', '.meta', '.pb', '.pt', '.h5', '.pkl.z', '.joblib.z', '.pickle.dat' ]);
         this.register('./megengine', [ '.tm', '.mge' ]);
         this.register('./pickle', [ '.pkl', '.pickle', '.joblib', '.model', '.meta', '.pb', '.pt', '.h5', '.pkl.z', '.joblib.z', '.pdstates', '.mge' ]);
         this.register('./cntk', [ '.model', '.cntk', '.cmf', '.dnn' ]);
@@ -4909,7 +5139,7 @@ view.ModelFactoryService = class {
         this.register('./bigdl', [ '.model', '.bigdl' ]);
         this.register('./darknet', [ '.cfg', '.model', '.txt', '.weights' ]);
         this.register('./weka', [ '.model' ]);
-        this.register('./rknn', [ '.rknn', '.nb', '.onnx' ]);
+        this.register('./rknn', [ '.rknn', '.nb', '.onnx', '.json' ]);
         this.register('./dlc', [ '.dlc', 'model', '.params' ]);
         this.register('./armnn', [ '.armnn', '.json' ]);
         this.register('./mnn', ['.mnn']);
@@ -4935,7 +5165,9 @@ view.ModelFactoryService = class {
         this.register('./cambricon', [ '.cambricon' ]);
         this.register('./onednn', [ '.json']);
         this.register('./mlir', [ '.mlir']);
+        this.register('./sentencepiece', [ '.model' ]);
         this.register('./hailo', [ '.hn', '.har' ]);
+        this.register('./nnc', [ '.nnc' ]);
         this.register('./safetensors', [ '.safetensors' ]);
     }
 
@@ -5006,7 +5238,7 @@ view.ModelFactoryService = class {
                     { name: 'keras-yolo2 configuration', tags: [ 'model', 'train', 'valid' ] },
                     { name: 'Vulkan SwiftShader ICD manifest', tags: [ 'file_format_version', 'ICD' ] },
                     { name: 'DeepLearningExamples configuration', tags: [ 'attention_probs_dropout_prob', 'hidden_act', 'hidden_dropout_prob', 'hidden_size', ] },
-                    { name: 'GitHub page data', tags: [ 'payload', 'title', 'locale' ] },
+                    { name: 'GitHub page data', tags: [ 'payload', 'title' ] },
                     { name: 'NuGet assets', tags: [ 'version', 'targets', 'packageFolders' ] },
                     { name: 'NuGet data', tags: [ 'format', 'restore', 'projects' ] },
                     { name: 'NPM package', tags: [ 'name', 'version', 'dependencies' ] },
@@ -5128,8 +5360,7 @@ view.ModelFactoryService = class {
                 const file_identifier = tags.get('file_identifier');
                 const formats = [
                     { name: 'onnxruntime.experimental.fbs.InferenceSession data', identifier: 'ORTM' },
-                    { name: 'tflite.Model data', identifier: 'TFL3' },
-                    { name: 'FlatBuffers ENNC data', identifier: 'ENNC' },
+                    { name: 'tflite.Model data', identifier: 'TFL3' }
                 ];
                 for (const format of formats) {
                     if (file_identifier === format.identifier) {
@@ -5155,6 +5386,12 @@ view.ModelFactoryService = class {
                 throw new view.Error("Unsupported XML content '" + tags.keys().next().value + "'.");
             }
         };
+        const hdf5 = () => {
+            const obj = context.open('hdf5');
+            if (obj instanceof Error) {
+                throw obj;
+            }
+        };
         const unknown = () => {
             if (stream) {
                 stream.seek(0);
@@ -5170,6 +5407,7 @@ view.ModelFactoryService = class {
         pb();
         flatbuffers();
         xml();
+        hdf5();
         unknown();
     }
 
@@ -5224,6 +5462,22 @@ view.ModelFactoryService = class {
                 const folder = rotate(map).filter(equals).map(at(0)).join('/');
                 return folder.length === 0 ? folder : folder + '/';
             };
+            const list = Array.from(entries).map((entry) => {
+                return { name: entry[0], stream: entry[1] };
+            });
+            const files = list.filter((entry) => {
+                if (entry.name.endsWith('/')) {
+                    return false;
+                }
+                if (entry.name.split('/').pop().startsWith('.')) {
+                    return false;
+                }
+                if (!entry.name.startsWith('./') && entry.name.startsWith('.')) {
+                    return false;
+                }
+                return true;
+            });
+            const folder = rootFolder(files.map((entry) => entry.name));
             const filter = async (queue) => {
                 let matches = [];
                 const nextEntry = async () => {
@@ -5307,10 +5561,21 @@ view.ModelFactoryService = class {
                         matches = matches.filter((context) => context.identifier.toLowerCase().split('/').pop() !== 'keras_metadata.pb');
                     }
                     // Keras
-                    if (matches.length === 2 &&
+                    if (matches.length === 3 &&
+                        matches.some((context) => context.identifier.toLowerCase().split('/').pop() === 'model.weights.h5') &&
                         matches.some((context) => context.identifier.toLowerCase().split('/').pop() === 'config.json') &&
-                        matches.some((context) => context.identifier.toLowerCase().split('/').pop() === 'model.weights.h5')) {
+                        matches.some((context) => context.identifier.toLowerCase().split('/').pop() === 'metadata.json')) {
                         matches = matches.filter((context) => context.identifier.toLowerCase().split('/').pop() == 'model.weights.h5');
+                    }
+                    if (matches.length === 2 &&
+                        matches.some((context) => context.identifier.toLowerCase().split('/').pop() === 'model.weights.h5') &&
+                        matches.some((context) => context.identifier.toLowerCase().split('/').pop() === 'config.json')) {
+                        matches = matches.filter((context) => context.identifier.toLowerCase().split('/').pop() == 'model.weights.h5');
+                    }
+                    if ((matches.length === 2) &&
+                        matches.some((context) => context.identifier.toLowerCase().split('/').pop() === 'config.json') &&
+                        matches.some((context) => context.identifier.toLowerCase().split('/').pop() === 'metadata.json')) {
+                        matches = matches.filter((context) => context.identifier.toLowerCase().split('/').pop() == 'config.json');
                     }
                     if (matches.length > 1) {
                         throw new view.ArchiveError('Archive contains multiple model files.');
@@ -5320,22 +5585,6 @@ view.ModelFactoryService = class {
                 };
                 return await nextEntry();
             };
-            const list = Array.from(entries).map((entry) => {
-                return { name: entry[0], stream: entry[1] };
-            });
-            const files = list.filter((entry) => {
-                if (entry.name.endsWith('/')) {
-                    return false;
-                }
-                if (entry.name.split('/').pop().startsWith('.')) {
-                    return false;
-                }
-                if (!entry.name.startsWith('./') && entry.name.startsWith('.')) {
-                    return false;
-                }
-                return true;
-            });
-            const folder = rootFolder(files.map((entry) => entry.name));
             const queue = files.slice(0).filter((entry) => entry.name.substring(folder.length).indexOf('/') < 0);
             const context = await filter(queue);
             if (!context) {
@@ -5397,22 +5646,27 @@ view.ModelFactoryService = class {
                 { name: 'PNG image', value: /^\x89PNG/ },
                 { name: 'Git LFS header', value: /^version https:\/\/git-lfs.github.com/ },
                 { name: 'Git LFS header', value: /^\s*oid sha256:/ },
+                { name: 'GGML data', value: /^lmgg|fmgg|tjgg|algg|fugg/ },
                 { name: 'HTML markup', value: /^\s*<html>/ },
                 { name: 'HTML markup', value: /^\s*<!doctype\s*html>/ },
                 { name: 'HTML markup', value: /^\s*<!DOCTYPE\s*html>/ },
                 { name: 'HTML markup', value: /^\s*<!DOCTYPE\s*HTML>/ },
                 { name: 'HTML markup', value: /^\s*<!DOCTYPE\s*HTML\s+(PUBLIC|SYSTEM)?/ },
                 { name: 'Unity metadata', value: /^fileFormatVersion:/ },
-                { name: 'Python source code', value: /^\s*('''.*''')?\s*import[ ]+[a-zA-Z_]\w*(\.[a-zA-Z_]\w*)*([ ]+as[ ]+[a-zA-Z]\w*)?[ ]*(,|;|\n|\r\n)/ },
-                { name: 'Python source code', value: /^\s*('''.*''')?\s*from[ ]+([a-zA-Z_]\w*(\.[a-zA-Z_]\w*)*)[ ]+import[ ]+[a-zA-Z]\w*[ ]+/ },
+                { name: 'Python source code', value: /^((#.*(\n|\r\n))|('''.*'''(\n|\r\n))|("""[\s\S]*""")|(\n|\r\n))*(import[ ]+[a-zA-Z_]\w*(\.[a-zA-Z_]\w*)*([ ]+as[ ]+[a-zA-Z]\w*)?[ ]*(,|;|\n|\r\n))/ },
+                { name: 'Python source code', value: /^((#.*(\n|\r\n))|('''.*'''(\n|\r\n))|("""[\s\S]*""")|(\n|\r\n))*(from[ ]+([a-zA-Z_]\w*(\.[a-zA-Z_]\w*)*)[ ]+import[ ]+[a-zA-Z]\w*)/ },
                 { name: 'Python virtual environment configuration', value: /^home[ ]*=[ ]*/, identifier: 'pyvenv.cfg' },
                 { name: 'Bash script', value: /^#!\/usr\/bin\/env\s/ },
                 { name: 'Bash script', value: /^#!\/bin\/bash\s/ },
                 { name: 'TSD header', value: /^%TSD-Header-###%/ },
                 { name: 'AppleDouble data', value: /^\x00\x05\x16\x07/ },
                 { name: 'TensorFlow Hub module', value: /^\x08\x03$/, identifier: 'tfhub_module.pb' },
+                { name: 'V8 snapshot', value: /^.\x00\x00\x00.\x00\x00\x00/, identifier: 'snapshot_blob.bin' },
+                { name: 'V8 context snapshot', value: /^.\x00\x00\x00.\x00\x00\x00/, identifier: 'v8_context_snapshot.bin' },
+                { name: 'V8 natives blob', value: /^./, identifier: 'natives_blob.bin' },
                 { name: 'ViSQOL model', value: /^svm_type\s/ },
-                { name: 'SenseTime model', value: /^STEF/ }
+                { name: 'SenseTime model', value: /^STEF/ },
+                { name: 'AES Crypt data', value: /^AES[\x01|\x02]\x00/ }
             ];
             /* eslint-enable no-control-regex */
             const buffer = stream.peek(Math.min(4096, stream.length));

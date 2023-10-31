@@ -8,6 +8,43 @@ const view = require('../source/view');
 const zip = require('../source/zip');
 const tar = require('../source/tar');
 
+const access = async (path) => {
+    try {
+        await fs.access(path);
+        return true;
+    } catch (error) {
+        return false;
+    }
+};
+
+const clearLine = () => {
+    if (process.stdout.clearLine) {
+        process.stdout.clearLine();
+    }
+};
+
+const write = (message) => {
+    if (process.stdout.write) {
+        process.stdout.write(message);
+    }
+};
+
+const decompress = (buffer) => {
+    let archive = zip.Archive.open(buffer, 'gzip');
+    if (archive && archive.entries.size == 1) {
+        const stream = archive.entries.values().next().value;
+        buffer = stream.peek();
+    }
+    const formats = [ zip, tar ];
+    for (const module of formats) {
+        archive = module.Archive.open(buffer);
+        if (archive) {
+            break;
+        }
+    }
+    return archive;
+};
+
 const host = {};
 
 host.TestHost = class {
@@ -49,7 +86,8 @@ host.TestHost = class {
 
     async request(file, encoding, basename) {
         const pathname = path.join(basename || this._sourceDir, file);
-        if (!await exists([ pathname ])) {
+        const exists = await access(pathname);
+        if (!exists) {
             throw new Error("The file '" + file + "' does not exist.");
         }
         if (encoding) {
@@ -58,9 +96,6 @@ host.TestHost = class {
         }
         const buffer = await fs.readFile(pathname, null);
         return new base.BinaryStream(buffer);
-    }
-
-    event_ua(/* category, action, label, value */) {
     }
 
     event(/* name, params */) {
@@ -244,43 +279,6 @@ global.Window = class {
     }
 };
 
-const clearLine = () => {
-    if (process.stdout.clearLine) {
-        process.stdout.clearLine();
-    }
-};
-
-const write = (message) => {
-    if (process.stdout.write) {
-        process.stdout.write(message);
-    }
-};
-
-const decompress = (buffer) => {
-    let archive = zip.Archive.open(buffer, 'gzip');
-    if (archive && archive.entries.size == 1) {
-        const stream = archive.entries.values().next().value;
-        buffer = stream.peek();
-    }
-    const formats = [ zip, tar ];
-    for (const module of formats) {
-        archive = module.Archive.open(buffer);
-        if (archive) {
-            break;
-        }
-    }
-    return archive;
-};
-
-const exists = async (files) => {
-    try {
-        await Promise.all(files.map((file) => fs.access(file)));
-        return true;
-    } catch (error) {
-        return false;
-    }
-};
-
 const request = async (url, init) => {
     const response = await fetch(url, init);
     if (!response.ok) {
@@ -369,8 +367,6 @@ class Target {
         this.folder = item.type ? path.normalize(path.join(__dirname, '..', 'third_party' , 'test', item.type)) : '';
         this.name = this.type ? this.type + '/' + this.target[0] : this.target[0];
         this.measures = new Map([ [ 'name', this.name ] ]);
-        // TODO #1109 duplicate value name
-        this.skip1109 = [ 'coreml', 'kmodel', 'openvino' ].includes(this.type);
     }
 
     match(patterns) {
@@ -396,7 +392,7 @@ class Target {
             const start = process.hrtime.bigint();
             let err = null;
             try {
-                await method.bind(this)();
+                await method.call(this);
             } catch (error) {
                 err = error;
             }
@@ -429,7 +425,8 @@ class Target {
         targets = targets || Array.from(this.target);
         sources = sources || this.source;
         const files = targets.map((file) => path.join(this.folder, file));
-        if (await exists(files)) {
+        const exists = await Promise.all(files.map((file) => access(file)));
+        if (exists.every((value) => value)) {
             return;
         }
         if (!sources) {
@@ -548,9 +545,9 @@ class Target {
         }
         if (this.assert) {
             for (const assert of this.assert) {
-                const parts = assert.split('=').map((item) => item.trim());
+                const parts = assert.split('==').map((item) => item.trim());
                 const properties = parts[0].split('.');
-                const value = parts[1];
+                const value = JSON.parse(parts[1].replace(/\s*'|'\s*/g, '"'));
                 let context = { model: this.model };
                 while (properties.length) {
                     const property = properties.shift();
@@ -569,7 +566,7 @@ class Target {
                     }
                     throw new Error("Invalid property path: '" + parts[0]);
                 }
-                if (context !== value.toString()) {
+                if (context !== value) {
                     throw new Error("Invalid '" + context.toString() + "' != '" + assert + "'.");
                 }
             }
@@ -590,7 +587,10 @@ class Target {
                 if (value.initializer) {
                     value.initializer.type.toString();
                     const tensor = new view.Tensor(value.initializer);
-                    if (tensor.layout !== '<' && tensor.layout !== '>' && tensor.layout !== '|' && tensor.layout !== 'sparse' && tensor.layout !== 'sparse.coo') {
+                    if (tensor.encoding !== '<' && tensor.encoding !== '>' && tensor.encoding !== '|') {
+                        throw new Error("Tensor encoding '" + tensor.encoding + "' is not implemented.");
+                    }
+                    if (tensor.layout && (tensor.layout !== 'sparse' && tensor.layout !== 'sparse.coo')) {
                         throw new Error("Tensor layout '" + tensor.layout + "' is not implemented.");
                     }
                     if (!tensor.empty) {
@@ -623,7 +623,7 @@ class Target {
                 if (value.name.length > 0 && value.initializer === null) {
                     if (!values.has(value.name)) {
                         values.set(value.name, value);
-                    } else if (value !== values.get(value.name) && !this.skip1109) {
+                    } else if (value !== values.get(value.name)) {
                         throw new Error("Duplicate value '" + value.name + "'.");
                     }
                 }
@@ -689,7 +689,7 @@ class Target {
         const current = new view.View(this.host);
         current.options.attributes = true;
         current.options.initializers = true;
-        await current.renderGraph(this.model, this.model.graphs[0]);
+        await current.renderGraph(this.model, this.model.graphs[0], current.options);
     }
 }
 
@@ -698,11 +698,14 @@ const main = async () => {
         let patterns = process.argv.length > 2 ? process.argv.slice(2) : [];
         const configuration = await fs.readFile(__dirname + '/models.json', 'utf-8');
         let targets = JSON.parse(configuration).reverse();
-        if (patterns.length > 0 && await exists(patterns)) {
-            targets = patterns.map((path) => {
-                return { target: path };
-            });
-            patterns = [];
+        if (patterns.length > 0) {
+            const exists = await Promise.all(patterns.map((pattern) => access(pattern)));
+            if (exists.every((value) => value)) {
+                targets = patterns.map((path) => {
+                    return { target: path };
+                });
+                patterns = [];
+            }
         }
         const __host__ = new host.TestHost();
         const measures = new Table([ 'name', 'download', 'load', 'validate', 'render' ]);
@@ -724,6 +727,7 @@ const main = async () => {
             console.error('  ' + error.cause.name + ': ' + error.cause.message);
         }
         /* eslint-enable no-console */
+        process.exit(1);
     }
 };
 

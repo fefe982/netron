@@ -1,7 +1,7 @@
 
 // Experimental
 
-var pickle = pickle || {};
+var pickle = {};
 
 pickle.ModelFactory = class {
 
@@ -26,13 +26,15 @@ pickle.ModelFactory = class {
         let format = 'Pickle';
         const obj = target;
         if (obj === null || obj === undefined) {
-            context.exception(new pickle.Error("Unsupported Pickle null object in '" + context.identifier + "'."));
+            context.exception(new pickle.Error("Unsupported Pickle null object."));
+        } else if (obj instanceof Error) {
+            throw obj;
         } else if (Array.isArray(obj)) {
             if (obj.length > 0 && obj[0] && obj.every((item) => item && item.__class__ && obj[0].__class__ && item.__class__.__module__ === obj[0].__class__.__module__ && item.__class__.__name__ === obj[0].__class__.__name__)) {
                 const type = obj[0].__class__.__module__ + "." + obj[0].__class__.__name__;
-                context.exception(new pickle.Error("Unsupported Pickle '" + type + "' array object in '" + context.identifier + "'."));
+                context.exception(new pickle.Error("Unsupported Pickle '" + type + "' array object."));
             } else if (obj.length > 0) {
-                context.exception(new pickle.Error("Unsupported Pickle array object in '" + context.identifier + "'."));
+                context.exception(new pickle.Error("Unsupported Pickle array object."));
             }
         } else if (obj && obj.__class__) {
             const formats = new Map([
@@ -54,117 +56,125 @@ pickle.ModelFactory = class {
 pickle.Model = class {
 
     constructor(value, format) {
-        this._format = format;
-        this._graphs = [ new pickle.Graph(value) ];
-    }
-
-    get format() {
-        return this._format;
-    }
-
-    get graphs() {
-        return this._graphs;
+        this.format = format;
+        this.graphs = [ new pickle.Graph(value) ];
     }
 };
 
 pickle.Graph = class {
 
     constructor(obj) {
-        this._inputs = [];
-        this._outputs = [];
-        this._nodes = [];
-
+        this.inputs = [];
+        this.outputs = [];
+        this.nodes = [];
         if (Array.isArray(obj) && (obj.every((item) => item.__class__) || (obj.every((item) => Array.isArray(item))))) {
             for (const item of obj) {
-                this._nodes.push(new pickle.Node(item));
+                this.nodes.push(new pickle.Node(item));
             }
         } else if (obj && obj instanceof Map && !Array.from(obj.values()).some((value) => typeof value === 'string' || typeof value === 'number')) {
             for (const entry of obj) {
-                this._nodes.push(new pickle.Node(entry[1], entry[0]));
+                this.nodes.push(new pickle.Node(entry[1], entry[0]));
             }
         } else if (obj && obj.__class__) {
-            this._nodes.push(new pickle.Node(obj));
+            this.nodes.push(new pickle.Node(obj));
         } else if (obj && Object(obj) === obj) {
-            this._nodes.push(new pickle.Node(obj));
+            this.nodes.push(new pickle.Node(obj));
         }
-    }
-
-    get inputs() {
-        return this._inputs;
-    }
-
-    get outputs() {
-        return this._outputs;
-    }
-
-    get nodes() {
-        return this._nodes;
     }
 };
 
 pickle.Node = class {
 
-    constructor(obj, name) {
-        this._name = name || '';
-        this._inputs = [];
-        this._outputs = [];
-        this._attributes = [];
-        if (Array.isArray(obj)) {
-            this._type = { name: 'List' };
-            this._attributes.push(new pickle.Attribute('value', obj));
-        } else {
-            const type = obj.__class__ ? obj.__class__.__module__ + '.' + obj.__class__.__name__ : 'Object';
-            this._type = { name: type };
-            const entries = obj instanceof Map ? Array.from(obj.entries()) : Object.entries(obj);
-            for (const entry of entries) {
-                const name = entry[0];
-                const value = entry[1];
-                this._attributes.push(new pickle.Attribute(name, value));
+    constructor(obj, name, stack) {
+        const type = obj.__class__ ? obj.__class__.__module__ + '.' + obj.__class__.__name__ : 'Object';
+        this.type = { name: type };
+        this.name = name || '';
+        this.inputs = [];
+        this.outputs = [];
+        this.attributes = [];
+        const isArray = (obj) => {
+            return obj && obj.__class__ && obj.__class__.__module__ === 'numpy' && obj.__class__.__name__ === 'ndarray';
+        };
+        const entries = obj instanceof Map ? Array.from(obj) : Object.entries(obj);
+        for (const entry of entries) {
+            const name = entry[0];
+            const value = entry[1];
+            if (value && isArray(value)) {
+                const tensor = new pickle.Tensor(value);
+                const attribute = new pickle.Attribute(name, 'tensor', tensor);
+                this.attributes.push(attribute);
+            } else if (Array.isArray(value) && value.length > 0 && value.every((obj) => isArray(obj))) {
+                const tensors = value.map((obj) => new pickle.Tensor(obj));
+                const attribute = new pickle.Attribute(name, 'tensor[]', tensors);
+                this.attributes.push(attribute);
+            } else {
+                stack = stack || new Set();
+                if (value && Array.isArray(value) && value.length > 0 && value.every((obj) => obj && obj.__class__ && obj.__class__.__module__ === value[0].__class__.__module__ && obj.__class__.__name__ === value[0].__class__.__name__)) {
+                    const values = value.filter((value) => !stack.has(value));
+                    const nodes = values.map((value) => {
+                        stack.add(value);
+                        const node = new pickle.Node(value, '', stack);
+                        stack.delete(value);
+                        return node;
+                    });
+                    const attribute = new pickle.Attribute(name, 'object[]', nodes);
+                    this.attributes.push(attribute);
+                } else if (value && value.__class__) {
+                    if (!stack.has(value)) {
+                        stack.add(value);
+                        const node = new pickle.Node(value, '', stack);
+                        const attribute = new pickle.Attribute(name, 'object', node);
+                        this.attributes.push(attribute);
+                        stack.delete(value);
+                    }
+                } else {
+                    const attribute = new pickle.Attribute(name, null, value);
+                    this.attributes.push(attribute);
+                }
             }
         }
-    }
-
-    get type() {
-        return this._type;
-    }
-
-    get name() {
-        return this._name;
-    }
-
-    get inputs() {
-        return this._inputs;
-    }
-
-    get outputs() {
-        return this._outputs;
-    }
-
-    get attributes() {
-        return this._attributes;
     }
 };
 
 pickle.Attribute = class {
 
-    constructor(name, value) {
-        this._name = name;
-        this._value = value;
-        if (value && value.__class__) {
-            this._type = value.__class__.__module__ + '.' + value.__class__.__name__;
-        }
+    constructor(name, type, value) {
+        this.name = name;
+        this.type = type;
+        this.value = value;
+    }
+};
+
+pickle.Tensor = class {
+
+    constructor(array) {
+        this.type = new pickle.TensorType(array.dtype.__name__, new pickle.TensorShape(array.shape));
+        this.stride = array.strides.map((stride) => stride / array.itemsize);
+        this.layout = this.type.dataType == 'string' || this.type.dataType == 'object' ? '|' : array.dtype.byteorder;
+        this.values = this.type.dataType == 'string' || this.type.dataType == 'object' ? array.tolist() : array.tobytes();
+    }
+};
+
+pickle.TensorType = class {
+
+    constructor(dataType, shape) {
+        this.dataType = dataType;
+        this.shape = shape;
     }
 
-    get name() {
-        return this._name;
+    toString() {
+        return this.dataType + this.shape.toString();
+    }
+};
+
+pickle.TensorShape = class {
+
+    constructor(dimensions) {
+        this.dimensions = dimensions;
     }
 
-    get value() {
-        return this._value;
-    }
-
-    get type() {
-        return this._type;
+    toString() {
+        return this.dimensions ? ('[' + this.dimensions.map((dimension) => dimension.toString()).join(',') + ']') : '';
     }
 };
 

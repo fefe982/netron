@@ -5,6 +5,15 @@ const fs = require('fs').promises;
 const os = require('os');
 const path = require('path');
 
+const args = process.argv.slice(2);
+
+const read = (match) => {
+    if (args.length > 0 || (!match || args[0] === match)) {
+        return args.shift();
+    }
+    return null;
+};
+
 let configuration = null;
 
 const load = async () => {
@@ -29,18 +38,33 @@ const writeLine = (message) => {
     write(message + os.EOL);
 };
 
+const access = async (path) => {
+    try {
+        await fs.access(path);
+        return true;
+    } catch (error) {
+        return false;
+    }
+};
+
 const rm = async (...args) => {
-    writeLine('rm ' + path.join(...args));
     const dir = path.join(__dirname, ...args);
-    const options = { recursive: true, force: true };
-    await fs.rm(dir, options);
+    const exists = await access(dir);
+    if (exists) {
+        writeLine('rm ' + path.join(...args));
+        const options = { recursive: true, force: true };
+        await fs.rm(dir, options);
+    }
 };
 
 const mkdir = async (...args) => {
-    writeLine('mkdir ' + path.join(...args));
     const dir = path.join(__dirname, ...args);
-    const options = { recursive: true };
-    await fs.mkdir(dir, options);
+    const exists = await access(dir);
+    if (!exists) {
+        writeLine('mkdir ' + path.join(...args));
+        const options = { recursive: true };
+        await fs.mkdir(dir, options);
+    }
     return dir;
 };
 
@@ -56,15 +80,6 @@ const unlink = async (dir, filter) => {
     files = filter ? files.filter((file) => filter(file)) : files;
     const promises = files.map((file) => fs.unlink(path.join(dir, file)));
     await Promise.all(promises);
-};
-
-const exists = async (path) => {
-    try {
-        await fs.access(path);
-        return true;
-    } catch (error) {
-        return false;
-    }
 };
 
 const exec = async (command, encoding) => {
@@ -187,7 +202,8 @@ const pullrequest = async (organization, repository, body) => {
 
 const install = async () => {
     const node_modules = path.join(__dirname, 'node_modules');
-    if (!await exists(node_modules)) {
+    const exists = await access(node_modules);
+    if (!exists) {
         await exec('npm install');
     }
 };
@@ -314,7 +330,7 @@ const publish = async (target) => {
             const url = repository + '/releases/download/v#{version}/' + configuration.productName + '-#{version}-mac.zip';
             const sha256 = await hash(url.replace(/#{version}/g, configuration.version), 'sha256');
             writeLine('update manifest');
-            const dir = await mkdir('dist', 'homebrew-cask', 'Casks');
+            const dir = await mkdir('dist', 'homebrew-cask', 'Casks', 'n');
             const file = path.join(dir, 'netron.rb');
             await fs.writeFile(file, [
                 'cask "' + configuration.name + '" do',
@@ -505,7 +521,11 @@ const update = async () => {
 const pull = async () => {
     await exec('git fetch --prune origin "refs/tags/*:refs/tags/*"');
     const before = await exec('git rev-parse HEAD', 'utf-8');
-    await exec('git pull --prune --rebase');
+    try {
+        await exec('git pull --prune --rebase');
+    } catch (error) {
+        writeLine(error.message);
+    }
     const after = await exec('git rev-parse HEAD', 'utf-8');
     if (before.trim() !== after.trim()) {
         const output = await exec('git diff --name-only ' + before.trim() + ' ' + after.trim(), 'utf-8');
@@ -529,7 +549,8 @@ const coverage = async () => {
 };
 
 const analyze = async () => {
-    if (!await exists('third_party/tools/codeql')) {
+    const exists = await access('third_party/tools/codeql');
+    if (!exists) {
         await exec('git clone --depth=1 https://github.com/github/codeql.git third_party/tools/codeql');
     }
     await rm('dist', 'codeql');
@@ -558,15 +579,6 @@ const version = async () => {
     await exec('git tag v' + configuration.version);
     await exec('git push');
     await exec('git push --tags');
-};
-
-const args = process.argv.slice(2);
-
-const read = (match) => {
-    if (args.length > 0 || (!match || args[0] === match)) {
-        return args.shift();
-    }
-    return null;
 };
 
 const next = async () => {

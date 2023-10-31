@@ -8086,6 +8086,7 @@
   {
     "name": "CollectiveAllToAllV2",
     "summary": "Mutually exchanges multiple tensors of identical type and shape.",
+    "description": "`is_stateless` means each op does not need control dependencies to other\ncollective ops. In this case, keys that are unique at runtime\n(e.g. `instance_key`) should be used to distinguish collective groups.",
     "attributes": [
       {
         "name": "T",
@@ -8101,6 +8102,11 @@
         "name": "timeout_seconds",
         "type": "float32",
         "default": 0.0
+      },
+      {
+        "name": "is_stateless",
+        "type": "boolean",
+        "default": false
       },
       {
         "name": "Nordering_token",
@@ -8446,6 +8452,7 @@
   {
     "name": "CollectiveGatherV2",
     "summary": "Mutually accumulates multiple tensors of identical type and shape.",
+    "description": "`is_stateless` means each op does not need control dependencies to other\ncollective ops. In this case, keys that are unique at runtime\n(e.g. `instance_key`) should be used to distinguish collective groups.",
     "attributes": [
       {
         "name": "T",
@@ -8461,6 +8468,11 @@
         "name": "timeout_seconds",
         "type": "float32",
         "default": 0.0
+      },
+      {
+        "name": "is_stateless",
+        "type": "boolean",
+        "default": false
       },
       {
         "name": "Nordering_token",
@@ -8633,6 +8645,7 @@
   {
     "name": "CollectiveReduceScatterV2",
     "summary": "Mutually reduces multiple tensors of identical type and shape and scatters the result.",
+    "description": "`is_stateless` means each op does not need control dependencies to other\ncollective ops. In this case, keys that are unique at runtime\n(e.g. `instance_key`) should be used to distinguish collective groups.",
     "attributes": [
       {
         "name": "T",
@@ -8658,6 +8671,11 @@
         "name": "timeout_seconds",
         "type": "float32",
         "default": 0.0
+      },
+      {
+        "name": "is_stateless",
+        "type": "boolean",
+        "default": false
       },
       {
         "name": "Nordering_token",
@@ -8704,6 +8722,7 @@
   {
     "name": "CollectiveReduceV2",
     "summary": "Mutually reduces multiple tensors of identical type and shape.",
+    "description": "`is_stateless` means each op does not need control dependencies to other\ncollective ops. In this case, keys that are unique at runtime\n(e.g. `instance_key`) should be used to distinguish collective groups.",
     "attributes": [
       {
         "name": "T",
@@ -8729,6 +8748,11 @@
         "name": "timeout_seconds",
         "type": "float32",
         "default": 0.0
+      },
+      {
+        "name": "is_stateless",
+        "type": "boolean",
+        "default": false
       },
       {
         "name": "Nordering_token",
@@ -9116,6 +9140,25 @@
       {
         "name": "batch_size",
         "type": 9
+      }
+    ]
+  },
+  {
+    "name": "ComputeDedupDataSize",
+    "summary": "An op computes the size of the deduplication data from embedding core and returns the updated config.",
+    "description": "This op is to compute size of the deduplication data so to provide this\ninformation to the op that computes the tuple mask of deduplication data can\nhave static output shape.",
+    "attributes": [
+      {
+        "name": "config",
+        "type": "string",
+        "description": "Serialized TPUEmbeddingConfiguration proto."
+      }
+    ],
+    "outputs": [
+      {
+        "name": "num_elements",
+        "description": "The size of the deduplicated data from infeed.",
+        "type": 3
       }
     ]
   },
@@ -9589,7 +9632,7 @@
   },
   {
     "name": "Conv",
-    "summary": "Computes a N-D convolution given (N+2)-D `input` and `filter` tensors.",
+    "summary": "Computes a N-D convolution given (N+1+batch_dims)-D `input` and (N+2)-D `filter` tensors.",
     "description": "General function for computing a N-D convolution. It is required that\n`1 <= N <= 3`.",
     "attributes": [
       {
@@ -9653,7 +9696,7 @@
     "outputs": [
       {
         "name": "output",
-        "description": "A 4-D tensor. The dimension order is determined by the value of\n`channels_last_format`, see below for details.",
+        "description": "A (N+1+batch_dims)-D tensor. The dimension order is determined by the value of\n`channels_last_format`, see below for details.",
         "typeAttr": "T"
       }
     ]
@@ -10402,7 +10445,7 @@
     "name": "CopyToMesh",
     "attributes": [
       {
-        "name": "layout",
+        "name": "mesh",
         "type": "string"
       },
       {
@@ -10426,11 +10469,6 @@
   {
     "name": "CopyToMeshGrad",
     "attributes": [
-      {
-        "name": "reference_layout",
-        "type": "string",
-        "default": ""
-      },
       {
         "name": "T",
         "type": "type"
@@ -14950,6 +14988,87 @@
     ]
   },
   {
+    "name": "DynamicEnqueueTPUEmbeddingRaggedTensorBatch",
+    "attributes": [
+      {
+        "name": "T1",
+        "type": "type",
+        "description": "Must be one of the following: `int32`, `int64`.",
+        "default": {
+          "type": "type",
+          "value": 3
+        }
+      },
+      {
+        "name": "T2",
+        "type": "type",
+        "description": "Must be one of the following: `int32`, `int64`.",
+        "default": {
+          "type": "type",
+          "value": 3
+        }
+      },
+      {
+        "name": "T3",
+        "type": "type",
+        "description": "Must be one of the following: `float32`, `float64`.",
+        "default": {
+          "type": "type",
+          "value": 1
+        }
+      },
+      {
+        "name": "N",
+        "type": "int64",
+        "minimum": 1
+      },
+      {
+        "name": "combiners",
+        "type": "string[]",
+        "default": []
+      },
+      {
+        "name": "table_ids",
+        "type": "int64[]"
+      },
+      {
+        "name": "max_sequence_lengths",
+        "type": "int64[]",
+        "default": []
+      },
+      {
+        "name": "num_features",
+        "type": "int64[]",
+        "default": []
+      }
+    ],
+    "inputs": [
+      {
+        "name": "sample_splits",
+        "numberAttr": "N",
+        "typeAttr": "T1"
+      },
+      {
+        "name": "embedding_indices",
+        "numberAttr": "N",
+        "typeAttr": "T2"
+      },
+      {
+        "name": "aggregation_weights",
+        "numberAttr": "N",
+        "typeAttr": "T3"
+      },
+      {
+        "name": "mode_override",
+        "type": 7
+      },
+      {
+        "name": "device_ordinal",
+        "type": 3
+      }
+    ]
+  },
+  {
     "name": "DynamicPartition",
     "summary": "Partitions `data` into `num_partitions` tensors using indices from `partitions`.",
     "description": "For each index tuple `js` of size `partitions.ndim`, the slice `data[js, ...]`\nbecomes part of `outputs[partitions[js]]`.  The slices with `partitions[js] = i`\nare placed in `outputs[i]` in lexicographic order of `js`, and the first\ndimension of `outputs[i]` is the number of entries in `partitions` equal to `i`.\nIn detail,\n\n```python\n    outputs[i].shape = [sum(partitions == i)] + data.shape[partitions.ndim:]\n\n    outputs[i] = pack([data[js, ...] for js if partitions[js] == i])\n```\n\n`data.shape` must start with `partitions.shape`.\n\nFor example:\n\n```python\n    # Scalar partitions.\n    partitions = 1\n    num_partitions = 2\n    data = [10, 20]\n    outputs[0] = []  # Empty with shape [0, 2]\n    outputs[1] = [[10, 20]]\n\n    # Vector partitions.\n    partitions = [0, 0, 1, 1, 0]\n    num_partitions = 2\n    data = [10, 20, 30, 40, 50]\n    outputs[0] = [10, 20, 50]\n    outputs[1] = [30, 40]\n```\n\nSee `dynamic_stitch` for an example on how to merge partitions back.\n\n<div style=\"width:70%; margin:auto; margin-bottom:10px; margin-top:20px;\">\n<img style=\"width:100%\" src=\"https://www.tensorflow.org/images/DynamicPartition.png\" alt>\n</div>\n\n\nRaises:\n  * `InvalidArgumentError` in following cases:\n    - If partitions is not in range `[0, num_partiions)`\n    - If `partitions.shape` does not match prefix of `data.shape` argument.\n",
@@ -14987,7 +15106,7 @@
   {
     "name": "DynamicStitch",
     "summary": "Interleave the values from the `data` tensors into a single tensor.",
-    "description": "Builds a merged tensor such that\n\n```python\n    merged[indices[m][i, ..., j], ...] = data[m][i, ..., j, ...]\n```\n\nFor example, if each `indices[m]` is scalar or vector, we have\n\n```python\n    # Scalar indices:\n    merged[indices[m], ...] = data[m][...]\n\n    # Vector indices:\n    merged[indices[m][i], ...] = data[m][i, ...]\n```\n\nEach `data[i].shape` must start with the corresponding `indices[i].shape`,\nand the rest of `data[i].shape` must be constant w.r.t. `i`.  That is, we\nmust have `data[i].shape = indices[i].shape + constant`.  In terms of this\n`constant`, the output shape is\n\n    merged.shape = [max(indices)] + constant\n\nValues are merged in order, so if an index appears in both `indices[m][i]` and\n`indices[n][j]` for `(m,i) < (n,j)` the slice `data[n][j]` will appear in the\nmerged result. If you do not need this guarantee, ParallelDynamicStitch might\nperform better on some devices.\n\nFor example:\n\n```python\n    indices[0] = 6\n    indices[1] = [4, 1]\n    indices[2] = [[5, 2], [0, 3]]\n    data[0] = [61, 62]\n    data[1] = [[41, 42], [11, 12]]\n    data[2] = [[[51, 52], [21, 22]], [[1, 2], [31, 32]]]\n    merged = [[1, 2], [11, 12], [21, 22], [31, 32], [41, 42],\n              [51, 52], [61, 62]]\n```\n\nThis method can be used to merge partitions created by `dynamic_partition`\nas illustrated on the following example:\n\n```python\n    # Apply function (increments x_i) on elements for which a certain condition\n    # apply (x_i != -1 in this example).\n    x=tf.constant([0.1, -1., 5.2, 4.3, -1., 7.4])\n    condition_mask=tf.not_equal(x,tf.constant(-1.))\n    partitioned_data = tf.dynamic_partition(\n        x, tf.cast(condition_mask, tf.int32) , 2)\n    partitioned_data[1] = partitioned_data[1] + 1.0\n    condition_indices = tf.dynamic_partition(\n        tf.range(tf.shape(x)[0]), tf.cast(condition_mask, tf.int32) , 2)\n    x = tf.dynamic_stitch(condition_indices, partitioned_data)\n    # Here x=[1.1, -1., 6.2, 5.3, -1, 8.4], the -1. values remain\n    # unchanged.\n```\n\n<div style=\"width:70%; margin:auto; margin-bottom:10px; margin-top:20px;\">\n<img style=\"width:100%\" src=\"https://www.tensorflow.org/images/DynamicStitch.png\" alt>\n</div>",
+    "description": "Builds a merged tensor such that\n\n```python\n    merged[indices[m][i, ..., j], ...] = data[m][i, ..., j, ...]\n```\n\nFor example, if each `indices[m]` is scalar or vector, we have\n\n```python\n    # Scalar indices:\n    merged[indices[m], ...] = data[m][...]\n\n    # Vector indices:\n    merged[indices[m][i], ...] = data[m][i, ...]\n```\n\nEach `data[i].shape` must start with the corresponding `indices[i].shape`,\nand the rest of `data[i].shape` must be constant w.r.t. `i`.  That is, we\nmust have `data[i].shape = indices[i].shape + constant`.  In terms of this\n`constant`, the output shape is\n\n    merged.shape = [max(indices) + 1] + constant\n\nValues are merged in order, so if an index appears in both `indices[m][i]` and\n`indices[n][j]` for `(m,i) < (n,j)` the slice `data[n][j]` will appear in the\nmerged result. If you do not need this guarantee, ParallelDynamicStitch might\nperform better on some devices.\n\nFor example:\n\n```python\n    indices[0] = 6\n    indices[1] = [4, 1]\n    indices[2] = [[5, 2], [0, 3]]\n    data[0] = [61, 62]\n    data[1] = [[41, 42], [11, 12]]\n    data[2] = [[[51, 52], [21, 22]], [[1, 2], [31, 32]]]\n    merged = [[1, 2], [11, 12], [21, 22], [31, 32], [41, 42],\n              [51, 52], [61, 62]]\n```\n\nThis method can be used to merge partitions created by `dynamic_partition`\nas illustrated on the following example:\n\n```python\n    # Apply function (increments x_i) on elements for which a certain condition\n    # apply (x_i != -1 in this example).\n    x=tf.constant([0.1, -1., 5.2, 4.3, -1., 7.4])\n    condition_mask=tf.not_equal(x,tf.constant(-1.))\n    partitioned_data = tf.dynamic_partition(\n        x, tf.cast(condition_mask, tf.int32) , 2)\n    partitioned_data[1] = partitioned_data[1] + 1.0\n    condition_indices = tf.dynamic_partition(\n        tf.range(tf.shape(x)[0]), tf.cast(condition_mask, tf.int32) , 2)\n    x = tf.dynamic_stitch(condition_indices, partitioned_data)\n    # Here x=[1.1, -1., 6.2, 5.3, -1, 8.4], the -1. values remain\n    # unchanged.\n```\n\n<div style=\"width:70%; margin:auto; margin-bottom:10px; margin-top:20px;\">\n<img style=\"width:100%\" src=\"https://www.tensorflow.org/images/DynamicStitch.png\" alt>\n</div>",
     "attributes": [
       {
         "name": "N",
@@ -18081,6 +18200,46 @@
       {
         "name": "output",
         "description": "A complex tensor of the same shape as `input`. The inner-most 3\n  dimensions of `input` are replaced with their 3D Fourier transform.\n\n@compatibility(numpy)\nEquivalent to np.fft.fftn with 3 dimensions.\n@end_compatibility",
+        "typeAttr": "Tcomplex"
+      }
+    ]
+  },
+  {
+    "name": "FFTND",
+    "summary": "ND fast Fourier transform.",
+    "description": "Computes the n-dimensional discrete Fourier transform over\ndesignated dimensions of `input`. The designated dimensions of\n`input` are assumed to be the result of `FFTND`.\n\nIf fft_length[i]<shape(input)[i], the input is cropped. If\nfft_length[i]>shape(input)[i], the input is padded with zeros. If fft_length\nis not given, the default shape(input) is used.\n\nAxes mean the dimensions to perform the transform on. Default is to perform on\nall axes.",
+    "attributes": [
+      {
+        "name": "Tcomplex",
+        "type": "type",
+        "description": "Must be one of the following: `complex64`, `complex128`.",
+        "default": {
+          "type": "type",
+          "value": 8
+        }
+      }
+    ],
+    "inputs": [
+      {
+        "name": "input",
+        "description": "A complex tensor.",
+        "typeAttr": "Tcomplex"
+      },
+      {
+        "name": "fft_length",
+        "description": "An int32 tensor. The FFT length for each dimension.",
+        "type": 3
+      },
+      {
+        "name": "axes",
+        "description": "An int32 tensor with a same shape as fft_length. Axes to perform the transform.",
+        "type": 3
+      }
+    ],
+    "outputs": [
+      {
+        "name": "output",
+        "description": "A complex tensor of the same shape as `input`. The designated\ndimensions of `input` are replaced with their Fourier transforms.\n\n@compatibility(numpy)\nEquivalent to np.fft.fftn.\n@end_compatibility",
         "typeAttr": "Tcomplex"
       }
     ]
@@ -21237,6 +21396,46 @@
     ]
   },
   {
+    "name": "IFFTND",
+    "summary": "ND inverse fast Fourier transform.",
+    "description": "Computes the n-dimensional inverse discrete Fourier transform over designated\ndimensions of `input`. The designated dimensions of `input` are assumed to be\nthe result of `IFFTND`.\n\nIf fft_length[i]<shape(input)[i], the input is cropped. If\nfft_length[i]>shape(input)[i], the input is padded with zeros. If fft_length\nis not given, the default shape(input) is used.\n\nAxes mean the dimensions to perform the transform on. Default is to perform on\nall axes.",
+    "attributes": [
+      {
+        "name": "Tcomplex",
+        "type": "type",
+        "description": "Must be one of the following: `complex64`, `complex128`.",
+        "default": {
+          "type": "type",
+          "value": 8
+        }
+      }
+    ],
+    "inputs": [
+      {
+        "name": "input",
+        "description": "A complex tensor.",
+        "typeAttr": "Tcomplex"
+      },
+      {
+        "name": "fft_length",
+        "description": "An int32 tensor. The FFT length for each dimension.",
+        "type": 3
+      },
+      {
+        "name": "axes",
+        "description": "An int32 tensor with a same shape as fft_length. Axes to perform the transform.",
+        "type": 3
+      }
+    ],
+    "outputs": [
+      {
+        "name": "output",
+        "description": "A complex tensor of the same shape as `input`. The designated dimensions of\n`input` are replaced with their inverse Fourier\ntransforms.\n\n@compatibility(numpy)\nEquivalent to np.fft.fftn.\n@end_compatibility",
+        "typeAttr": "Tcomplex"
+      }
+    ]
+  },
+  {
     "name": "IRFFT",
     "summary": "Inverse real-valued fast Fourier transform.",
     "description": "Computes the inverse 1-dimensional discrete Fourier transform of a real-valued\nsignal over the inner-most dimension of `input`.\n\nThe inner-most dimension of `input` is assumed to be the result of `RFFT`: the\n`fft_length / 2 + 1` unique components of the DFT of a real-valued signal. If\n`fft_length` is not provided, it is computed from the size of the inner-most\ndimension of `input` (`fft_length = 2 * (inner - 1)`). If the FFT length used to\ncompute `input` is odd, it should be provided since it cannot be inferred\nproperly.\n\nAlong the axis `IRFFT` is computed on, if `fft_length / 2 + 1` is smaller\nthan the corresponding dimension of `input`, the dimension is cropped. If it is\nlarger, the dimension is padded with zeros.",
@@ -21364,6 +21563,55 @@
       {
         "name": "output",
         "description": "A float32 tensor of the same rank as `input`. The inner-most 3\n  dimensions of `input` are replaced with the `fft_length` samples of their\n  inverse 3D real Fourier transform.\n\n@compatibility(numpy)\nEquivalent to np.irfftn with 3 dimensions.\n@end_compatibility",
+        "typeAttr": "Treal"
+      }
+    ]
+  },
+  {
+    "name": "IRFFTND",
+    "summary": "ND inverse real fast Fourier transform.",
+    "description": "Computes the n-dimensional inverse real discrete Fourier transform over\ndesignated dimensions of `input`. The designated dimensions of `input` are\nassumed to be the result of `IRFFTND`. The inner-most dimension contains the\n`fft_length / 2 + 1` unique components of the DFT of a real-valued signal. \n\nIf fft_length[i]<shape(input)[i], the input is cropped. If\nfft_length[i]>shape(input)[i], the input is padded with zeros. If fft_length\nis not given, the default shape(input) is used.\n\nAxes mean the dimensions to perform the transform on. Default is to perform on\nall axes.",
+    "attributes": [
+      {
+        "name": "Treal",
+        "type": "type",
+        "description": "Must be one of the following: `float32`, `float64`.",
+        "default": {
+          "type": "type",
+          "value": 1
+        }
+      },
+      {
+        "name": "Tcomplex",
+        "type": "type",
+        "description": "Must be one of the following: `complex64`, `complex128`.",
+        "default": {
+          "type": "type",
+          "value": 8
+        }
+      }
+    ],
+    "inputs": [
+      {
+        "name": "input",
+        "description": "A complex tensor.",
+        "typeAttr": "Tcomplex"
+      },
+      {
+        "name": "fft_length",
+        "description": "An int32 tensor. The FFT length for each dimension.",
+        "type": 3
+      },
+      {
+        "name": "axes",
+        "description": "An int32 tensor with a same shape as fft_length. Axes to perform the transform.",
+        "type": 3
+      }
+    ],
+    "outputs": [
+      {
+        "name": "output",
+        "description": "A complex tensor of the same shape as `input`. The designated dimensions of\n`input` are replaced with their inverse real Fourier transforms.\n\n@compatibility(numpy)\nEquivalent to np.fft.irfftn.\n@end_compatibility",
         "typeAttr": "Treal"
       }
     ]
@@ -36936,6 +37184,55 @@
     ]
   },
   {
+    "name": "RFFTND",
+    "summary": "ND fast real Fourier transform.",
+    "description": "Computes the n-dimensional real discrete Fourier transform over designated\ndimensions of `input`. The designated dimensions of `input` are assumed to be\nthe result of `RFFTND`. The length of the last axis transformed will be\nfft_length[-1]//2+1.\n\nIf fft_length[i]<shape(input)[i], the input is cropped. If\nfft_length[i]>shape(input)[i], the input is padded with zeros. If fft_length\nis not given, the default shape(input) is used.\n\nAxes mean the dimensions to perform the transform on. Default is to perform on\nall axes.",
+    "attributes": [
+      {
+        "name": "Treal",
+        "type": "type",
+        "description": "Must be one of the following: `float32`, `float64`.",
+        "default": {
+          "type": "type",
+          "value": 1
+        }
+      },
+      {
+        "name": "Tcomplex",
+        "type": "type",
+        "description": "Must be one of the following: `complex64`, `complex128`.",
+        "default": {
+          "type": "type",
+          "value": 8
+        }
+      }
+    ],
+    "inputs": [
+      {
+        "name": "input",
+        "description": "A complex tensor.",
+        "typeAttr": "Treal"
+      },
+      {
+        "name": "fft_length",
+        "description": "An int32 tensor. The FFT length for each dimension.",
+        "type": 3
+      },
+      {
+        "name": "axes",
+        "description": "An int32 tensor with a same shape as fft_length. Axes to perform the transform.",
+        "type": 3
+      }
+    ],
+    "outputs": [
+      {
+        "name": "output",
+        "description": "A complex tensor of the same shape as `input`. The designated\ndimensions of `input` are replaced with their real Fourier transforms.\n\n@compatibility(numpy)\nEquivalent to np.fft.rfftn.\n@end_compatibility",
+        "typeAttr": "Tcomplex"
+      }
+    ]
+  },
+  {
     "name": "RGBToHSV",
     "summary": "Converts one or more images from RGB to HSV.",
     "description": "Outputs a tensor of the same shape as the `images` tensor, containing the HSV\nvalue of the pixels. The output is only well defined if the value in `images`\nare in `[0,1]`.\n\n`output[..., 0]` contains hue, `output[..., 1]` contains saturation, and\n`output[..., 2]` contains value. All HSV values are in `[0,1]`. A hue of 0\ncorresponds to pure red, hue 1/3 is pure green, and 2/3 is pure blue.\n\nUsage Example:\n\n>>> blue_image = tf.stack([\n...    tf.zeros([5,5]),\n...    tf.zeros([5,5]),\n...    tf.ones([5,5])],\n...    axis=-1)\n>>> blue_hsv_image = tf.image.rgb_to_hsv(blue_image)\n>>> blue_hsv_image[0,0].numpy()\narray([0.6666667, 1. , 1. ], dtype=float32)\n",
@@ -51909,6 +52206,11 @@
           "type": "type",
           "value": 3
         }
+      },
+      {
+        "name": "sparse_gradient",
+        "type": "boolean",
+        "default": false
       }
     ],
     "inputs": [
@@ -52091,6 +52393,11 @@
           "type": "type",
           "value": 3
         }
+      },
+      {
+        "name": "sparse_gradient",
+        "type": "boolean",
+        "default": false
       }
     ],
     "inputs": [
@@ -52149,6 +52456,11 @@
           "type": "type",
           "value": 3
         }
+      },
+      {
+        "name": "sparse_gradient",
+        "type": "boolean",
+        "default": false
       }
     ],
     "inputs": [
@@ -52331,6 +52643,11 @@
           "type": "type",
           "value": 3
         }
+      },
+      {
+        "name": "sparse_gradient",
+        "type": "boolean",
+        "default": false
       }
     ],
     "inputs": [
@@ -52389,6 +52706,11 @@
           "type": "type",
           "value": 3
         }
+      },
+      {
+        "name": "sparse_gradient",
+        "type": "boolean",
+        "default": false
       }
     ],
     "inputs": [
@@ -52571,6 +52893,11 @@
           "type": "type",
           "value": 3
         }
+      },
+      {
+        "name": "sparse_gradient",
+        "type": "boolean",
+        "default": false
       }
     ],
     "inputs": [
@@ -60169,7 +60496,7 @@
     "inputs": [
       {
         "name": "input",
-        "description": "1-D or higher.",
+        "description": "Can be of any rank.",
         "typeAttr": "T"
       },
       {
@@ -62563,6 +62890,12 @@
         "name": "shared_name",
         "type": "string",
         "description": "the name by which this variable is referred to.",
+        "default": ""
+      },
+      {
+        "name": "debug_name",
+        "type": "string",
+        "description": "the user-given name, which still applies in anonymous mode.",
         "default": ""
       },
       {
