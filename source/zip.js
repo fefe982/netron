@@ -1,9 +1,15 @@
 
-var zip = {};
-var gzip = {};
-var zlib = {};
+const zip = {};
+const gzip = {};
+const zlib = {};
 
 zip.Archive = class {
+
+    static async import() {
+        if (typeof process === 'object' && typeof process.versions == 'object' && typeof process.versions.node !== 'undefined') {
+            zip.zlib = await import('zlib');
+        }
+    }
 
     static open(data, format) {
         const stream = data instanceof Uint8Array ? new zip.BinaryReader(data) : data;
@@ -27,59 +33,101 @@ zip.Archive = class {
                 return new gzip.Archive(stream);
             }
             if (!format || format == 'zip') {
-                const signature = buffer[0] === 0x50 && buffer[1] === 0x4B;
+                const search = buffer[0] === 0x50 && buffer[1] === 0x4B;
                 const location = stream.position;
-                const seek = (content) => {
-                    let index = stream.length;
+                const seek = (signature, size) => {
+                    signature = Array.from(signature, (c) => c.charCodeAt(0));
+                    let position = stream.length;
                     do {
-                        index = Math.max(0, index - 66000);
-                        stream.seek(index);
-                        const length = Math.min(stream.length - index, 66000 + 4);
+                        position = Math.max(0, position - 66000);
+                        stream.seek(position);
+                        const length = Math.min(stream.length - position, 66000 + size);
                         const buffer = stream.read(length);
-                        for (let i = buffer.length - 4; i >= 0; i--) {
-                            if (content[0] === buffer[i] && content[1] === buffer[i + 1] && content[2] === buffer[i + 2] && content[3] === buffer[i + 3]) {
-                                stream.seek(index + i + 4);
-                                return true;
+                        for (let i = buffer.length - size; i >= 0; i--) {
+                            if (signature[0] === buffer[i]     && signature[1] === buffer[i + 1] &&
+                                signature[2] === buffer[i + 2] && signature[3] === buffer[i + 3]) {
+                                stream.seek(position + i);
+                                return new zip.BinaryReader(buffer.subarray(i, i + size));
                             }
                         }
-                        if (!signature) {
+                        if (!search) {
                             break;
                         }
                     }
-                    while (index > 0);
-                    return false;
+                    while (position > 0);
+                    return null;
                 };
-                let offset = -1;
+                const read = (signature, size) => {
+                    if ((stream.position - size) > 0) {
+                        stream.skip(-size);
+                        signature = Array.from(signature, (c) => c.charCodeAt(0));
+                        const buffer = stream.peek(size);
+                        if (buffer[0] === signature[0] && buffer[1] === signature[1] && buffer[2] === signature[2] && buffer[3] === signature[3]) {
+                            return new zip.BinaryReader(buffer);
+                        }
+                    }
+                    return null;
+                };
+                const header = {};
                 let position = -1;
-                if (seek([ 0x50, 0x4B, 0x06, 0x06 ])) {
-                    position = stream.position - 4;
-                    const reader = new zip.BinaryReader(stream.read(52));
-                    reader.skip(36);
-                    position -= reader.uint64(); // size of central directory
-                    offset = reader.uint64(); // central directory offset
-                    if (offset === undefined) {
+                let reader = seek('PK\x05\x06', 22);
+                if (reader) {
+                    position = stream.position;
+                    reader.skip(4);
+                    header.disk = reader.uint16();
+                    header.startDisk = reader.uint16();
+                    header.diskRecords = reader.uint16();
+                    header.totalRecords = reader.uint16();
+                    header.size = reader.uint32();
+                    header.offset = reader.uint32();
+                    header.commentLength = reader.uint16();
+                    reader = null;
+                    if (read('PK\x06\x07', 20)) {
+                        reader = read('PK\x06\x06', 56);
+                        if (!reader) {
+                            stream.seek(location);
+                            throw new zip.Error('Zip64 end of central directory not found.');
+                        }
+                    }
+                } else {
+                    reader = seek('PK\x06\x06', 56);
+                    if (!reader) {
+                        stream.seek(location);
+                        if (search) {
+                            throw new zip.Error('Zip end of central directory not found.');
+                        }
+                        return null;
+                    }
+                }
+                if (reader) {
+                    position = stream.position;
+                    reader.skip(4);
+                    reader.recordSize = reader.uint64();
+                    reader.version = reader.uint16();
+                    reader.minVersion = reader.uint16();
+                    reader.disks = reader.uint32();
+                    reader.startDisk = reader.uint32();
+                    header.diskRecords = reader.uint64();
+                    header.totalRecords = reader.uint64();
+                    header.size = reader.uint64();
+                    header.offset = reader.uint64();
+                    if (header.offset === undefined) {
                         stream.seek(location);
                         throw new zip.Error('Zip 64-bit central directory offset not supported.');
                     }
-                } else if (seek([ 0x50, 0x4B, 0x05, 0x06 ])) {
-                    position = stream.position - 4;
-                    const reader = new zip.BinaryReader(stream.read(16));
-                    reader.skip(8);
-                    position -= reader.uint32(); // size of central directory
-                    offset = reader.uint32(); // central directory offset
-                } else {
-                    stream.seek(location);
-                    if (!signature) {
-                        return null;
-                    }
-                    throw new zip.Error('End of Zip central directory not found.');
                 }
+                position -= header.size;
                 if (position < 0 || position > stream.length) {
+                    stream.seek(location);
+                    throw new zip.Error('Invalid Zip central directory size.');
+                }
+                if (position < header.offset) {
                     stream.seek(location);
                     throw new zip.Error('Invalid Zip central directory offset.');
                 }
                 stream.seek(position);
-                const archive = new zip.Archive(stream, position - offset);
+                position -= header.offset;
+                const archive = new zip.Archive(stream, position);
                 stream.seek(location);
                 return archive;
             }
@@ -91,7 +139,7 @@ zip.Archive = class {
         offset = offset || 0;
         this._entries = new Map();
         const headers = [];
-        const signature = [ 0x50, 0x4B, 0x01, 0x02 ];
+        const signature = Array.from('PK\x01\x02', (c) => c.charCodeAt(0));
         while (stream.position + 4 < stream.length && stream.read(4).every((value, index) => value === signature[index])) {
             const header = {};
             const reader = new zip.BinaryReader(stream.read(42));
@@ -176,7 +224,7 @@ zip.Entry = class {
         offset = offset || 0;
         this._name = header.name;
         stream.seek(offset + header.localHeaderOffset);
-        const signature = [ 0x50, 0x4B, 0x03, 0x04 ];
+        const signature = Array.from('PK\x03\x04', (c) => c.charCodeAt(0));
         if (stream.position + 4 > stream.length || !stream.read(4).every((value, index) => value === signature[index])) {
             this._stream = new zip.ErrorStream(header.size, 'Invalid Zip local file header signature.');
         } else {
@@ -220,8 +268,8 @@ zip.Inflater = class {
 
     inflateRaw(data, length) {
         let buffer = null;
-        if (typeof process === 'object' && typeof process.versions == 'object' && typeof process.versions.node !== 'undefined') {
-            buffer = require('zlib').inflateRawSync(data);
+        if (zip.zlib) {
+            buffer = zip.zlib.inflateRawSync(data);
         } else {
             const reader = new zip.BitReader(data);
             const writer = length === undefined ? new zip.BlockWriter() : new zip.BufferWriter(length);
@@ -358,12 +406,7 @@ zip.Inflater = class {
 zip.HuffmanTree = class {
 
     static create(tree) {
-        let bits = tree[0];
-        for (let i = 1; i < tree.length; ++i) {
-            if (tree[i] > bits) {
-                bits = tree[i];
-            }
-        }
+        const bits = Math.max.apply(null, tree);
         // Algorithm from https://github.com/photopea/UZIP.js
         let rev15 = zip.HuffmanTree._rev15;
         if (!rev15) {
@@ -794,7 +837,8 @@ gzip.Archive = class {
         const reader = new zip.BinaryReader(stream.read(8));
         const compressionMethod = reader.byte();
         if (compressionMethod != 8) {
-            throw new gzip.Error("Invalid compression method '" + compressionMethod.toString() + "'.");
+            stream.seek(position);
+            throw new gzip.Error(`Invalid compression method '${compressionMethod}'.`);
         }
         const flags = reader.byte();
         reader.uint32(); // MTIME
@@ -900,7 +944,4 @@ gzip.Error = class extends Error {
     }
 };
 
-if (typeof module !== 'undefined' && typeof module.exports === 'object') {
-    module.exports.Archive = zip.Archive;
-    module.exports.Inflater = zip.Inflater;
-}
+export const Archive = zip.Archive;

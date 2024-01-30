@@ -1,5 +1,7 @@
 ﻿
-var host = {};
+import * as base from './base.js';
+
+const host = {};
 
 host.BrowserHost = class {
 
@@ -7,7 +9,6 @@ host.BrowserHost = class {
         this._window = window;
         this._navigator = window.navigator;
         this._document = window.document;
-        const base = require('./base');
         this._telemetry = new base.Telemetry(this._window);
         this._window.eval = () => {
             throw new Error('window.eval() not supported.');
@@ -23,7 +24,7 @@ host.BrowserHost = class {
             name: this._document.title,
             type: this._meta.type ? this._meta.type[0] : 'Browser',
             version: this._meta.version ? this._meta.version[0] : null,
-            date: Array.isArray(this._meta.date) && this._meta.date.length > 0 && this._meta.date[0] ? new Date(this._meta.date[0].split(' ').join('T') + 'Z') : new Date(),
+            date: Array.isArray(this._meta.date) && this._meta.date.length > 0 && this._meta.date[0] ? new Date(`${this._meta.date[0].split(' ').join('T')}Z`) : new Date(),
             packaged: this._meta.version && this._meta.version[0] !== '0.0.0',
             platform: /(Mac|iPhone|iPod|iPad)/i.test(this._navigator.platform) ? 'darwin' : undefined,
             agent: this._navigator.userAgent.toLowerCase().indexOf('safari') !== -1 && this._navigator.userAgent.toLowerCase().indexOf('chrome') === -1 ? 'safari' : '',
@@ -57,7 +58,7 @@ host.BrowserHost = class {
             const days = (new Date() - new Date(this._environment.date)) / (24 * 60 * 60 * 1000);
             if (days > 180) {
                 this.document.body.classList.remove('spinner');
-                this.window.terminate('Please update to the newest version.', 'Download', () => {
+                this.window.exports.terminate('Please update to the newest version.', 'Download', () => {
                     const link = this._element('logo-github').href;
                     this.openURL(link);
                 });
@@ -94,8 +95,8 @@ host.BrowserHost = class {
                 });
                 const measurement_id = '848W2NVWVH';
                 const user = this._getCookie('_ga').replace(/^(GA1\.\d\.)*/, '');
-                const session = this._getCookie('_ga' + measurement_id);
-                await this._telemetry.start('G-' + measurement_id, user, session);
+                const session = this._getCookie(`_ga${measurement_id}`);
+                await this._telemetry.start(`G-${measurement_id}`, user, session);
                 this._telemetry.set('page_location', this._document.location && this._document.location.href ? this._document.location.href : null);
                 this._telemetry.set('page_title', this._document.title ? this._document.title : null);
                 this._telemetry.set('page_referrer', this._document.referrer ? this._document.referrer : null);
@@ -108,8 +109,8 @@ host.BrowserHost = class {
                     app_name: this.type,
                     app_version: this.version
                 });
-                this._setCookie('_ga', 'GA1.2.' + this._telemetry.get('client_id'), 1200);
-                this._setCookie('_ga' + measurement_id, 'GS1.1.' + this._telemetry.session, 1200);
+                this._setCookie('_ga', `GA1.2.${this._telemetry.get('client_id')}`, 1200);
+                this._setCookie(`_ga${measurement_id}`, `GS1.1.${this._telemetry.session}`, 1200);
             }
         };
         const capabilities = async () => {
@@ -123,26 +124,10 @@ host.BrowserHost = class {
                     return obj;
                 });
             };
-            const required = [
-                'TextDecoder', 'TextEncoder',
-                'URLSearchParams',
-                'HTMLCanvasElement.prototype.toBlob',
-                'Promise', 'Symbol.asyncIterator'
-            ];
-            const optional = [
-                'fetch',
-                'DataView.prototype.getBigInt64',
-                'Worker',
-            ];
-            const available = filter(required);
-            const capabilities = available.concat(filter(optional));
+            const capabilities = filter([ 'fetch', 'DataView.prototype.getBigInt64', 'Worker' ]);
             this.event('browser_open', {
                 browser_capabilities: capabilities.map((capability) => capability.split('.').pop()).join(',')
             });
-            if (required.length > available.length) {
-                this.window.terminate('Your browser is not supported.');
-                return new Promise(() => {});
-            }
             return Promise.resolve();
         };
         await age();
@@ -154,9 +139,9 @@ host.BrowserHost = class {
     async start() {
         const hash = this.window.location.hash ? this.window.location.hash.replace(/^#/, '') : '';
         const search = this.window.location.search;
-        const params = new URLSearchParams(search + (hash ? '&' + hash : ''));
+        const params = new URLSearchParams(search + (hash ? `&${hash}` : ''));
         if (this._meta.file && this._meta.identifier) {
-            const url = this._meta.file[0];
+            const [url] = this._meta.file;
             if (this._view.accept(url)) {
                 this._openModel(this._url(url), null);
                 this._document.title = this._meta.identifier;
@@ -191,8 +176,7 @@ host.BrowserHost = class {
             });
             const mobileSafari = this.environment('platform') === 'darwin' && navigator.maxTouchPoints && navigator.maxTouchPoints > 1;
             if (!mobileSafari) {
-                const base = require('./base');
-                const extensions = new base.Metadata().extensions.map((extension) => '.' + extension);
+                const extensions = new base.Metadata().extensions.map((extension) => `.${extension}`);
                 openFileDialog.setAttribute('accept', extensions.join(', '));
             }
             openFileDialog.addEventListener('change', (e) => {
@@ -229,22 +213,20 @@ host.BrowserHost = class {
     }
 
     async error(message, detail /*, cancel */) {
-        alert((message == 'Error' ? '' : message + ' ') + detail);
+        alert((message == 'Error' ? '' : `${message} `) + detail);
         return 0;
     }
 
     confirm(message, detail) {
-        return confirm(message + ' ' + detail);
+        return confirm(`${message} ${detail}`);
     }
 
-    require(id) {
-        return new Promise((resolve, reject) => {
-            this.window.require(id, (module) => resolve(module), (error) => reject(error));
-        });
+    async require(id) {
+        return import(`${id}.js`);
     }
 
     save(name, extension, defaultPath, callback) {
-        callback(defaultPath + '.' + extension);
+        callback(`${defaultPath}.${extension}`);
     }
 
     export(file, blob) {
@@ -267,7 +249,7 @@ host.BrowserHost = class {
                 break;
             }
             case 'report-issue': {
-                this.openURL(this.environment('repository') + '/issues/new');
+                this.openURL(`${this.environment('repository')}/issues/new`);
                 break;
             }
             case 'about': {
@@ -281,7 +263,7 @@ host.BrowserHost = class {
     }
 
     request(file, encoding, base) {
-        const url = base ? (base + '/' + file) : this._url(file);
+        const url = base ? (`${base}/${file}`) : this._url(file);
         return this._request(url, null, encoding);
     }
 
@@ -291,33 +273,33 @@ host.BrowserHost = class {
 
     exception(error, fatal) {
         if (this._telemetry && error) {
-            const name = error.name ? error.name + ': ' : '';
+            const name = error.name ? `${error.name}: ` : '';
             const message = error.message ? error.message : JSON.stringify(error);
             let context = '';
             let stack = '';
             if (error.stack) {
                 const format = (file, line, column) => {
-                    return file.split('\\').join('/').split('/').pop() + ':' + line + ':' + column;
+                    return `${file.split('\\').join('/').split('/').pop()}:${line}:${column}`;
                 };
                 const match = error.stack.match(/\n {4}at (.*) \((.*):(\d*):(\d*)\)/);
                 if (match) {
-                    stack = match[1] + ' (' + format(match[2], match[3], match[4]) + ')';
+                    stack = `${match[1]} (${format(match[2], match[3], match[4])})`;
                 } else {
                     const match = error.stack.match(/\n {4}at (.*):(\d*):(\d*)/);
                     if (match) {
-                        stack = '(' + format(match[1], match[2], match[3]) + ')';
+                        stack = `(${format(match[1], match[2], match[3])})`;
                     } else {
                         const match = error.stack.match(/\n {4}at (.*)\((.*)\)/);
                         if (match) {
-                            stack = '(' + format(match[1], match[2], match[3]) + ')';
+                            stack = `(${format(match[1], match[2], match[3])})`;
                         } else {
                             const match = error.stack.match(/\s*@\s*(.*):(.*):(.*)/);
                             if (match) {
-                                stack = '(' + format(match[1], match[2], match[3]) + ')';
+                                stack = `(${format(match[1], match[2], match[3])})`;
                             } else {
                                 const match = error.stack.match(/.*\n\s*(.*)\s*/);
                                 if (match) {
-                                    stack = match[1];
+                                    [, stack] = match;
                                 }
                             }
                         }
@@ -357,7 +339,7 @@ host.BrowserHost = class {
                 request.timeout = timeout;
             }
             const error = (status) => {
-                const err = new Error("The web request failed with status code " + status + " at '" + url + "'.");
+                const err = new Error(`The web request failed with status code ${status} at '${url}'.`);
                 err.type = 'error';
                 err.url = url;
                 return err;
@@ -371,7 +353,6 @@ host.BrowserHost = class {
                 progress(0);
                 if (request.status == 200) {
                     if (request.responseType == 'arraybuffer') {
-                        const base = require('./base');
                         const buffer = new Uint8Array(request.response);
                         const stream = new base.BinaryStream(buffer);
                         resolve(stream);
@@ -391,7 +372,7 @@ host.BrowserHost = class {
             request.ontimeout = () => {
                 progress(0);
                 request.abort();
-                const err = new Error("The web request timed out in '" + url + "'.");
+                const err = new Error(`The web request timed out in '${url}'.`);
                 err.type = 'timeout';
                 err.url = url;
                 reject(err);
@@ -403,8 +384,8 @@ host.BrowserHost = class {
             };
             request.open('GET', url, true);
             if (headers) {
-                for (const name of Object.keys(headers)) {
-                    request.setRequestHeader(name, headers[name]);
+                for (const [name, value] of Object.entries(headers)) {
+                    request.setRequestHeader(name, value);
                 }
             }
             request.send();
@@ -416,12 +397,12 @@ host.BrowserHost = class {
         const location = this.window.location;
         const pathname = location.pathname.endsWith('/') ?
             location.pathname :
-            location.pathname.split('/').slice(0, -1).join('/') + '/';
-        return location.protocol + '//' + location.host + pathname + file;
+            `${location.pathname.split('/').slice(0, -1).join('/')}/`;
+        return `${location.protocol}//${location.host}${pathname}${file}`;
     }
 
     async _openModel(url, identifier) {
-        url = url.startsWith('data:') ? url : url + ((/\?/).test(url) ? '&' : '?') + 'cb=' + (new Date()).getTime();
+        url = url.startsWith('data:') ? url : `${url + ((/\?/).test(url) ? '&' : '?')}cb=${(new Date()).getTime()}`;
         this._view.show('welcome spinner');
         let context = null;
         try {
@@ -471,7 +452,7 @@ host.BrowserHost = class {
 
     async _openGist(gist) {
         this._view.show('welcome spinner');
-        const url = 'https://api.github.com/gists/' + gist;
+        const url = `https://api.github.com/gists/${gist}`;
         try {
             const text = await this._request(url, { 'Content-Type': 'application/json' }, 'utf-8');
             const json = JSON.parse(text);
@@ -479,13 +460,11 @@ host.BrowserHost = class {
                 this.error('Error while loading Gist.', json.message);
                 return;
             }
-            const key = Object.keys(json.files).find((key) => this._view.accept(json.files[key].filename));
-            if (!key) {
+            const file = Object.values(json.files).find((file) => this._view.accept(file.filename));
+            if (!file) {
                 this.error('Error while loading Gist.', 'Gist does not contain a model file.');
                 return;
             }
-            const base = require('./base');
-            const file = json.files[key];
             const identifier = file.filename;
             const encoder = new TextEncoder();
             const buffer = encoder.encode(file.content);
@@ -506,12 +485,12 @@ host.BrowserHost = class {
     }
 
     _setCookie(name, value, days) {
-        this.document.cookie = name + '=; Max-Age=0';
+        this.document.cookie = `${name}=; Max-Age=0`;
         const location = this.window.location;
-        const domain = location && location.hostname && location.hostname.indexOf('.') !== -1 ? ';domain=.' + location.hostname.split('.').slice(-2).join('.') : '';
+        const domain = location && location.hostname && location.hostname.indexOf('.') !== -1 ? `;domain=.${location.hostname.split('.').slice(-2).join('.')}` : '';
         const date = new Date();
         date.setTime(date.getTime() + (days * 24 * 60 * 60 * 1000));
-        this.document.cookie = name + "=" + value + domain + ";path=/;expires=" + date.toUTCString();
+        this.document.cookie = `${name}=${value}${domain};path=/;expires=${date.toUTCString()}`;
     }
 
     _getCookie(name) {
@@ -607,7 +586,7 @@ host.BrowserHost.BrowserFileContext = class {
         }
         const blob = this._blobs[file];
         if (!blob) {
-            throw new Error("File not found '" + file + "'.");
+            throw new Error(`File not found '${file}'.`);
         }
         return new Promise((resolve, reject) => {
             const reader = new FileReader();
@@ -620,7 +599,6 @@ host.BrowserHost.BrowserFileContext = class {
                 } else {
                     const buffer = new Uint8Array(e.target.result);
                     if (position === 0 && buffer.length === blob.size) {
-                        const base = require('./base');
                         const stream = new base.BinaryStream(buffer);
                         resolve(stream);
                     } else {
@@ -642,16 +620,16 @@ host.BrowserHost.BrowserFileContext = class {
                 const error = event.target.error;
                 switch (error.code) {
                     case error.NOT_FOUND_ERR:
-                        message = "File not found '" + file + "'.";
+                        message = `File not found '${file}'.`;
                         break;
                     case error.NOT_READABLE_ERR:
-                        message = "File not readable '" + file + "'.";
+                        message = `File not readable '${file}'.`;
                         break;
                     case error.SECURITY_ERR:
-                        message = "File access denied '" + file + "'.";
+                        message = `File access denied '${file}'.`;
                         break;
                     default:
-                        message = error.message ? error.message : "File read '" + error.code.toString() + "' error '" + file + "'.";
+                        message = error.message ? error.message : `File read '${error.code}' error '${file}'.`;
                         break;
                 }
                 reject(new Error(message));
@@ -665,8 +643,8 @@ host.BrowserHost.BrowserFileContext = class {
         });
     }
 
-    require(id) {
-        return this._host.require(id);
+    async require(id) {
+        return await this._host.require(id);
     }
 
     exception(error, fatal) {
@@ -709,7 +687,7 @@ host.BrowserHost.FileStream = class {
     skip(offset) {
         this._position += offset;
         if (this._position > this._length) {
-            throw new Error('Expected ' + (this._position - this._length) + ' more bytes. The file might be corrupted. Unexpected end of file.');
+            throw new Error(`Expected ${this._position - this._length} more bytes. The file might be corrupted. Unexpected end of file.`);
         }
     }
 
@@ -748,7 +726,7 @@ host.BrowserHost.FileStream = class {
 
     _fill(length) {
         if (this._position + length > this._length) {
-            throw new Error('Expected ' + (this._position + length - this._length) + ' more bytes. The file might be corrupted. Unexpected end of file.');
+            throw new Error(`Expected ${this._position + length - this._length} more bytes. The file might be corrupted. Unexpected end of file.`);
         }
         if (!this._buffer || this._position < this._offset || this._position + length > this._offset + this._buffer.length) {
             this._offset = this._start + this._position;
@@ -848,3 +826,9 @@ if (!('scrollBehavior' in window.document.documentElement.style)) {
         }
     };
 }
+
+if (typeof window !== 'undefined' && window.exports) {
+    window.exports.browser = host;
+}
+
+export const BrowserHost = host.BrowserHost;

@@ -1,5 +1,5 @@
 
-var text = {};
+const text = {};
 
 text.Decoder = class {
 
@@ -9,7 +9,7 @@ text.Decoder = class {
         }
         const assert = (encoding, condition) => {
             if (encoding && encoding !== condition) {
-                throw new text.Error("Invalid encoding '" + encoding + "'.");
+                throw new text.Error(`Invalid encoding '${encoding}'.`);
             }
         };
         const buffer = data instanceof Uint8Array ? data : data.peek();
@@ -340,7 +340,5 @@ text.Error = class extends Error {
     }
 };
 
-if (typeof module !== 'undefined' && typeof module.exports === 'object') {
-    module.exports.Decoder = text.Decoder;
-    module.exports.Reader = text.Reader;
-}
+export const Decoder = text.Decoder;
+export const Reader = text.Reader;

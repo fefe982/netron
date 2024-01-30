@@ -1,5 +1,7 @@
 
-var torch = {};
+import * as base from './base.js';
+
+const torch = {};
 
 torch.ModelFactory = class {
 
@@ -12,7 +14,7 @@ torch.ModelFactory = class {
         const reader = target;
         reader.callback = (name) => {
             if (name && name != 'nn.JointTrainModule' && !name.startsWith('nn.MSDNet_') && !name.startsWith('onmt.')) {
-                context.exception(new torch.Error("Unsupported type '" + name + "'."));
+                context.exception(new torch.Error(`Unsupported type '${name}'.`));
             }
             return null;
         };
@@ -45,17 +47,17 @@ torch.Graph = class {
         this.outputs = [];
         this.nodes = [];
         this.groups = 'false';
-        const args = new Map();
-        const arg = (name, type, tensor) => {
+        const values = new Map();
+        values.map = (name, type, tensor) => {
             if (name.length === 0 && tensor) {
                 return new torch.Value(name, type || null, tensor || null);
             }
-            if (!args.has(name)) {
-                args.set(name, new torch.Value(name, type || null, tensor || null));
+            if (!values.has(name)) {
+                values.set(name, new torch.Value(name, type || null, tensor || null));
             } else if (type || tensor) {
-                throw new torch.Error("Duplicate value '" + name + "'.");
+                throw new torch.Error(`Duplicate value '${name}'.`);
             }
-            return args.get(name);
+            return values.get(name);
         };
         if (Object.prototype.hasOwnProperty.call(root, 'model')) {
             root = root.model;
@@ -64,7 +66,7 @@ torch.Graph = class {
             if (groups.length > 0) {
                 this.groups = true;
             }
-            const type = module.__class__ ? module.__class__.__module__ + '.' + module.__class__.__name__ : '';
+            const type = module.__class__ ? `${module.__class__.__module__}.${module.__class__.__name__}` : '';
             switch (type) {
                 case 'nn.Sequential': {
                     groups.push(key);
@@ -114,20 +116,21 @@ torch.Graph = class {
                 case 'nn.ConcatTable': {
                     const prefix = key;
                     if (inputs.length == 0) {
-                        inputs.push(arg(groups.join('/') + ':' + key + ':in', null, null));
+                        inputs.push(values.map(`${groups.join('/')}:${key}:in`, null, null));
                     }
                     let concatInputs = [];
                     let index = 0;
                     for (const subModule of module.modules) {
                         const streamInputs = inputs.map((input) => input);
                         const streamOutputs = [];
-                        loadModule(metadata, subModule, groups, prefix + '.' + index.toString(), streamInputs, streamOutputs);
+                        loadModule(metadata, subModule, groups, `${prefix}.${index}`, streamInputs, streamOutputs);
                         concatInputs = concatInputs.concat(streamOutputs);
                         index++;
                     }
                     delete module.modules;
                     delete module.dimension;
-                    this.nodes.push(new torch.Node(metadata, module, groups, key, inputs, outputs, arg));
+                    const node = new torch.Node(metadata, module, groups, key, inputs, outputs, values);
+                    this.nodes.push(node);
                     break;
                 }
                 case 'nn.Inception': {
@@ -135,7 +138,8 @@ torch.Graph = class {
                     delete module.module; // TODO
                     delete module.transfer; // TODO
                     delete module.pool; // TODO
-                    this.nodes.push(new torch.Node(metadata, module, groups, key, inputs, outputs, arg));
+                    const node = new torch.Node(metadata, module, groups, key, inputs, outputs, values);
+                    this.nodes.push(node);
                     break;
                 }
                 case 'nn.gModule': {
@@ -147,11 +151,13 @@ torch.Graph = class {
                         index++;
                     }
                     */
-                    this.nodes.push(new torch.Node(metadata, module, groups, key, inputs, outputs, arg));
+                    const node = new torch.Node(metadata, module, groups, key, inputs, outputs, values);
+                    this.nodes.push(node);
                     break;
                 }
                 default: {
-                    this.nodes.push(new torch.Node(metadata, module, groups, key, inputs, outputs, arg));
+                    const node = new torch.Node(metadata, module, groups, key, inputs, outputs, values);
+                    this.nodes.push(node);
                     break;
                 }
             }
@@ -160,10 +166,10 @@ torch.Graph = class {
         const outputs = [];
         loadModule(metadata, root, [], '', inputs, outputs);
         this.inputs = this.inputs.concat(inputs.map((input, index) => {
-            return new torch.Argument('input' + (index != 0 ? (index + 1).toString() : ''), [ input ]);
+            return new torch.Argument(`input${index != 0 ? (index + 1).toString() : ''}`, [ input ]);
         }));
         this.outputs = this.outputs.concat(outputs.map((output, index) => {
-            return new torch.Argument('output' + (index != 0 ? (index + 1).toString() : ''), [ output ]);
+            return new torch.Argument(`output${index != 0 ? (index + 1).toString() : ''}`, [ output ]);
         }));
     }
 };
@@ -180,7 +186,7 @@ torch.Value = class {
 
     constructor(name, type, initializer) {
         if (typeof name !== 'string') {
-            throw new torch.Error("Invalid value identifier '" + JSON.stringify(name) + "'.");
+            throw new torch.Error(`Invalid value identifier '${JSON.stringify(name)}'.`);
         }
         this.name = name;
         this.type = initializer ? initializer.type : type;
@@ -190,20 +196,18 @@ torch.Value = class {
 
 torch.Node = class {
 
-    constructor(metadata, module, groups, name, inputs, outputs, arg) {
+    constructor(metadata, module, groups, name, inputs, outputs, values) {
         this.group = groups.join('/');
         if (module.name && typeof module.name === 'string') {
             this.name = module.name;
             delete module.name;
         } else {
-            this.name = this.group ? (this.group + ':' + name) : name;
+            this.name = this.group ? (`${this.group}:${name}`) : name;
         }
-        const type = module.__class__ ? module.__class__.__module__ + '.' + module.__class__.__name__ : 'nn.Module';
+        const type = module.__class__ ? `${module.__class__.__module__}.${module.__class__.__name__}` : 'nn.Module';
         this.type = metadata.type(type);
         let initializers = [];
-        for (const entry of Object.entries(module)) {
-            const key = entry[0];
-            const obj = entry[1];
+        for (const [key, obj] of Object.entries(module)) {
             if (obj && obj.__class__ && obj.__class__.__module__ === 'torch' && obj.__class__.__name__.endsWith('Storage')) {
                 module[key] = obj.data();
             }
@@ -298,9 +302,7 @@ torch.Node = class {
         }
         this.attributes = [];
         if (module.__class__) {
-            for (const entry of Object.entries(module)) {
-                const key = entry[0];
-                const obj = entry[1];
+            for (const [key, obj] of Object.entries(module)) {
                 if (key == '_type') {
                     continue;
                 }
@@ -308,7 +310,7 @@ torch.Node = class {
                     continue;
                 }
                 if (obj.__class__ && obj.__class__.__module__ === 'torch' && obj.__class__.__name__.endsWith('Tensor')) {
-                    initializers.push(new torch.Argument(key, [ arg('', null, new torch.Tensor(obj)) ]));
+                    initializers.push(new torch.Argument(key, [ values.map('', null, new torch.Tensor(obj)) ]));
                     continue;
                 }
                 if (key == 'modules') {
@@ -323,11 +325,11 @@ torch.Node = class {
         }
         this.inputs = [];
         if (inputs.length == 0 && this.name) {
-            inputs.push(arg(this.name + ':in'));
+            inputs.push(values.map(`${this.name}:in`));
         }
         this.inputs.push(new torch.Argument('input', inputs));
         if (outputs.length == 0 && this.name) {
-            outputs.push(arg(this.name));
+            outputs.push(values.map(this.name));
         }
         this.outputs = [];
         this.outputs.push(new torch.Argument('output', outputs));
@@ -349,24 +351,24 @@ torch.Node = class {
     }
 
     _updateSize(module, name) {
-        if (Object.prototype.hasOwnProperty.call(module, name + 'W') &&
-            Object.prototype.hasOwnProperty.call(module, name + 'H')) {
-            module[name] = [ module[name + 'W'], module[name + 'H'] ];
-            delete module[name + 'W'];
-            delete module[name + 'H'];
+        if (Object.prototype.hasOwnProperty.call(module, `${name}W`) &&
+            Object.prototype.hasOwnProperty.call(module, `${name}H`)) {
+            module[name] = [ module[`${name}W`], module[`${name}H`] ];
+            delete module[`${name}W`];
+            delete module[`${name}H`];
         }
     }
 
     _updateBox(module, name) {
-        if (Object.prototype.hasOwnProperty.call(module, name + '_t') &&
-            Object.prototype.hasOwnProperty.call(module, name + '_r') &&
-            Object.prototype.hasOwnProperty.call(module, name + '_b') &&
-            Object.prototype.hasOwnProperty.call(module, name + '_l')) {
-            module[name] = [ module[name + '_t'], module[name + '_r'], module[name + '_b'], module[name + '_l'] ];
-            delete module[name + '_t'];
-            delete module[name + '_r'];
-            delete module[name + '_b'];
-            delete module[name + '_l'];
+        if (Object.prototype.hasOwnProperty.call(module, `${name}_t`) &&
+            Object.prototype.hasOwnProperty.call(module, `${name}_r`) &&
+            Object.prototype.hasOwnProperty.call(module, `${name}_b`) &&
+            Object.prototype.hasOwnProperty.call(module, `${name}_l`)) {
+            module[name] = [ module[`${name}_t`], module[`${name}_r`], module[`${name}_b`], module[`${name}_l`] ];
+            delete module[`${name}_t`];
+            delete module[`${name}_r`];
+            delete module[`${name}_b`];
+            delete module[`${name}_l`];
         }
     }
 };
@@ -439,7 +441,7 @@ torch.TensorShape = class {
             if (this.dimensions.length == 0) {
                 return '';
             }
-            return '[' + this.dimensions.map((dimension) => dimension.toString()).join(',') + ']';
+            return `[${this.dimensions.map((dimension) => dimension.toString()).join(',')}]`;
         }
         return '';
     }
@@ -481,10 +483,14 @@ torch.T7Reader = class {
                 this.dataType = dataType;
                 this.itemSize = itemSize;
             }
+            read(reader) {
+                this.size = reader.int64();
+                this.reader = reader.storage(this.size, this.itemSize, this.dataType);
+            }
             data() {
                 if (this.reader) {
                     const reader = this.reader;
-                    reader.reset();
+                    reader.seek(0);
                     const dataType = this.dataType;
                     const size = this.size;
                     const array = new Array(size);
@@ -512,17 +518,13 @@ torch.T7Reader = class {
                                 array[i] = reader.float64();
                                 break;
                             default:
-                                throw new torch.Error("Unsupported data type '" + dataType + "'.");
+                                throw new torch.Error(`Unsupported data type '${dataType}'.`);
                         }
                     }
                     this._data = array;
                     delete this.reader;
                 }
                 return this._data;
-            }
-            read(reader) {
-                this.size = reader.int64();
-                this.reader = reader.storage(this.size, this.itemSize, this.dataType);
             }
         };
         const Tensor = class {
@@ -846,16 +848,12 @@ torch.T7Reader = class {
             case 6: return this.function();
             case 7: return this.function();
             case 8: return this.function();
-            default: throw new torch.Error("File format has invalid type '" + type + "'.");
+            default: throw new torch.Error(`File format has invalid type '${type}'.`);
         }
     }
 
     boolean() {
         return this._reader.boolean();
-    }
-
-    bytes(size) {
-        return this._reader.bytes(size);
     }
 
     int32() {
@@ -906,9 +904,8 @@ torch.T7Reader = class {
         } else {
             const attributes = this.read();
             if (attributes != null) {
-                for (const entry of Object.entries(attributes)) {
-                    const key = entry[0];
-                    obj[key] = entry[1];
+                for (const [key, value] of Object.entries(attributes)) {
+                    obj[key] = value;
                 }
             }
         }
@@ -957,7 +954,7 @@ torch.T7Reader = class {
             return this._memo.get(index);
         }
         const size = this.int32();
-        const dumped = this.bytes(size);
+        const dumped = this._reader.read(size);
         const upvalues = this.read();
         const type = this._types.get('LuaFunction');
         const obj = Reflect.construct(type, [ size, dumped, upvalues ]);
@@ -970,58 +967,21 @@ torch.T7Reader = class {
     }
 };
 
-torch.BinaryReader = class {
+torch.BinaryReader = class extends base.BinaryReader {
 
     constructor(data) {
-        this._buffer = data instanceof Uint8Array ? data : data.peek();
-        this._dataView = new DataView(this._buffer.buffer, this._buffer.byteOffset, this._buffer.byteLength);
-        this._position = 0;
+        super(data instanceof Uint8Array ? data : data.peek(), true);
         this._textDecoder = new TextDecoder('ascii');
-    }
-
-    reset() {
-        this._position = 0;
-    }
-
-    skip(offset) {
-        this._position += offset;
-        if (this._position > this._buffer.length) {
-            throw new torch.Error('Expected ' + (this._position - this._buffer.length) + ' more bytes. The file might be corrupted. Unexpected end of file.');
-        }
     }
 
     boolean() {
         return this.int32() == 1;
     }
 
-    bytes(length) {
+    read(length) {
         const position = this._position;
         this.skip(length);
         return this._buffer.subarray(position, this._position);
-    }
-
-    int8() {
-        const position = this._position;
-        this.skip(1);
-        return this._dataView.getInt8(position, true);
-    }
-
-    int16() {
-        const position = this._position;
-        this.skip(2);
-        return this._dataView.getInt16(position, true);
-    }
-
-    int32() {
-        const position = this._position;
-        this.skip(4);
-        return this._dataView.getInt32(position, true);
-    }
-
-    int64() {
-        const position = this._position;
-        this.skip(8);
-        return this._dataView.getInt64(position, true).toNumber();
     }
 
     int64s(size) {
@@ -1032,24 +992,15 @@ torch.BinaryReader = class {
         return array;
     }
 
-    float32() {
-        const position = this._position;
-        this.skip(4);
-        return this._dataView.getFloat32(position, true);
-    }
-
-    float64() {
-        const position = this._position;
-        this.skip(8);
-        return this._dataView.getFloat64(position, true);
-    }
-
     string() {
-        return this._textDecoder.decode(this.bytes(this.int32()));
+        const size = this.int32();
+        const buffer = this.read(size);
+        return this._textDecoder.decode(buffer);
     }
 
     storage(size, itemSize) {
-        return new torch.BinaryReader(this.bytes(size * itemSize));
+        const buffer = this.read(size * itemSize);
+        return new torch.BinaryReader(buffer);
     }
 };
 
@@ -1063,8 +1014,8 @@ torch.TextReader = class {
         this._separator = separator || 0x0a;
     }
 
-    reset() {
-        this._position = 0;
+    seek(position) {
+        this._position = position;
     }
 
     line(size) {
@@ -1085,7 +1036,7 @@ torch.TextReader = class {
         return this.int32() == 1;
     }
 
-    bytes(size) {
+    read(size) {
         return this.line(size);
     }
 
@@ -1105,7 +1056,7 @@ torch.TextReader = class {
         const token = this._textDecoder.decode(this.line(20));
         const number = Number.parseInt(token, 10);
         if (Number.isNaN(token - number)) {
-            throw new torch.Error("Couldn't parse int64 '" + token + "'.");
+            throw new torch.Error(`Couldn't parse int64 '${token}'.`);
         }
         return number;
     }
@@ -1117,7 +1068,7 @@ torch.TextReader = class {
             for (const token of content.split(' ')) {
                 const number = Number.parseInt(token, 10);
                 if (Number.isNaN(token - number)) {
-                    throw new torch.Error("Couldn't parse int64 '" + token + "'.");
+                    throw new torch.Error(`Couldn't parse int64 '${token}'.`);
                 }
                 array.push(number);
             }
@@ -1145,7 +1096,7 @@ torch.TextReader = class {
         }
         const number = Number.parseFloat(token);
         if (Number.isNaN(token - number)) {
-            throw new torch.Error("Couldn't parse float '" + token + "'.");
+            throw new torch.Error(`Couldn't parse float '${token}'.`);
         }
         return number;
     }
@@ -1165,7 +1116,7 @@ torch.TextReader = class {
 
     storage(size, itemSize, dataType) {
         if (size <= 0) {
-            throw new torch.Error("Unsupported storage size '" + size + "'.");
+            throw new torch.Error(`Unsupported storage size '${size}'.`);
         }
         if (dataType === 'uint8') {
             const start = this._position;
@@ -1179,6 +1130,5 @@ torch.TextReader = class {
     }
 };
 
-if (typeof module !== 'undefined' && typeof module.exports === 'object') {
-    module.exports.ModelFactory = torch.ModelFactory;
-}
+export const ModelFactory = torch.ModelFactory;
+

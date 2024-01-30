@@ -1,4 +1,7 @@
-var $root = flatbuffers.get('mnn');
+
+import * as flatbuffers from './flatbuffers.js';
+
+const $root = flatbuffers.get('mnn');
 
 $root.MNN = $root.MNN || {};
 
@@ -210,6 +213,7 @@ $root.MNN.QuantizedFloatParam = class QuantizedFloatParam {
         $.clampMin = reader.int8_(position, 20, -128);
         $.clampMax = reader.int8_(position, 22, 127);
         $.winogradAttr = reader.typedArray(position, 24, Int32Array);
+        $.outputDataType = reader.int32_(position, 26, 6);
         return $;
     }
 };
@@ -1419,7 +1423,8 @@ $root.MNN.SampleMode = {
 $root.MNN.BorderMode = {
     ZEROS: 0,
     CLAMP: 1,
-    REFLECTION: 2
+    REFLECTION: 2,
+    CUBE: 3
 };
 
 $root.MNN.GridSample = class GridSample {
@@ -1429,6 +1434,7 @@ $root.MNN.GridSample = class GridSample {
         $.mode = reader.int8_(position, 4, 0);
         $.paddingMode = reader.int8_(position, 6, 0);
         $.alignCorners = reader.bool_(position, 8, false);
+        $.backward = reader.bool_(position, 10, false);
         return $;
     }
 };
@@ -1540,10 +1546,10 @@ $root.MNN.OpType = {
     QuantizedConcat: 54,
     QuantizedDepthwiseConv2D: 55,
     QuantizedLogistic: 56,
-    QuantizedMatMul: 57,
+    RasterAndInterpolate: 57,
     QuantizedMaxPool: 58,
-    QuantizedRelu: 59,
-    QuantizedRelu6: 60,
+    Texture: 59,
+    RasterDiff: 60,
     QuantizedReshape: 61,
     QuantizedSoftmax: 62,
     QuantizeMaxMin: 63,

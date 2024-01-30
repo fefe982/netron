@@ -1,9 +1,10 @@
 
-const child_process = require('child_process');
-const crypto = require('crypto');
-const fs = require('fs').promises;
-const os = require('os');
-const path = require('path');
+import * as child_process from 'child_process';
+import * as crypto from 'crypto';
+import * as fs from 'fs/promises';
+import * as os from 'os';
+import * as path from 'path';
+import * as url from 'url';
 
 const args = process.argv.slice(2);
 
@@ -16,8 +17,14 @@ const read = (match) => {
 
 let configuration = null;
 
+const dirname = (...args) => {
+    const file = url.fileURLToPath(import.meta.url);
+    const dir = path.dirname(file);
+    return path.join(dir, ...args);
+};
+
 const load = async () => {
-    const file = path.join(__dirname, 'package.json');
+    const file = dirname('package.json');
     const content = await fs.readFile(file, 'utf-8');
     configuration = JSON.parse(content);
 };
@@ -48,20 +55,22 @@ const access = async (path) => {
 };
 
 const rm = async (...args) => {
-    const dir = path.join(__dirname, ...args);
+    const dir = dirname(...args);
     const exists = await access(dir);
     if (exists) {
-        writeLine('rm ' + path.join(...args));
+        const paths = path.join(...args);
+        writeLine(`rm ${paths}`);
         const options = { recursive: true, force: true };
         await fs.rm(dir, options);
     }
 };
 
 const mkdir = async (...args) => {
-    const dir = path.join(__dirname, ...args);
+    const dir = dirname(...args);
     const exists = await access(dir);
     if (!exists) {
-        writeLine('mkdir ' + path.join(...args));
+        const paths = path.join(...args);
+        writeLine(`mkdir ${paths}`);
         const options = { recursive: true };
         await fs.mkdir(dir, options);
     }
@@ -84,13 +93,13 @@ const unlink = async (dir, filter) => {
 
 const exec = async (command, encoding) => {
     if (encoding) {
-        return child_process.execSync(command, { cwd: __dirname, encoding: encoding });
+        return child_process.execSync(command, { cwd: dirname(), encoding: encoding });
     }
-    child_process.execSync(command, { cwd: __dirname, stdio: [ 0,1,2 ] });
+    child_process.execSync(command, { cwd: dirname(), stdio: [ 0,1,2 ] });
     return '';
     /*
     return new Promise((resolve, reject) => {
-        const child = child_process.exec(command, { cwd:  __dirname }, (error, stdout, stderr) => {
+        const child = child_process.exec(command, { cwd: dirname() }, (error, stdout, stderr) => {
             if (error) {
                 stderr = '\n' + stderr ;
                 if (error.message && error.message.endsWith(stderr)) {
@@ -131,7 +140,7 @@ const request = async (url, init, status) => {
                             controller.close();
                         } else {
                             position += result.value.length;
-                            write('  ' + position + ' bytes\r');
+                            write(`  ${position} bytes\r`);
                             controller.enqueue(result.value);
                             read();
                         }
@@ -152,7 +161,7 @@ const request = async (url, init, status) => {
 };
 
 const download = async (url) => {
-    writeLine('download ' + url);
+    writeLine(`download ${url}`);
     const response = await request(url);
     return response.arrayBuffer().then((buffer) => new Uint8Array(buffer));
 };
@@ -166,43 +175,68 @@ const hash = async (url, algorithm) => {
 
 const fork = async (organization, repository) => {
     const headers = {
-        Authorization: 'Bearer ' + process.env.GITHUB_TOKEN
+        Authorization: `Bearer ${process.env.GITHUB_TOKEN}`
     };
-    writeLine('github delete ' + repository);
-    await request('https://api.github.com/repos/' + process.env.GITHUB_USER + '/' + repository, {
+    writeLine(`github delete ${repository}`);
+    await request(`https://api.github.com/repos/${process.env.GITHUB_USER}/${repository}`, {
         method: 'DELETE',
         headers: headers
     }, false);
     await sleep(4000);
-    writeLine('github fork ' + repository);
-    await request('https://api.github.com/repos/' + organization + '/' + repository + '/forks', {
+    writeLine(`github fork ${repository}`);
+    await request(`https://api.github.com/repos/${organization}/${repository}/forks`, {
         method: 'POST',
         headers: headers,
         body: ''
     });
     await sleep(4000);
     await rm('dist', repository);
-    writeLine('github clone ' + repository);
-    await exec('git clone --depth=2 https://x-access-token:' + process.env.GITHUB_TOKEN + '@github.com/' + process.env.GITHUB_USER + '/' + repository + '.git ' + 'dist/' + repository);
+    writeLine(`github clone ${repository}`);
+    await exec(`git clone --depth=2 https://x-access-token:${process.env.GITHUB_TOKEN}@github.com/${process.env.GITHUB_USER}/${repository}.git ` + `dist/${repository}`);
 };
 
 const pullrequest = async (organization, repository, body) => {
-    writeLine('github push ' + repository);
-    await exec('git -C dist/' + repository + ' push');
+    writeLine(`github push ${repository}`);
+    await exec(`git -C dist/${repository} push`);
     writeLine('github pullrequest homebrew-cask');
     const headers = {
-        Authorization: 'Bearer ' + process.env.GITHUB_TOKEN
+        Authorization: `Bearer ${process.env.GITHUB_TOKEN}`
     };
-    await request('https://api.github.com/repos/' + organization + '/' + repository + '/pulls', {
+    await request(`https://api.github.com/repos/${organization}/${repository}/pulls`, {
         method: 'POST',
         headers: headers,
         body: JSON.stringify(body)
     });
 };
 
+const clean = async () => {
+    await rm('dist');
+    await rm('node_modules');
+    await rm('package-lock.json');
+    await rm('yarn.lock');
+};
+
 const install = async () => {
-    const node_modules = path.join(__dirname, 'node_modules');
-    const exists = await access(node_modules);
+    const node_modules = dirname('node_modules');
+    let exists = await access(node_modules);
+    if (exists) {
+        const dependencies = Object.assign({}, configuration.dependencies, configuration.devDependencies);
+        const matches = await Promise.all(Object.entries(dependencies).map(async ([name, version]) => {
+            const file = path.join('node_modules', name, 'package.json');
+            const exists = await access(file);
+            if (exists) {
+                const content = await fs.readFile(file, 'utf8');
+                const obj = JSON.parse(content);
+                return obj.version === version;
+            }
+            return false;
+        }));
+        exists = matches.every((match) => match);
+        if (!exists) {
+            await clean();
+        }
+    }
+    exists = await access(node_modules);
     if (!exists) {
         await exec('npm install');
     }
@@ -211,13 +245,6 @@ const install = async () => {
 const start = async () => {
     await install();
     await exec('npx electron .');
-};
-
-const clean = async () => {
-    await rm('dist');
-    await rm('node_modules');
-    await rm('package-lock.json');
-    await rm('yarn.lock');
 };
 
 const purge = async () => {
@@ -234,22 +261,19 @@ const build = async (target) => {
             await rm('dist', 'web');
             await mkdir('dist', 'web');
             writeLine('cp source/dir dist/dir');
-            const source_dir = path.join(__dirname, 'source');
-            const dist_dir = path.join(__dirname, 'dist', 'web');
+            const source_dir = dirname('source');
+            const dist_dir = dirname('dist', 'web');
             const extensions = new Set([ 'html', 'css', 'js', 'json', 'ico', 'png' ]);
             await copy(source_dir, dist_dir, (file) => extensions.has(file.split('.').pop()));
             await rm('dist', 'web', 'app.js');
             await rm('dist', 'web', 'electron.js');
-            const manifestFile = path.join(__dirname, 'package.json');
-            const contentFile = path.join(__dirname, 'dist', 'web', 'index.html');
-            const manifestContent = await fs.readFile(manifestFile, 'utf-8');
-            const manifest = JSON.parse(manifestContent);
+            const contentFile = dirname('dist', 'web', 'index.html');
             let content = await fs.readFile(contentFile, 'utf-8');
             content = content.replace(/(<meta\s*name="version"\s*content=")(.*)(">)/m, (match, p1, p2, p3) => {
-                return p1 + manifest.version + p3;
+                return p1 + configuration.version + p3;
             });
             content = content.replace(/(<meta\s*name="date"\s*content=")(.*)(">)/m, (match, p1, p2, p3) => {
-                return p1 + manifest.date + p3;
+                return p1 + configuration.date + p3;
             });
             await fs.writeFile(contentFile, content, 'utf-8');
             break;
@@ -294,11 +318,11 @@ const publish = async (target) => {
             writeLine('publish web');
             await build('web');
             await rm('dist', 'gh-pages');
-            const url = 'https://x-access-token:' + GITHUB_TOKEN + '@github.com/' + GITHUB_USER + '/netron.git';
-            await exec('git clone --depth=1 ' + url + ' --branch gh-pages ./dist/gh-pages 2>&1 > /dev/null');
+            const url = `https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_USER}/netron.git`;
+            await exec(`git clone --depth=1 ${url} --branch gh-pages ./dist/gh-pages 2>&1 > /dev/null`);
             writeLine('cp dist/web dist/gh-pages');
-            const source_dir = path.join(__dirname, 'dist', 'web');
-            const target_dir = path.join(__dirname, 'dist', 'gh-pages');
+            const source_dir = dirname('dist', 'web');
+            const target_dir = dirname('dist', 'gh-pages');
             await unlink(target_dir, (file) => file !== '.git');
             await copy(source_dir, target_dir);
             await exec('git -C dist/gh-pages add --all');
@@ -326,41 +350,41 @@ const publish = async (target) => {
         case 'cask': {
             writeLine('publish cask');
             await fork('Homebrew', 'homebrew-cask');
-            const repository = 'https://github.com/' + configuration.repository;
-            const url = repository + '/releases/download/v#{version}/' + configuration.productName + '-#{version}-mac.zip';
+            const repository = `https://github.com/${configuration.repository}`;
+            const url = `${repository}/releases/download/v#{version}/${configuration.productName}-#{version}-mac.zip`;
             const sha256 = await hash(url.replace(/#{version}/g, configuration.version), 'sha256');
             writeLine('update manifest');
             const dir = await mkdir('dist', 'homebrew-cask', 'Casks', 'n');
             const file = path.join(dir, 'netron.rb');
             await fs.writeFile(file, [
-                'cask "' + configuration.name + '" do',
-                '  version "' + configuration.version + '"',
-                '  sha256 "' + sha256.toLowerCase() + '"',
+                `cask "${configuration.name}" do`,
+                `  version "${configuration.version}"`,
+                `  sha256 "${sha256.toLowerCase()}"`,
                 '',
-                '  url "' + url + '"',
-                '  name "' + configuration.productName + '"',
-                '  desc "' + configuration.description + '"',
-                '  homepage "' + repository + '"',
+                `  url "${url}"`,
+                `  name "${configuration.productName}"`,
+                `  desc "${configuration.description}"`,
+                `  homepage "${repository}"`,
                 '',
                 '  auto_updates true',
                 '',
-                '  app "' + configuration.productName + '.app"',
+                `  app "${configuration.productName}.app"`,
                 '',
                 '  zap trash: [',
-                '    "~/Library/Application Support/' + configuration.productName + '",',
-                '    "~/Library/Preferences/' + configuration.build.appId + '.plist",',
-                '    "~/Library/Saved Application State/' + configuration.build.appId + '.savedState",',
+                `    "~/Library/Application Support/${configuration.productName}",`,
+                `    "~/Library/Preferences/${configuration.build.appId}.plist",`,
+                `    "~/Library/Saved Application State/${configuration.build.appId}.savedState",`,
                 '  ]',
                 'end',
                 ''
             ].join('\n'));
             writeLine('git push homebrew-cask');
             await exec('git -C dist/homebrew-cask add --all');
-            await exec('git -C dist/homebrew-cask commit -m "Update ' + configuration.name + ' to ' + configuration.version + '"');
+            await exec(`git -C dist/homebrew-cask commit -m "Update ${configuration.name} to ${configuration.version}"`);
             await pullrequest('Homebrew', 'homebrew-cask', {
-                title: 'Update ' + configuration.name + ' to ' + configuration.version,
+                title: `Update ${configuration.name} to ${configuration.version}`,
                 body: 'Update version and sha256',
-                head: process.env.GITHUB_USER + ':master',
+                head: `${process.env.GITHUB_USER}:master`,
                 base: 'master'
             });
             await rm('dist', 'homebrew-cask');
@@ -373,30 +397,30 @@ const publish = async (target) => {
             const version = configuration.version;
             const product = configuration.productName;
             const publisher = configuration.author.name;
-            const identifier = publisher.replace(' ', '') + '.' + product;
-            const copyright = 'Copyright (c) ' + publisher;
-            const repository = 'https://github.com/' + configuration.repository;
-            const url = repository + '/releases/download/v' + version + '/' + product + '-Setup-' + version + '.exe';
-            const extensions = configuration.build.fileAssociations.map((entry) => '- ' + entry.ext).sort().join('\n');
-            writeLine('download ' + url);
+            const identifier = `${publisher.replace(' ', '')}.${product}`;
+            const copyright = `Copyright (c) ${publisher}`;
+            const repository = `https://github.com/${configuration.repository}`;
+            const url = `${repository}/releases/download/v${version}/${product}-Setup-${version}.exe`;
+            const extensions = configuration.build.fileAssociations.map((entry) => `- ${entry.ext}`).sort().join('\n');
+            writeLine(`download ${url}`);
             const sha256 = await hash(url, 'sha256');
             const paths = [ 'dist', 'winget-pkgs', 'manifests', publisher[0].toLowerCase(), publisher.replace(' ', ''), product, version ];
             await mkdir(...paths);
             writeLine('update manifest');
-            const manifestFile = path.join(__dirname, ...paths, identifier);
-            await fs.writeFile(manifestFile + '.yaml', [
+            const manifestFile = dirname(...paths, identifier);
+            await fs.writeFile(`${manifestFile}.yaml`, [
                 '# yaml-language-server: $schema=https://aka.ms/winget-manifest.version.1.2.0.schema.json',
-                'PackageIdentifier: ' + identifier,
-                'PackageVersion: ' + version,
+                `PackageIdentifier: ${identifier}`,
+                `PackageVersion: ${version}`,
                 'DefaultLocale: en-US',
                 'ManifestType: version',
                 'ManifestVersion: 1.2.0',
                 ''
             ].join('\n'));
-            await fs.writeFile(manifestFile + '.installer.yaml', [
+            await fs.writeFile(`${manifestFile}.installer.yaml`, [
                 '# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.2.0.schema.json',
-                'PackageIdentifier: ' + identifier,
-                'PackageVersion: ' + version,
+                `PackageIdentifier: ${identifier}`,
+                `PackageVersion: ${version}`,
                 'Platform:',
                 '- Windows.Desktop',
                 'InstallModes:',
@@ -406,8 +430,8 @@ const publish = async (target) => {
                 '- Architecture: x86',
                 '  Scope: user',
                 '  InstallerType: nullsoft',
-                '  InstallerUrl: ' + url,
-                '  InstallerSha256: ' + sha256.toUpperCase(),
+                `  InstallerUrl: ${url}`,
+                `  InstallerSha256: ${sha256.toUpperCase()}`,
                 '  InstallerLocale: en-US',
                 '  InstallerSwitches:',
                 '    Custom: /NORESTART',
@@ -415,8 +439,8 @@ const publish = async (target) => {
                 '- Architecture: arm64',
                 '  Scope: user',
                 '  InstallerType: nullsoft',
-                '  InstallerUrl: ' + url,
-                '  InstallerSha256: ' + sha256.toUpperCase(),
+                `  InstallerUrl: ${url}`,
+                `  InstallerSha256: ${sha256.toUpperCase()}`,
                 '  InstallerLocale: en-US',
                 '  InstallerSwitches:',
                 '    Custom: /NORESTART',
@@ -427,23 +451,23 @@ const publish = async (target) => {
                 'ManifestVersion: 1.2.0',
                 ''
             ].join('\n'));
-            await fs.writeFile(manifestFile + '.locale.en-US.yaml', [
+            await fs.writeFile(`${manifestFile}.locale.en-US.yaml`, [
                 '# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.2.0.schema.json',
-                'PackageIdentifier: ' + identifier,
-                'PackageVersion: ' + version,
-                'PackageName: ' + product,
+                `PackageIdentifier: ${identifier}`,
+                `PackageVersion: ${version}`,
+                `PackageName: ${product}`,
                 'PackageLocale: en-US',
-                'PackageUrl: ' + repository,
-                'Publisher: ' + publisher,
-                'PublisherUrl: ' + repository,
-                'PublisherSupportUrl: ' + repository + '/issues',
-                'Author: ' + publisher,
-                'License: ' + configuration.license,
-                'Copyright: ' + copyright,
-                'CopyrightUrl: ' + repository + '/blob/main/LICENSE',
-                'ShortDescription: ' + configuration.description,
-                'Description: ' + configuration.description,
-                'Moniker: ' + name,
+                `PackageUrl: ${repository}`,
+                `Publisher: ${publisher}`,
+                `PublisherUrl: ${repository}`,
+                `PublisherSupportUrl: ${repository}/issues`,
+                `Author: ${publisher}`,
+                `License: ${configuration.license}`,
+                `Copyright: ${copyright}`,
+                `CopyrightUrl: ${repository}/blob/main/LICENSE`,
+                `ShortDescription: ${configuration.description}`,
+                `Description: ${configuration.description}`,
+                `Moniker: ${name}`,
                 'Tags:',
                 '- machine-learning',
                 '- deep-learning',
@@ -454,11 +478,11 @@ const publish = async (target) => {
             ].join('\n'));
             writeLine('git push winget-pkgs');
             await exec('git -C dist/winget-pkgs add --all');
-            await exec('git -C dist/winget-pkgs commit -m "Update ' + configuration.name + ' to ' + configuration.version + '"');
+            await exec(`git -C dist/winget-pkgs commit -m "Update ${configuration.name} to ${configuration.version}"`);
             await pullrequest('microsoft', 'winget-pkgs', {
-                title: 'Update ' + configuration.productName + ' to ' + configuration.version,
+                title: `Update ${configuration.productName} to ${configuration.version}`,
                 body: '',
-                head: process.env.GITHUB_USER + ':master',
+                head: `${process.env.GITHUB_USER}:master`,
                 base: 'master'
             });
             await rm('dist', 'winget-pkgs');
@@ -481,10 +505,16 @@ const publish = async (target) => {
 const lint = async () => {
     await install();
     writeLine('eslint');
-    await exec('npx eslint *.js source/*.js test/*.js publish/*.js tools/*.js');
+    await exec('npx eslint *.*js source/*.*js test/*.*js publish/*.*js tools/*.js');
     writeLine('pylint');
     await exec('python -m pip install --upgrade --quiet pylint');
     await exec('python -m pylint -sn --recursive=y source test publish tools *.py');
+};
+
+const validate = async() => {
+    await lint();
+    writeLine('test');
+    await exec('node test/models.js tag:validation');
 };
 
 const update = async () => {
@@ -497,6 +527,8 @@ const update = async () => {
         'coreml',
         'dlc',
         'dnn',
+        'gguf',
+        'keras',
         'mnn',
         'mslite',
         'megengine',
@@ -506,6 +538,7 @@ const update = async () => {
         'paddle',
         'pytorch',
         'rknn',
+        'sentencepiece',
         'sklearn',
         'tf',
         'uff',
@@ -513,7 +546,7 @@ const update = async () => {
     ];
     for (const target of targets) {
         /* eslint-disable no-await-in-loop */
-        await exec('tools/' + target + ' sync install schema metadata');
+        await exec(`tools/${target} sync install schema metadata`);
         /* eslint-enable no-await-in-loop */
     }
 };
@@ -528,7 +561,7 @@ const pull = async () => {
     }
     const after = await exec('git rev-parse HEAD', 'utf-8');
     if (before.trim() !== after.trim()) {
-        const output = await exec('git diff --name-only ' + before.trim() + ' ' + after.trim(), 'utf-8');
+        const output = await exec(`git diff --name-only ${before.trim()} ${after.trim()}`, 'utf-8');
         const files = new Set(output.split('\n'));
         if (files.has('package.json')) {
             await clean();
@@ -538,14 +571,12 @@ const pull = async () => {
 };
 
 const coverage = async () => {
-    await rm('.nyc_output');
-    await rm('coverage');
     await rm('dist', 'nyc');
     await mkdir('dist', 'nyc');
     await exec('cp package.json dist/nyc');
     await exec('cp -R source dist/nyc');
     await exec('nyc instrument --compact false source dist/nyc/source');
-    await exec('nyc --reporter=lcov --instrument npx electron ./dist/nyc');
+    await exec('nyc --instrument npx electron ./dist/nyc');
 };
 
 const analyze = async () => {
@@ -562,7 +593,8 @@ const analyze = async () => {
 };
 
 const version = async () => {
-    const file = path.join(__dirname, 'package.json');
+    await pull();
+    const file = dirname('package.json');
     let content = await fs.readFile(file, 'utf-8');
     content = content.replace(/(\s*"version":\s")(\d\.\d\.\d)(",)/m, (match, p1, p2, p3) => {
         const version = Array.from((parseInt(p2.split('.').join(''), 10) + 1).toString()).join('.');
@@ -575,8 +607,8 @@ const version = async () => {
     await fs.writeFile(file, content, 'utf-8');
     await load();
     await exec('git add package.json');
-    await exec('git commit -m "Update to ' + configuration.version + '"');
-    await exec('git tag v' + configuration.version);
+    await exec(`git commit -m "Update to ${configuration.version}"`);
+    await exec(`git tag v${configuration.version}`);
     await exec('git push');
     await exec('git push --tags');
 };
@@ -588,15 +620,17 @@ const next = async () => {
             case 'start': await start(); break;
             case 'clean': await clean(); break;
             case 'purge': await purge(); break;
+            case 'install': await install(); break;
             case 'build': await build(); break;
             case 'publish': await publish(); break;
             case 'version': await version(); break;
             case 'lint': await lint(); break;
+            case 'validate': await validate(); break;
             case 'update': await update(); break;
             case 'pull': await pull(); break;
             case 'analyze': await analyze(); break;
             case 'coverage': await coverage(); break;
-            default: throw new Error("Unsupported task '" + task + "'.");
+            default: throw new Error(`Unsupported task '${task}'.`);
         }
     } catch (err) {
         if (process.stdout.write) {
@@ -606,5 +640,4 @@ const next = async () => {
     }
 };
 
-load();
-next();
+load().then(() => next());

@@ -1,6 +1,7 @@
 
-var grapher = {};
-var dagre = require('./dagre');
+import * as dagre from './dagre.js';
+
+const grapher = {};
 
 grapher.Graph = class {
 
@@ -31,12 +32,12 @@ grapher.Graph = class {
 
     setEdge(edge) {
         if (!this._nodes.has(edge.v)) {
-            throw new grapher.Error("Invalid edge '" + JSON.stringify(edge.v) + "'.");
+            throw new grapher.Error(`Invalid edge '${JSON.stringify(edge.v)}'.`);
         }
         if (!this._nodes.has(edge.w)) {
-            throw new grapher.Error("Invalid edge '" + JSON.stringify(edge.w) + "'.");
+            throw new grapher.Error(`Invalid edge '${JSON.stringify(edge.w)}'.`);
         }
-        const key = edge.v + ':' + edge.w;
+        const key = `${edge.v}:${edge.w}`;
         if (!this._edges.has(key)) {
             this._edges.set(key, { v: edge.v, w: edge.w, label: edge });
         }
@@ -49,7 +50,7 @@ grapher.Graph = class {
         parent += "";
         for (let ancestor = parent; ancestor; ancestor = this.parent(ancestor)) {
             if (ancestor === node) {
-                throw new Error("Setting " + parent + " as parent of " + node + " would create a cycle");
+                throw new Error(`Setting ${parent} as parent of ${node} would create a cycle`);
             }
         }
         delete this._children[this._parent[node]][node];
@@ -134,7 +135,6 @@ grapher.Graph = class {
         edgePathGroupDefs.appendChild(marker("arrowhead"));
         edgePathGroupDefs.appendChild(marker("arrowhead-select"));
         edgePathGroupDefs.appendChild(marker("arrowhead-hover"));
-
         for (const nodeId of this.nodes.keys()) {
             const entry = this.node(nodeId);
             const node = entry.label;
@@ -161,20 +161,39 @@ grapher.Graph = class {
         }
     }
 
+    measure() {
+        for (const key of this.nodes.keys()) {
+            const entry = this.node(key);
+            if (this.children(key).length == 0) {
+                const node = entry.label;
+                node.measure();
+            }
+        }
+    }
+
     layout() {
         dagre.layout(this, this._layout);
+        for (const key of this.nodes.keys()) {
+            const entry = this.node(key);
+            if (this.children(key).length == 0) {
+                const node = entry.label;
+                node.layout();
+            }
+        }
     }
 
     update() {
         for (const nodeId of this.nodes.keys()) {
-            const entry = this.node(nodeId);
-            const node = entry.label;
             if (this.children(nodeId).length == 0) {
                 // node
+                const entry = this.node(nodeId);
+                const node = entry.label;
                 node.update();
             } else {
                 // cluster
-                node.element.setAttribute('transform', 'translate(' + node.x + ',' + node.y + ')');
+                const entry = this.node(nodeId);
+                const node = entry.label;
+                node.element.setAttribute('transform', `translate(${node.x},${node.y})`);
                 node.rectangle.setAttribute('x', - node.width / 2);
                 node.rectangle.setAttribute('y', - node.height / 2);
                 node.rectangle.setAttribute('width', node.width);
@@ -216,11 +235,11 @@ grapher.Node = class {
         if (this.id) {
             this.element.setAttribute('id', this.id);
         }
-        this.element.setAttribute('class', this.class ? 'node ' + this.class : 'node');
+        this.element.setAttribute('class', this.class ? `node ${this.class}` : 'node');
         this.element.style.opacity = 0;
         parent.appendChild(this.element);
         this.border = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        this.border.setAttribute('class', [ 'node', 'border' ].join(' '));
+        this.border.setAttribute('class', 'node node-border');
         for (let i = 0; i < this._blocks.length; i++) {
             const block = this._blocks[i];
             block.first = i === 0;
@@ -228,30 +247,38 @@ grapher.Node = class {
             block.build(document, this.element);
         }
         this.element.appendChild(this.border);
-        this.layout();
+    }
+
+    measure() {
+        this.height = 0;
+        for (const block of this._blocks) {
+            block.measure();
+            this.height = this.height + block.height;
+        }
+        this.width = Math.max(...this._blocks.map((block) => block.width));
+        for (const block of this._blocks) {
+            block.width = this.width;
+        }
     }
 
     layout() {
-        const width = Math.max(...this._blocks.map((block) => block.width));
-        let height = 0;
-        for (let i = 0; i < this._blocks.length; i++) {
-            const block = this._blocks[i];
-            block.y = height;
-            block.update(this.element, height, width, i == 0, i == this._blocks.length - 1);
-            height = height + block.height;
+        let y = 0;
+        for (const block of this._blocks) {
+            block.x = 0;
+            block.y = y;
+            block.width = this.width;
+            block.layout();
+            y += block.height;
         }
-        this.border.setAttribute('d', grapher.Node.roundedRect(0, 0, width, height, true, true, true, true));
-        const nodeBox = this.element.getBBox();
-        this.width = nodeBox.width;
-        this.height = nodeBox.height;
     }
 
     update() {
-        // for (const block of this._blocks) {
-        //     block.update();
-        // }
-        this.element.setAttribute('transform', 'translate(' + (this.x - (this.width / 2)) + ',' + (this.y - (this.height / 2)) + ')');
-        this.element.style.opacity = 1;
+        for (const block of this._blocks) {
+            block.update();
+        }
+        this.border.setAttribute('d', grapher.Node.roundedRect(0, 0, this.width, this.height, true, true, true, true));
+        this.element.setAttribute('transform', `translate(${this.x - (this.width / 2)},${this.y - (this.height / 2)})`);
+        this.element.style.removeProperty('opacity');
     }
 
     select() {
@@ -274,16 +301,16 @@ grapher.Node = class {
         r2 = r2 ? radius : 0;
         r3 = r3 ? radius : 0;
         r4 = r4 ? radius : 0;
-        return "M" + (x + r1) + "," + y +
-            "h" + (width - r1 - r2) +
-            "a" + r2 + "," + r2 + " 0 0 1 " + r2 + "," + r2 +
-            "v" + (height - r2 - r3) +
-            "a" + r3 + "," + r3 + " 0 0 1 " + -r3 + "," + r3 +
-            "h" + (r3 + r4 - width) +
-            "a" + r4 + "," + r4 + " 0 0 1 " + -r4 + "," + -r4 +
-            'v' + (-height + r4 + r1) +
-            "a" + r1 + "," + r1 + " 0 0 1 " + r1 + "," + -r1 +
-            "z";
+        return `M${x + r1},${y
+        }h${width - r1 - r2
+        }a${r2},${r2} 0 0 1 ${r2},${r2
+        }v${height - r2 - r3
+        }a${r3},${r3} 0 0 1 ${-r3},${r3
+        }h${r3 + r4 - width
+        }a${r4},${r4} 0 0 1 ${-r4},${-r4
+        }v${-height + r4 + r1
+        }a${r1},${r1} 0 0 1 ${r1},${-r1
+        }z`;
     }
 };
 
@@ -301,40 +328,50 @@ grapher.Node.Header = class {
 
     build(document, parent) {
         this._document = document;
-        this.width = 0;
-        this.height = 0;
-        let x = 0;
-        const y = 0;
         for (const entry of this._entries) {
-            entry.x = x;
-            entry.y = y;
             entry.build(document, parent);
-            x += entry.width;
-            this.height = Math.max(entry.height, this.height);
-            this.width = Math.max(x, this.width);
         }
         if (!this.first) {
             this.line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
             parent.appendChild(this.line);
         }
+        for (let i = 0; i < this._entries.length; i++) {
+            const entry = this._entries[i];
+            if (i != 0) {
+                entry.line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                parent.appendChild(entry.line);
+            }
+        }
     }
 
-    update(parent, top, width) {
-        const document = this._document;
-        const dx = width - this.width;
-        for (let i = 0; i < this._entries.length; i++) {
-            const entry = this._entries[i];
-            if (i == 0) {
-                entry.width = entry.width + dx;
-            } else {
-                entry.x = entry.x + dx;
-                entry.tx = entry.tx + dx;
-            }
-            entry.y = entry.y + top;
+    measure() {
+        this.width = 0;
+        this.height = 0;
+        for (const entry of this._entries) {
+            entry.measure();
+            this.height = Math.max(this.height, entry.height);
+            this.width += entry.width;
         }
+    }
+
+    layout() {
+        let x = this.width;
+        for (let i = this._entries.length - 1; i >= 0; i--) {
+            const entry = this._entries[i];
+            if (i > 0) {
+                x -= entry.width;
+                entry.x = x;
+            } else {
+                entry.x = 0;
+                entry.width = x;
+            }
+        }
+    }
+
+    update() {
         for (let i = 0; i < this._entries.length; i++) {
             const entry = this._entries[i];
-            entry.element.setAttribute('transform', 'translate(' + entry.x + ',' + entry.y + ')');
+            entry.element.setAttribute('transform', `translate(${entry.x},${this.y})`);
             const r1 = i == 0 && this.first;
             const r2 = i == this._entries.length - 1 && this.first;
             const r3 = i == this._entries.length - 1 && this.last;
@@ -343,24 +380,21 @@ grapher.Node.Header = class {
             entry.text.setAttribute('x', 6);
             entry.text.setAttribute('y', entry.ty);
         }
-        for (let i = 0; i < this._entries.length; i++) {
+        for (let i = 1; i < this._entries.length; i++) {
             const entry = this._entries[i];
-            if (i != 0) {
-                const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-                line.setAttribute('class', 'node');
-                line.setAttribute('x1', entry.x);
-                line.setAttribute('x2', entry.x);
-                line.setAttribute('y1', top);
-                line.setAttribute('y2', top + this.height);
-                parent.appendChild(line);
-            }
+            const line = entry.line;
+            line.setAttribute('class', 'node');
+            line.setAttribute('x1', entry.x);
+            line.setAttribute('x2', entry.x);
+            line.setAttribute('y1', this.y);
+            line.setAttribute('y2', this.y + this.height);
         }
         if (this.line) {
             this.line.setAttribute('class', 'node');
             this.line.setAttribute('x1', 0);
-            this.line.setAttribute('x2', width);
-            this.line.setAttribute('y1', top);
-            this.line.setAttribute('y2', top);
+            this.line.setAttribute('x2', this.width);
+            this.line.setAttribute('y1', this.y);
+            this.line.setAttribute('y2', this.y);
         }
     }
 };
@@ -390,8 +424,6 @@ grapher.Node.Header.Entry = class {
     }
 
     build(document, parent) {
-        const yPadding = 4;
-        const xPadding = 7;
         this.element = document.createElementNS('http://www.w3.org/2000/svg', 'g');
         parent.appendChild(this.element);
         this.path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
@@ -407,21 +439,30 @@ grapher.Node.Header.Entry = class {
             this.element.setAttribute('id', this.id);
         }
         if (this._events.click) {
-            this.element.addEventListener('click', () => this.emit('click'));
+            this.element.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.emit('click');
+            });
         }
         if (this.tooltip) {
             const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
             title.textContent = this.tooltip;
             this.element.appendChild(title);
         }
-        if (this.content) {
-            this.text.textContent = this.content;
-        }
+        this.text.textContent = this.content || '\u00A0';
+    }
+
+    measure() {
+        const yPadding = 4;
+        const xPadding = 7;
         const boundingBox = this.text.getBBox();
         this.width = boundingBox.width + xPadding + xPadding;
         this.height = boundingBox.height + yPadding + yPadding;
         this.tx = xPadding;
         this.ty = yPadding - boundingBox.y;
+    }
+
+    layout() {
     }
 };
 
@@ -453,57 +494,51 @@ grapher.Node.List = class {
 
     build(document, parent) {
         this._document = document;
-        this.width = 0;
-        this.height = 0;
-        const x = 0;
-        const y = 0;
         this.element = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-        this.element.setAttribute('class', 'node-attribute');
+        this.element.setAttribute('class', 'node-attribute-list');
         if (this._events.click) {
-            this.element.addEventListener('click', () => this.emit('click'));
+            this.element.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.emit('click');
+            });
         }
-        this.element.setAttribute('transform', 'translate(' + x + ',' + y + ')');
         this.background = document.createElementNS('http://www.w3.org/2000/svg', 'path');
         this.element.appendChild(this.background);
         parent.appendChild(this.element);
-        this.height += 3;
         for (const item of this._items) {
-            const yPadding = 1;
-            const xPadding = 6;
+            const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+            group.setAttribute('class', 'node-attribute');
             const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
             text.setAttribute('xml:space', 'preserve');
-            this.element.appendChild(text);
             if (item.tooltip) {
                 const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
                 title.textContent = item.tooltip;
                 text.appendChild(title);
             }
+            const colon = item.type === 'node' || item.type === 'node[]';
             const name = document.createElementNS('http://www.w3.org/2000/svg', 'tspan');
-            name.textContent = item.name;
-            if (item.separator.trim() !== '=') {
+            name.textContent =  colon ? `${item.name}:` : item.name;
+            if (item.separator.trim() !== '=' && !colon) {
                 name.style.fontWeight = 'bold';
             }
             text.appendChild(name);
-            if (item.value instanceof grapher.Node) {
+            group.appendChild(text);
+            this.element.appendChild(group);
+            item.group = group;
+            item.text = text;
+            if (item.type === 'node') {
                 const node = item.value;
-                node.build(document, this.element);
+                node.build(document, item.group);
+            } else if (item.type === 'node[]') {
+                for (const node of item.value) {
+                    node.build(document, item.group);
+                }
             } else {
-                const element = document.createElementNS('http://www.w3.org/2000/svg', 'tspan');
-                element.textContent = item.separator + item.value;
-                text.appendChild(element);
-            }
-            const size = text.getBBox();
-            const width = xPadding + size.width + xPadding;
-            this.width = Math.max(width, this.width);
-            text.setAttribute('x', x + xPadding);
-            text.setAttribute('y', this.height + yPadding - size.y);
-            this.height += yPadding + size.height + yPadding;
-            if (item.height !== undefined) {
-                this.height += item.height;
+                const tspan = document.createElementNS('http://www.w3.org/2000/svg', 'tspan');
+                tspan.textContent = item.separator + item.value;
+                item.text.appendChild(tspan);
             }
         }
-        this.height += 3;
-        this.width = Math.max(75, this.width);
         if (!this.first) {
             this.line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
             this.line.setAttribute('class', 'node');
@@ -511,14 +546,95 @@ grapher.Node.List = class {
         }
     }
 
-    update(parent, top, width) {
-        this.element.setAttribute('transform', 'translate(0,' + this.y + ')');
-        this.background.setAttribute('d', grapher.Node.roundedRect(0, 0, width, this.height, this.first, this.first, this.last, this.last));
+    measure() {
+        this.width = 75;
+        this.height = 3;
+        const yPadding = 1;
+        const xPadding = 6;
+        for (let i = 0; i < this._items.length; i++) {
+            const item = this._items[i];
+            const size = item.text.getBBox();
+            item.width = xPadding + size.width + xPadding;
+            item.height = yPadding + size.height + yPadding;
+            item.offset = size.y;
+            this.height += item.height;
+            if (item.type === 'node') {
+                const node = item.value;
+                node.measure();
+                this.width = Math.max(150, this.width, node.width + (2 * xPadding));
+                this.height += node.height + yPadding + yPadding + yPadding + yPadding;
+                if (i === this._items.length - 1) {
+                    this.height += 3;
+                }
+            } else if (item.type === 'node[]') {
+                for (const node of item.value) {
+                    node.measure();
+                    this.width = Math.max(150, this.width, node.width + (2 * xPadding));
+                    this.height += node.height + yPadding + yPadding + yPadding + yPadding;
+                }
+                if (i === this._items.length - 1) {
+                    this.height += 3;
+                }
+            }
+            this.width = Math.max(this.width, item.width);
+        }
+        this.height += 3;
+    }
+
+    layout() {
+        const yPadding = 1;
+        const xPadding = 6;
+        let y = 3;
+        for (const item of this._items) {
+            item.x = this.x + xPadding;
+            item.y = y + yPadding - item.offset;
+            y += item.height;
+            if (item.type === 'node') {
+                const node = item.value;
+                node.width = this.width - xPadding - xPadding;
+                node.layout();
+                node.x = this.x + xPadding + (node.width / 2);
+                node.y = y + (node.height / 2) + yPadding + yPadding;
+                y += node.height + yPadding + yPadding + yPadding + yPadding;
+            } else if (item.type === 'node[]') {
+                for (const node of item.value) {
+                    node.width = this.width - xPadding - xPadding;
+                    node.layout();
+                    node.x = this.x + xPadding + (node.width / 2);
+                    node.y = y + (node.height / 2) + yPadding + yPadding;
+                    y += node.height + yPadding + yPadding + yPadding + yPadding;
+                }
+            }
+        }
+    }
+
+    update() {
+        this.element.setAttribute('transform', `translate(${this.x},${this.y})`);
+        this.background.setAttribute('d', grapher.Node.roundedRect(0, 0, this.width, this.height, this.first, this.first, this.last, this.last));
+        for (const item of this._items) {
+            const text = item.text;
+            text.setAttribute('x', item.x);
+            text.setAttribute('y', item.y);
+            if (item.type === 'node') {
+                const node = item.value;
+                node.update();
+            } else if (item.type === 'node[]') {
+                for (const node of item.value) {
+                    node.update();
+                }
+            }
+        }
         if (this.line) {
             this.line.setAttribute('x1', 0);
-            this.line.setAttribute('x2', width);
+            this.line.setAttribute('x2', this.width);
             this.line.setAttribute('y1', 0);
             this.line.setAttribute('y2', 0);
+        }
+        for (const item of this._items) {
+            if (item.value instanceof grapher.Node) {
+                const node = item.value;
+                node.update();
+            }
         }
     }
 };
@@ -530,6 +646,11 @@ grapher.Node.List.Item = class {
         this.value = value;
         this.tooltip = tooltip;
         this.separator = separator;
+        if (value instanceof grapher.Node) {
+            this.type = 'node';
+        } else if (Array.isArray(value) && value.every((value) => value instanceof grapher.Node)) {
+            this.type = 'node[]';
+        }
     }
 };
 
@@ -562,7 +683,7 @@ grapher.Edge = class {
         if (this.id) {
             this.element.setAttribute('id', this.id);
         }
-        this.element.setAttribute('class', this.class ? 'edge-path ' + this.class : 'edge-path');
+        this.element.setAttribute('class', this.class ? `edge-path ${this.class}` : 'edge-path');
         edgePathGroupElement.appendChild(this.element);
         this.hitTest = createElement('path');
         this.hitTest.setAttribute('class', 'edge-path-hit-test');
@@ -581,7 +702,7 @@ grapher.Edge = class {
             this.labelElement.style.opacity = 0;
             this.labelElement.setAttribute('class', 'edge-label');
             if (this.id) {
-                this.labelElement.setAttribute('id', 'edge-label-' + this.id);
+                this.labelElement.setAttribute('id', `edge-label-${this.id}`);
             }
             edgeLabelGroupElement.appendChild(this.labelElement);
             const edgeBox = this.labelElement.getBBox();
@@ -619,7 +740,7 @@ grapher.Edge = class {
         this.element.setAttribute('d', edgePath);
         this.hitTest.setAttribute('d', edgePath);
         if (this.labelElement) {
-            this.labelElement.setAttribute('transform', 'translate(' + (this.x - (this.width / 2)) + ',' + (this.y - (this.height / 2)) + ')');
+            this.labelElement.setAttribute('transform', `translate(${this.x - (this.width / 2)},${this.y - (this.height / 2)})`);
             this.labelElement.style.opacity = 1;
         }
     }
@@ -736,15 +857,15 @@ grapher.Edge.Path = class {
     }
 
     moveTo(x, y) {
-        this._data += "M" + (this._x0 = this._x1 = +x) + "," + (this._y0 = this._y1 = +y);
+        this._data += `M${this._x0 = this._x1 = +x},${this._y0 = this._y1 = +y}`;
     }
 
     lineTo(x, y) {
-        this._data += "L" + (this._x1 = +x) + "," + (this._y1 = +y);
+        this._data += `L${this._x1 = +x},${this._y1 = +y}`;
     }
 
     bezierCurveTo(x1, y1, x2, y2, x, y) {
-        this._data += "C" + (+x1) + "," + (+y1) + "," + (+x2) + "," + (+y2) + "," + (this._x1 = +x) + "," + (this._y1 = +y);
+        this._data += `C${+x1},${+y1},${+x2},${+y2},${this._x1 = +x},${this._y1 = +y}`;
     }
 
     closePath() {
@@ -760,8 +881,4 @@ grapher.Edge.Path = class {
     }
 };
 
-if (typeof module !== 'undefined' && typeof module.exports === 'object') {
-    module.exports.Graph = grapher.Graph;
-    module.exports.Node = grapher.Node;
-    module.exports.Edge = grapher.Edge;
-}
+export const { Graph, Node, Edge } = grapher;

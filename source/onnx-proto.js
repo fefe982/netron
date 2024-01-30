@@ -1,4 +1,7 @@
-var $root = protobuf.get('onnx');
+
+import * as protobuf from './protobuf.js';
+
+const $root = protobuf.get('onnx');
 
 $root.onnx = {};
 
@@ -12,7 +15,8 @@ $root.onnx.Version = {
     "IR_VERSION_2019_9_19": 6,
     "IR_VERSION_2020_5_8": 7,
     "IR_VERSION_2021_7_30": 8,
-    "IR_VERSION": 9
+    "IR_VERSION_2023_5_5": 9,
+    "IR_VERSION": 10
 };
 
 $root.onnx.AttributeProto = class AttributeProto {
@@ -859,7 +863,9 @@ $root.onnx.TensorProto.DataType = {
     "FLOAT8E4M3FN": 17,
     "FLOAT8E4M3FNUZ": 18,
     "FLOAT8E5M2": 19,
-    "FLOAT8E5M2FNUZ": 20
+    "FLOAT8E5M2FNUZ": 20,
+    "UINT4": 21,
+    "INT4": 22
 };
 
 $root.onnx.TensorProto.Segment = class Segment {

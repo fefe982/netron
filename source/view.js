@@ -1,16 +1,17 @@
 
-var view =  {};
-var markdown = {};
-var base = require('./base');
-var zip = require('./zip');
-var tar = require('./tar');
-var json = require('./json');
-var xml = require('./xml');
-var protobuf = require('./protobuf');
-var flatbuffers = require('./flatbuffers');
-var hdf5 = require('./hdf5');
-var python = require('./python');
-var grapher = require('./grapher');
+import * as base from './base.js';
+import * as zip from './zip.js';
+import * as tar from './tar.js';
+import * as json from './json.js';
+import * as xml from './xml.js';
+import * as protobuf from './protobuf.js';
+import * as flatbuffers from './flatbuffers.js';
+import * as hdf5 from './hdf5.js';
+import * as python from './python.js';
+import * as grapher from './grapher.js';
+
+const view =  {};
+const markdown = {};
 
 view.View = class {
 
@@ -34,11 +35,11 @@ view.View = class {
 
     async start() {
         try {
+            await zip.Archive.import();
             await this._host.view(this);
             const options = this._host.get('options') || {};
-            for (const entry of Object.entries(options)) {
-                const name = entry[0];
-                this._options[name] = entry[1];
+            for (const [name, value] of Object.entries(options)) {
+                this._options[name] = value;
             }
             this._element('sidebar-button').addEventListener('click', () => {
                 this.showModelProperties();
@@ -49,11 +50,8 @@ view.View = class {
             this._element('zoom-out-button').addEventListener('click', () => {
                 this.zoomOut();
             });
-            this._element('back-button').addEventListener('click', () => {
+            this._element('toolbar-path-back-button').addEventListener('click', () => {
                 this.popGraph();
-            });
-            this._element('name-button').addEventListener('click', () => {
-                this.showDocumentation(this.activeGraph);
             });
             this._element('sidebar').addEventListener('mousewheel', (e) => {
                 if (e.shiftKey || e.ctrlKey) {
@@ -70,6 +68,10 @@ view.View = class {
             this._menu.add({
                 accelerator: platform === 'darwin' ? 'Ctrl+Cmd+F' : 'F11',
                 execute: () => this._host.execute('fullscreen')
+            });
+            this._menu.add({
+                accelerator: 'Backspace',
+                execute: () => this.popGraph()
             });
             if (this._host.environment('menu')) {
                 this._menu.attach(this._element('menu'), this._element('menu-button'));
@@ -101,13 +103,13 @@ view.View = class {
                     file.add({
                         label: 'Export as &PNG',
                         accelerator: 'CmdOrCtrl+Shift+E',
-                        execute: () => this.export(this._host.document.title + '.png'),
+                        execute: () => this.export(`${this._host.document.title}.png`),
                         enabled: () => this.activeGraph
                     });
                     file.add({
                         label: 'Export as &SVG',
                         accelerator: 'CmdOrCtrl+Alt+E',
-                        execute: () => this.export(this._host.document.title + '.svg'),
+                        execute: () => this.export(`${this._host.document.title}.svg`),
                         enabled: () => this.activeGraph
                     });
                 }
@@ -198,7 +200,7 @@ view.View = class {
                     execute: () => this._host.execute('report-issue')
                 });
                 help.add({
-                    label: '&About ' + this._host.environment('name'),
+                    label: `&About ${this._host.environment('name')}`,
                     execute: () => this._host.execute('about')
                 });
             }
@@ -240,7 +242,7 @@ view.View = class {
     progress(percent) {
         const bar = this._element('progress-bar');
         if (bar) {
-            bar.style.width = percent.toString() + '%';
+            bar.style.width = `${percent}%`;
         }
     }
 
@@ -305,13 +307,12 @@ view.View = class {
                 this._options.mousewheel = this._options.mousewheel === 'scroll' ? 'zoom' : 'scroll';
                 break;
             default:
-                throw new view.Error("Unsupported toogle '" + name + "'.");
+                throw new view.Error(`Unsupported toogle '${name}'.`);
         }
         const options = {};
-        for (const entry of Object.entries(this._options)) {
-            const name = entry[0];
-            if (this._defaultOptions[name] !== entry[1]) {
-                options[name] = entry[1];
+        for (const [name, value] of Object.entries(this._options)) {
+            if (this._defaultOptions[name] !== value) {
+                options[name] = value;
             }
         }
         if (Object.entries(options).length == 0) {
@@ -328,7 +329,7 @@ view.View = class {
                 const recent = recents[i];
                 this._recents.add({
                     label: recent.label,
-                    accelerator: 'CmdOrCtrl+' + (i + 1).toString(),
+                    accelerator: `CmdOrCtrl+${(i + 1)}`,
                     execute: () => this._host.execute('open', recent.path)
                 });
             }
@@ -414,8 +415,8 @@ view.View = class {
         const y = (e ? e.pageY : (container.clientHeight / 2)) + scrollTop;
         const width = zoom * this._width;
         const height = zoom * this._height;
-        canvas.style.width = width + 'px';
-        canvas.style.height = height + 'px';
+        canvas.style.width = `${width}px`;
+        canvas.style.height = `${height}px`;
         this._scrollLeft = Math.max(0, ((x * zoom) / this._zoom) - (x - scrollLeft));
         this._scrollTop = Math.max(0, ((y * zoom) / this._zoom) - (y - scrollTop));
         container.scrollLeft = this._scrollLeft;
@@ -598,7 +599,7 @@ view.View = class {
             { name: 'Error loading ONNX model.', message: /^File format is not onnx\.ModelProto \(Cannot read properties of undefined \(reading 'ModelProto'\)\)\./, url: 'https://github.com/lutzroeder/netron/issues/1156' },
             { name: 'Error loading ONNX model.', message: /^File format is not onnx\.ModelProto/, url: 'https://github.com/lutzroeder/netron/issues/549' },
             { name: 'Error loading TensorFlow Lite model.', message: /^Offset is outside the bounds of the DataView/, url: 'https://github.com/lutzroeder/netron/issues/563' },
-            { name: 'Error loading TensorRT model.', message: /^Invalid file content. File contains undocumented TensorRT engine data\./, url: 'https://github.com/lutzroeder/netron/issues/725' },
+            { name: 'Error loading TensorRT model.', message: /^Invalid file content. File contains undocumented TensorRT engine data\./, url: 'https://github.com/lutzroeder/netron/issues/725' }
         ];
         const known = knowns.find((known) => (known.name.length === 0 || known.name === err.name) && err.message.match(known.message));
         const url = known && known.url ? known.url : null;
@@ -606,7 +607,7 @@ view.View = class {
         name = name || err.name;
         const button = await this._host.error(name, message, url === null);
         if (button === 0 && (url || this._host.type == 'Electron')) {
-            this._host.openURL(url || this._host.environment('repository') + '/issues');
+            this._host.openURL(url || `${this._host.environment('repository')}/issues`);
         }
         this.show(screen !== undefined ? screen : 'welcome');
     }
@@ -625,7 +626,7 @@ view.View = class {
                 format.push(model.format);
             }
             if (model.producer) {
-                format.push('(' + model.producer + ')');
+                format.push(`(${model.producer})`);
             }
             if (format.length > 0) {
                 this._host.event('model_open', {
@@ -687,23 +688,44 @@ view.View = class {
             if (this._page !== 'default') {
                 this.show('default');
             }
-            const nameButton = this._element('name-button');
-            const backButton = this._element('back-button');
+            const path = this._element('toolbar-path');
+            const back = this._element('toolbar-path-back-button');
+            while (path.children.length > 1) {
+                path.removeChild(path.lastElementChild);
+            }
             if (this._graphs.length <= 1) {
-                backButton.style.opacity = 0;
-                nameButton.style.opacity = 0;
+                back.style.opacity = 0;
             } else {
-                const graph = this.activeGraph;
-                const name = graph ? graph.name : '';
-                if (name.length > 61) {
-                    nameButton.setAttribute('title', name);
-                    nameButton.innerHTML = '\u2026' + name.substring(name.length - 61, name.length);
-                } else {
-                    nameButton.removeAttribute('title');
-                    nameButton.innerHTML = name;
+                back.style.opacity = 1;
+                const last = this._graphs.length - 2;
+                const count = Math.min(2, last);
+                if (count < last) {
+                    const element = this._host.document.createElement('button');
+                    element.setAttribute('class', 'toolbar-path-name-button');
+                    element.innerHTML = '&hellip;';
+                    path.appendChild(element);
                 }
-                backButton.style.opacity = 1;
-                nameButton.style.opacity = 1;
+                for (let i = count; i >= 0; i--) {
+                    const graph = this._graphs[i];
+                    const element = this._host.document.createElement('button');
+                    element.setAttribute('class', 'toolbar-path-name-button');
+                    element.addEventListener('click', () => {
+                        if (i > 0) {
+                            this._graphs = this._graphs.slice(i);
+                            this._updateGraph(this._model, this._graphs);
+                        }
+                        this.showDefinition(this._graphs[0]);
+                    });
+                    const name = graph && graph.name ? graph.name : '';
+                    if (name.length > 24) {
+                        element.setAttribute('title', name);
+                        element.innerHTML = `&hellip;${name.substring(name.length - 24, name.length)}`;
+                    } else {
+                        element.removeAttribute('title');
+                        element.innerHTML = name;
+                    }
+                    path.appendChild(element);
+                }
             }
         };
         const lastModel = this._model;
@@ -734,7 +756,6 @@ view.View = class {
 
     async renderGraph(model, graph, options) {
         this._graph = null;
-
         const canvas = this._element('canvas');
         while (canvas.lastChild) {
             canvas.removeChild(canvas.lastChild);
@@ -743,14 +764,12 @@ view.View = class {
             return;
         }
         this._zoom = 1;
-
         const groups = graph.groups;
         const nodes = graph.nodes;
         this._host.event('graph_view', {
             graph_node_count: nodes.length,
             graph_skip: 0
         });
-
         const layout = {};
         layout.nodesep = 20;
         layout.ranksep = 20;
@@ -762,10 +781,8 @@ view.View = class {
         if (nodes.length > 3000) {
             layout.ranker = 'longest-path';
         }
-
         const viewGraph = new view.Graph(this, model, options, groups, layout);
         viewGraph.add(graph);
-
         // Workaround for Safari background drag/zoom issue:
         // https://stackoverflow.com/questions/40887193/d3-js-zoom-is-not-working-with-mousewheel-in-safari
         const background = this._host.document.createElementNS('http://www.w3.org/2000/svg', 'rect');
@@ -773,16 +790,14 @@ view.View = class {
         background.setAttribute('fill', 'none');
         background.setAttribute('pointer-events', 'all');
         canvas.appendChild(background);
-
         const origin = this._host.document.createElementNS('http://www.w3.org/2000/svg', 'g');
         origin.setAttribute('id', 'origin');
         canvas.appendChild(origin);
-
         viewGraph.build(this._host.document, origin);
         await this._timeout(20);
+        viewGraph.measure();
         viewGraph.layout();
         viewGraph.update();
-
         const elements = Array.from(canvas.getElementsByClassName('graph-input') || []);
         if (elements.length === 0) {
             const nodeElements = Array.from(canvas.getElementsByClassName('graph-node') || []);
@@ -794,20 +809,18 @@ view.View = class {
         const margin = 100;
         const width = Math.ceil(margin + size.width + margin);
         const height = Math.ceil(margin + size.height + margin);
-        origin.setAttribute('transform', 'translate(' + margin.toString() + ', ' + margin.toString() + ') scale(1)');
+        origin.setAttribute('transform', `translate(${margin}, ${margin}) scale(1)`);
         background.setAttribute('width', width);
         background.setAttribute('height', height);
         this._width = width;
         this._height = height;
         delete this._scrollLeft;
         delete this._scrollRight;
-        canvas.setAttribute('viewBox', '0 0 ' + width + ' ' + height);
+        canvas.setAttribute('viewBox', `0 0 ${width} ${height}`);
         canvas.setAttribute('width', width);
         canvas.setAttribute('height', height);
-
         this._zoom = 1;
         this._updateZoom(this._zoom);
-
         const container = this._element('graph');
         if (elements && elements.length > 0) {
             // Center view based on input elements
@@ -819,9 +832,9 @@ view.View = class {
                 xs.push(rect.left + (rect.width / 2));
                 ys.push(rect.top + (rect.height / 2));
             }
-            let x = xs[0];
-            const y = ys[0];
-            if (ys.every(y => y === ys[0])) {
+            let [x] = xs;
+            const [y] = ys;
+            if (ys.every((y) => y === ys[0])) {
                 x = xs.reduce((a, b) => a + b, 0) / xs.length;
             }
             const graphRect = container.getBoundingClientRect();
@@ -841,7 +854,7 @@ view.View = class {
     applyStyleSheet(element, name) {
         let rules = [];
         for (const styleSheet of this._host.document.styleSheets) {
-            if (styleSheet && styleSheet.href && styleSheet.href.endsWith('/' + name)) {
+            if (styleSheet && styleSheet.href && styleSheet.href.endsWith(`/${name}`)) {
                 rules = styleSheet.cssRules;
                 break;
             }
@@ -888,7 +901,7 @@ view.View = class {
             const delta = (Math.min(size.width, size.height) / 2.0) * 0.1;
             const width = Math.ceil(delta + size.width + delta);
             const height = Math.ceil(delta + size.height + delta);
-            origin.setAttribute('transform', 'translate(' + (delta - size.x).toString() + ', ' + (delta - size.y).toString() + ') scale(1)');
+            origin.setAttribute('transform', `translate(${(delta - size.x)}, ${(delta - size.y)}) scale(1)`);
             clone.setAttribute('width', width);
             clone.setAttribute('height', height);
             background.setAttribute('width', width);
@@ -924,7 +937,7 @@ view.View = class {
                         }
                     }, 'image/png');
                 };
-                image.src = 'data:image/svg+xml;base64,' + this._host.window.btoa(unescape(encodeURIComponent(data)));
+                image.src = `data:image/svg+xml;base64,${this._host.window.btoa(unescape(encodeURIComponent(data)))}`;
             }
         }
     }
@@ -955,10 +968,7 @@ view.View = class {
                 }
                 const nodeSidebar = new view.NodeSidebar(this._host, node);
                 nodeSidebar.on('show-documentation', (/* sender, e */) => {
-                    this.showDocumentation(node.type);
-                });
-                nodeSidebar.on('show-graph', (sender, graph) => {
-                    this.pushGraph(graph);
+                    this.showDefinition(node.type);
                 });
                 nodeSidebar.on('export-tensor', (sender, tensor) => {
                     const defaultPath = tensor.name ? tensor.name.split('/').join('_').split(':').join('_').split('.').join('_') : 'tensor';
@@ -1036,7 +1046,7 @@ view.View = class {
         }
     }
 
-    showDocumentation(type) {
+    showDefinition(type) {
         if (type && (type.description || type.inputs || type.outputs || type.attributes)) {
             if (type.nodes && type.nodes.length > 0) {
                 this.pushGraph(type);
@@ -1184,7 +1194,7 @@ view.Menu = class {
 
     group(label) {
         const item = new view.Menu.Group(this, label);
-        item.identifier = 'menu-item-' + this.items.length.toString();
+        item.identifier = `menu-item-${this.items.length}`;
         this.items.push(item);
         item.shortcut = this.register(item.accelerator);
         return item;
@@ -1277,7 +1287,7 @@ view.Menu = class {
     }
 
     unregister(action) {
-        this._accelerators = new Map(Array.from(this._accelerators.entries()).filter((entry) => entry[1] !== action));
+        this._accelerators = new Map(Array.from(this._accelerators.entries()).filter(([, value]) => value !== action));
     }
 
     _execute(action) {
@@ -1368,7 +1378,7 @@ view.Menu = class {
             if (index !== -1) {
                 if (mnemonic) {
                     item.mnemonic = value[index + 1].toUpperCase();
-                    return value.substring(0, index) + '<u>' + value[index + 1] + '</u>' + value.substring(index + 2);
+                    return `${value.substring(0, index)}<u>${value[index + 1]}</u>${value.substring(index + 2)}`;
                 }
                 return value.substring(0, index) + value.substring(index + 1);
             }
@@ -1512,14 +1522,14 @@ view.Menu.Group = class {
 
     add(value) {
         const item = Object.keys(value).length > 0 ? new view.Menu.Command(value) : new view.Menu.Separator();
-        item.identifier = this.identifier + '-' + this.items.length.toString();
+        item.identifier = `${this.identifier}-${this.items.length}`;
         this.items.push(item);
         item.shortcut = this.parent.register(item, item.accelerator);
     }
 
     group(label) {
         const item = new view.Menu.Group(this, label);
-        item.identifier = this.identifier + '-' + this.items.length.toString();
+        item.identifier = `${this.identifier}-${this.items.length}`;
         this.items.push(item);
         item.shortcut = this.parent.register(item, item.accelerator);
         return item;
@@ -1590,7 +1600,13 @@ view.Graph = class extends grapher.Graph {
         this._selection = new Set();
     }
 
-    createNode(node) {
+    createNode(node, type) {
+        if (type) {
+            const value = new view.Node(this, { type: type });
+            value.name = (this._nodeKey++).toString();
+            this._table.set(type, value);
+            return value;
+        }
         const value = new view.Node(this, node);
         value.name = (this._nodeKey++).toString();
         this._table.set(node, value);
@@ -1618,7 +1634,7 @@ view.Graph = class extends grapher.Graph {
             this._values.set(name, value);
             this._table.set(argument, value);
         } else {
-            // TODO #1109 duplicate argument name
+            // duplicate argument name
             const value = this._values.get(name);
             this._table.set(argument, value);
         }
@@ -1710,8 +1726,8 @@ view.Graph = class extends grapher.Graph {
                         }
                     }
                     if (groupName) {
-                        createCluster(groupName + '\ngroup');
-                        this.setParent(viewNode.name, groupName + '\ngroup');
+                        createCluster(`${groupName}\ngroup`);
+                        this.setParent(viewNode.name, `${groupName}\ngroup`);
                     }
                 }
             }
@@ -1789,7 +1805,7 @@ view.Node = class extends grapher.Node {
         this.context = context;
         this.value = value;
         view.Node.counter = view.Node.counter || 0;
-        this.id = 'node-' + (value.name ? 'name-' + value.name : 'id-' + (view.Node.counter++).toString());
+        this.id = `node-${value.name ? `name-${value.name}` : `id-${(view.Node.counter++)}`}`;
         this._add(this.value);
     }
 
@@ -1812,10 +1828,10 @@ view.Node = class extends grapher.Node {
         const type = node.type;
         const category = type && type.category ? type.category : '';
         if (category) {
-            styles.push('node-item-type-' + category.toLowerCase());
+            styles.push(`node-item-type-${category.toLowerCase()}`);
         }
         if (typeof type.name !== 'string' || !type.name.split) { // #416
-            const error = new view.Error("Unsupported node type '" + JSON.stringify(type.name) + "'.");
+            const error = new view.Error(`Unsupported node type '${JSON.stringify(type.name)}'.`);
             if (this.context.model && this.context.model.identifier) {
                 error.context = this.context.model.identifier;
             }
@@ -1824,25 +1840,29 @@ view.Node = class extends grapher.Node {
         const content = options.names && (node.name || node.location) ? (node.name || node.location) : type.name.split('.').pop();
         const tooltip = options.names && (node.name || node.location) ? type.name : (node.name || node.location);
         const title = header.add(null, styles, content, tooltip);
-        title.on('click', () => this.context.activate(node));
-        if (node.type.nodes && node.type.nodes.length > 0) {
+        title.on('click', () => {
+            this.context.activate(node);
+        });
+        if (Array.isArray(node.type.nodes) && node.type.nodes.length > 0) {
             const definition = header.add(null, styles, '\u0192', 'Show Function Definition');
             definition.on('click', () => this.context.view.pushGraph(node.type));
         }
-        if (node.nodes) {
+        if (Array.isArray(node.nodes)) {
             // this._expand = header.add(null, styles, '+', null);
             // this._expand.on('click', () => this.toggle());
         }
         const initializers = [];
         let hiddenInitializers = false;
         if (options.weights) {
-            for (const input of node.inputs) {
-                if (input.visible !== false && input.value.length === 1 && input.value[0].initializer != null) {
-                    initializers.push(input);
-                }
-                if ((input.visible === false || input.value.length > 1) &&
-                    input.value.some((argument) => argument.initializer != null)) {
-                    hiddenInitializers = true;
+            if (Array.isArray(node.inputs)) {
+                for (const input of node.inputs) {
+                    if (input.visible !== false && input.value.length === 1 && input.value[0].initializer != null) {
+                        initializers.push(input);
+                    }
+                    if ((input.visible === false || input.value.length > 1) &&
+                        input.value.some((argument) => argument.initializer != null)) {
+                        hiddenInitializers = true;
+                    }
                 }
             }
         }
@@ -1851,11 +1871,14 @@ view.Node = class extends grapher.Node {
         if (Array.isArray(node.attributes) && node.attributes.length > 0) {
             for (const attribute of node.attributes) {
                 switch (attribute.type) {
-                    /* case 'object':
-                    case 'function': {
+                    case 'graph':
+                    case 'object':
+                    case 'object[]':
+                    case 'function':
+                    case 'function[]': {
                         objects.push(attribute);
                         break;
-                    } */
+                    }
                     default: {
                         if (options.attributes && attribute.visible !== false) {
                             attributes.push(attribute);
@@ -1869,12 +1892,12 @@ view.Node = class extends grapher.Node {
             const list = this.list();
             list.on('click', () => this.context.activate(node));
             for (const argument of initializers) {
-                const value = argument.value[0];
+                const [value] = argument.value;
                 const type = value.type;
                 let shape = '';
                 let separator = '';
                 if (type && type.shape && type.shape.dimensions && Array.isArray(type.shape.dimensions)) {
-                    shape = '\u3008' + type.shape.dimensions.map((d) => (d !== null && d !== undefined) ? d : '?').join('\u00D7') + '\u3009';
+                    shape = `\u3008${type.shape.dimensions.map((d) => (d !== null && d !== undefined) ? d : '?').join('\u00D7')}\u3009`;
                     if (type.shape.dimensions.length === 0 && value.initializer) {
                         try {
                             const initializer = value.initializer;
@@ -1883,7 +1906,7 @@ view.Node = class extends grapher.Node {
                             if ((encoding === '<' || encoding === '>' || encoding === '|') && !tensor.empty && tensor.type.dataType !== '?') {
                                 shape = tensor.toString();
                                 if (shape && shape.length > 10) {
-                                    shape = shape.substring(0, 10) + '\u2026';
+                                    shape = `${shape.substring(0, 10)}\u2026`;
                                 }
                                 separator = ' = ';
                             }
@@ -1894,7 +1917,7 @@ view.Node = class extends grapher.Node {
                             } catch (error) {
                                 // continue regardless of error
                             }
-                            const error = new view.Error("Failed to render tensor of type '" + type + "' (" + err.message + ").");
+                            const error = new view.Error(`Failed to render tensor of type '${type}' (${err.message}).`);
                             if (this.context.view.model && this.context.view.model.identifier) {
                                 error.context = this.context.view.model.identifier;
                             }
@@ -1911,16 +1934,23 @@ view.Node = class extends grapher.Node {
                 if (attribute.visible !== false) {
                     let value = new view.Formatter(attribute.value, attribute.type).toString();
                     if (value && value.length > 25) {
-                        value = value.substring(0, 25) + '\u2026';
+                        value = `${value.substring(0, 25)}\u2026`;
                     }
                     list.add(attribute.name, value, attribute.type, ' = ');
                 }
             }
             for (const attribute of objects) {
+                if (attribute.type === 'graph') {
+                    const node = this.context.createNode(null, attribute.value);
+                    list.add(attribute.name, node, '', '');
+                }
                 if (attribute.type === 'function' || attribute.type === 'object') {
                     const node = this.context.createNode(attribute.value);
-                    const item = list.add(attribute.name, node, '', '');
-                    item.height = 20;
+                    list.add(attribute.name, node, '', '');
+                }
+                if (attribute.type === 'function[]' || attribute.type === 'object[]') {
+                    const nodes = attribute.value.map((value) => this.context.createNode(value));
+                    list.add(attribute.name, nodes, '', '');
                 }
             }
         }
@@ -1956,6 +1986,14 @@ view.Node = class extends grapher.Node {
     activate() {
         this.context.view.showNodeProperties(this.value);
     }
+
+    edge(to) {
+        this._edges = this._edges || new Map();
+        if (!this._edges.has(to)) {
+            this._edges.set(to, new view.Edge(this, to));
+        }
+        return this._edges.get(to);
+    }
 };
 
 view.Input = class extends grapher.Node {
@@ -1973,7 +2011,7 @@ view.Input = class extends grapher.Node {
         const header = this.header();
         const title = header.add(null, [ 'graph-item-input' ], name, types);
         title.on('click', () => this.context.view.showModelProperties());
-        this.id = 'input-' + (name ? 'name-' + name : 'id-' + (view.Input.counter++).toString());
+        this.id = `input-${name ? `name-${name}` : `id-${(view.Input.counter++)}`}`;
     }
 
     get class() {
@@ -1990,6 +2028,14 @@ view.Input = class extends grapher.Node {
 
     activate() {
         this.context.view.showModelProperties();
+    }
+
+    edge(to) {
+        this._edges = this._edges || new Map();
+        if (!this._edges.has(to)) {
+            this._edges.set(to, new view.Edge(this, to));
+        }
+        return this._edges.get(to);
     }
 };
 
@@ -2054,15 +2100,16 @@ view.Value = class {
                 if (this.context.options.names) {
                     content = this.value.name.split('\n').shift(); // custom argument id
                 }
-                const edge = new view.Edge(this, this.from, to);
-                edge.v = this.from.name;
-                edge.w = to.name;
-                if (content) {
-                    edge.label = content;
-                }
-                edge.id = 'edge-' + this.value.name;
-                if (this._controlDependencies && this._controlDependencies.has(i)) {
-                    edge.class = 'edge-path-control-dependency';
+                const edge = this.from.edge(to);
+                if (!edge.value) {
+                    edge.value = this;
+                    if (content) {
+                        edge.label = content;
+                    }
+                    edge.id = `edge-${this.value.name}`;
+                    if (this._controlDependencies && this._controlDependencies.has(i)) {
+                        edge.class = 'edge-path-control-dependency';
+                    }
                 }
                 this.context.setEdge(edge);
                 this._edges.push(edge);
@@ -2072,15 +2119,19 @@ view.Value = class {
 
     select() {
         let array = [];
-        for (const edge of this._edges) {
-            array = array.concat(edge.select());
+        if (Array.isArray(this._edges)) {
+            for (const edge of this._edges) {
+                array = array.concat(edge.select());
+            }
         }
         return array;
     }
 
     deselect() {
-        for (const edge of this._edges) {
-            edge.deselect();
+        if (Array.isArray(this._edges)) {
+            for (const edge of this._edges) {
+                edge.deselect();
+            }
         }
     }
 
@@ -2096,9 +2147,10 @@ view.Value = class {
 
 view.Edge = class extends grapher.Edge {
 
-    constructor(value, from, to) {
+    constructor(from, to) {
         super(from, to);
-        this.value = value;
+        this.v = from.name;
+        this.w = to.name;
     }
 
     get minlen() {
@@ -2282,8 +2334,12 @@ view.NodeSidebar = class extends view.ObjectSidebar {
                     this.emit('show-documentation', null);
                 });
             }
-            if (node.type.module) {
-                this.addProperty('module', node.type.module);
+            const module = node.type.module;
+            const version = node.type.version;
+            const status = node.type.status;
+            if (module || version || status) {
+                const list = [ module, version ? `v${version}` : '', status ];
+                this.addProperty('module', list.filter((value) => value).join(' '));
             }
         }
         if (node.name) {
@@ -2344,8 +2400,8 @@ view.NodeSidebar = class extends view.ObjectSidebar {
             }
             default: {
                 value = new view.AttributeView(this._host, attribute);
-                value.on('show-graph', (sender, graph) => {
-                    this.emit('show-graph', graph);
+                value.on('activate', (sender, graph) => {
+                    this.emit('activate', graph);
                 });
                 break;
             }
@@ -2459,10 +2515,10 @@ view.ValueTextView = class extends view.Control {
                 const line = this.createElement('div', className);
                 switch (style) {
                     case 'code':
-                        line.innerHTML = '<code>' + item + '<code>';
+                        line.innerHTML = `<code>${item}<code>`;
                         break;
                     case 'bold':
-                        line.innerHTML = '<b>' + item + '<b>';
+                        line.innerHTML = `<b>${item}<b>`;
                         break;
                     default:
                         line.innerText = item;
@@ -2510,9 +2566,9 @@ view.AttributeView = class extends view.Control {
         switch (type) {
             case 'graph': {
                 const line = this.createElement('div', 'sidebar-item-value-line-link');
-                line.innerHTML = value.name;
+                line.innerHTML = value.name || '&nbsp;';
                 line.addEventListener('click', () => {
-                    this.emit('show-graph', value);
+                    this.emit('activate', value);
                 });
                 this._element.appendChild(line);
                 break;
@@ -2521,7 +2577,7 @@ view.AttributeView = class extends view.Control {
                 const line = this.createElement('div', 'sidebar-item-value-line-link');
                 line.innerHTML = value.type.name;
                 line.addEventListener('click', () => {
-                    this.emit('show-graph', value.type);
+                    this.emit('activate', value);
                 });
                 this._element.appendChild(line);
                 break;
@@ -2532,7 +2588,7 @@ view.AttributeView = class extends view.Control {
             default: {
                 let content = new view.Formatter(value, type).toString();
                 if (content && content.length > 1000) {
-                    content = content.substring(0, 1000) + '\u2026';
+                    content = `${content.substring(0, 1000)}\u2026`;
                 }
                 if (content && typeof content === 'string') {
                     content = content.split('<').join('&lt;').split('>').join('&gt;');
@@ -2555,7 +2611,7 @@ view.AttributeView = class extends view.Control {
             const value = this._attribute.value;
             const content = type == 'tensor' && value && value.type ? value.type.toString() : this._attribute.type;
             const typeLine = this.createElement('div', 'sidebar-item-value-line-border');
-            typeLine.innerHTML = 'type: ' + '<code><b>' + content + '</b></code>';
+            typeLine.innerHTML = `type: ` + `<code><b>${content}</b></code>`;
             this._element.appendChild(typeLine);
             const description = this._attribute.description;
             if (description) {
@@ -2617,7 +2673,7 @@ view.ValueView = class extends view.Control {
         if (initializer) {
             this._element.classList.add('sidebar-item-value-dark');
         }
-        if (type || initializer || quantization || location || name === undefined) {
+        if (type || initializer || quantization || location || name !== undefined) {
             this._expander = this.createElement('div', 'sidebar-item-value-expander');
             this._expander.innerText = '+';
             this._expander.addEventListener('click', () => {
@@ -2633,9 +2689,9 @@ view.ValueView = class extends view.Control {
             this._hasId = true;
             const nameLine = this.createElement('div', 'sidebar-item-value-line');
             if (typeof name !== 'string') {
-                throw new Error("Invalid value identifier '" + JSON.stringify(name) + "'.");
+                throw new Error(`Invalid value identifier '${JSON.stringify(name)}'.`);
             }
-            nameLine.innerHTML = '<span class=\'sidebar-item-value-line-content\'>name: <b>' + (name || ' ') + '</b></span>';
+            nameLine.innerHTML = `<span class='sidebar-item-value-line-content'>name: <b>${name || ' '}</b></span>`;
             nameLine.addEventListener('pointerenter', () => this.emit('activate', this._value));
             nameLine.addEventListener('pointerleave', () => this.emit('deactivate', this._value));
             if (!initializer) {
@@ -2682,10 +2738,21 @@ view.ValueView = class extends view.Control {
                 }
                 const quantization = this._value.quantization;
                 if (quantization) {
-                    const quantizationLine = this.createElement('div', 'sidebar-item-value-line-border');
-                    const content = !Array.isArray(quantization) ? quantization : '<br><br>' + quantization.map((value) => '  ' + value).join('<br>');
-                    quantizationLine.innerHTML = '<span class=\'sidebar-item-value-line-content\'>quantization: ' + '<b>' + content + '</b></span>';
-                    this._element.appendChild(quantizationLine);
+                    if (typeof quantization.type !== 'string') {
+                        throw new view.Error('Unsupported quantization value.');
+                    }
+                    const line = this.createElement('div', 'sidebar-item-value-line-border');
+                    const content = [
+                        "<span class='sidebar-item-value-line-content'>",
+                        "quantization: ",
+                        `<b>${quantization.type}</b>`,
+                        "</span>",
+                        "<pre style='margin: 4px 0 2px 0'>",
+                        new view.Quantization(quantization).toString(),
+                        "</pre>"
+                    ];
+                    line.innerHTML = content.join('');
+                    this._element.appendChild(line);
                 }
                 const location = this._value.location;
                 if (location !== undefined) {
@@ -2717,13 +2784,13 @@ view.ValueView = class extends view.Control {
 
     _bold(name, value) {
         const line = this.createElement('div');
-        line.innerHTML = name + ': ' + '<b>' + value + '</b>';
+        line.innerHTML = `${name}: ` + `<b>${value}</b>`;
         this._add(line);
     }
 
     _code(name, value) {
         const line = this.createElement('div');
-        line.innerHTML = name + ': ' + '<code><b>' + value + '</b></code>';
+        line.innerHTML = `${name}: ` + `<code><b>${value}</b></code>`;
         this._add(line);
     }
 
@@ -2740,9 +2807,9 @@ view.ValueView = class extends view.Control {
                 this._code('stride', tensor.stride.join(','));
             }
             if (tensor.encoding !== '<' && tensor.encoding !== '>' && tensor.encoding !== '|') {
-                contentLine.innerHTML = "Tensor encoding '" + tensor.layout + "' is not implemented.";
+                contentLine.innerHTML = `Tensor encoding '${tensor.layout}' is not implemented.`;
             } else if (tensor.layout && (tensor.layout !== 'sparse' && tensor.layout !== 'sparse.coo')) {
-                contentLine.innerHTML = "Tensor layout '" + tensor.layout + "' is not implemented.";
+                contentLine.innerHTML = `Tensor layout '${tensor.layout}' is not implemented.`;
             } else if (tensor.empty) {
                 contentLine.innerHTML = 'Tensor data is empty.';
             } else if (tensor.type && tensor.type.dataType === '?') {
@@ -2791,7 +2858,7 @@ view.NodeView = class extends view.Control {
         if (type) {
             const type = node.type.name;
             const element = this.createElement('div', 'sidebar-item-value-line');
-            element.innerHTML = '<span class=\'sidebar-item-value-line-content\'>node: <b>' + (type || ' ') + '</b></span>';
+            element.innerHTML = `<span class='sidebar-item-value-line-content'>node: <b>${type || ' '}</b></span>`;
             element.addEventListener('pointerenter', () => this.emit('activate', this._node));
             element.addEventListener('pointerleave', () => this.emit('deactivate', this._node));
             element.addEventListener('click', () => this.emit('select', this._node));
@@ -2799,7 +2866,7 @@ view.NodeView = class extends view.Control {
             this._element.appendChild(element);
         } else {
             const element = this.createElement('div', 'sidebar-item-value-line');
-            element.innerHTML = '<span class=\'sidebar-item-value-line-content\'>name: <b>' + (name || ' ') + '</b></span>';
+            element.innerHTML = `<span class='sidebar-item-value-line-content'>name: <b>${name || ' '}</b></span>`;
             element.addEventListener('pointerenter', () => this.emit('activate', this._node));
             element.addEventListener('pointerleave', () => this.emit('deactivate', this._node));
             element.addEventListener('click', () => this.emit('select', this._node));
@@ -2818,7 +2885,7 @@ view.NodeView = class extends view.Control {
                 this._expander.innerText = '-';
                 const name = this._node.name;
                 const element = this.createElement('div', 'sidebar-item-value-line-border');
-                element.innerHTML = '<span class=\'sidebar-item-value-line-content\'>name: <b>' + name + '</b></span>';
+                element.innerHTML = `<span class='sidebar-item-value-line-content'>name: <b>${name}</b></span>`;
                 element.addEventListener('pointerenter', () => this.emit('activate', this._node));
                 element.addEventListener('pointerleave', () => this.emit('deactivate', this._node));
                 element.addEventListener('click', () => this.emit('select', this._node));
@@ -2865,7 +2932,7 @@ view.ConnectionSidebar = class extends view.ObjectSidebar {
         this._value = value;
         this._from = from;
         this._to = to;
-        const name = value.name.split('\n')[0];
+        const [name] = value.name.split('\n');
         this.addProperty('name', name);
         if (value.type) {
             const item = new view.ValueView(this._host, value, '');
@@ -2924,8 +2991,8 @@ view.ModelSidebar = class extends view.ObjectSidebar {
             this.addProperty('runtime', model.runtime);
         }
         if (model.metadata) {
-            for (const entry of model.metadata) {
-                this.addProperty(entry.name, entry.value);
+            for (const [name, value] of Array.from(model.metadata)) {
+                this.addProperty(name, value);
             }
         }
         const graphs = Array.isArray(model.graphs) ? model.graphs : [];
@@ -3000,24 +3067,24 @@ view.DocumentationSidebar = class extends view.Control {
                 this._append(element, 'h2', 'Attributes');
                 const attributes = this._append(element, 'dl');
                 for (const attribute of type.attributes) {
-                    this._append(attributes, 'dt', attribute.name + (attribute.type ? ': <tt>' + attribute.type + '</tt>' : ''));
+                    this._append(attributes, 'dt', attribute.name + (attribute.type ? `: <tt>${attribute.type}</tt>` : ''));
                     this._append(attributes, 'dd', attribute.description);
                 }
                 element.appendChild(attributes);
             }
             if (Array.isArray(type.inputs) && type.inputs.length > 0) {
-                this._append(element, 'h2', 'Inputs' + (type.inputs_range ? ' (' + type.inputs_range + ')' : ''));
+                this._append(element, 'h2', `Inputs${type.inputs_range ? ` (${type.inputs_range})` : ''}`);
                 const inputs = this._append(element, 'dl');
                 for (const input of type.inputs) {
-                    this._append(inputs, 'dt', input.name + (input.type ? ': <tt>' + input.type + '</tt>' : '') + (input.option ? ' (' + input.option + ')' : ''));
+                    this._append(inputs, 'dt', input.name + (input.type ? `: <tt>${input.type}</tt>` : '') + (input.option ? ` (${input.option})` : ''));
                     this._append(inputs, 'dd', input.description);
                 }
             }
             if (Array.isArray(type.outputs) && type.outputs.length > 0) {
-                this._append(element, 'h2', 'Outputs' + (type.outputs_range ? ' (' + type.outputs_range + ')' : ''));
+                this._append(element, 'h2', `Outputs${type.outputs_range ? ` (${type.outputs_range})` : ''}`);
                 const outputs = this._append(element, 'dl');
                 for (const output of type.outputs) {
-                    this._append(outputs, 'dt', output.name + (output.type ? ': <tt>' + output.type + '</tt>' : '') + (output.option ? ' (' + output.option + ')' : ''));
+                    this._append(outputs, 'dt', output.name + (output.type ? `: <tt>${output.type}</tt>` : '') + (output.option ? ` (${output.option})` : ''));
                     this._append(outputs, 'dd', output.description);
                 }
             }
@@ -3025,7 +3092,7 @@ view.DocumentationSidebar = class extends view.Control {
                 this._append(element, 'h2', 'Type Constraints');
                 const type_constraints = this._append(element, 'dl');
                 for (const type_constraint of type.type_constraints) {
-                    this._append(type_constraints, 'dt', type_constraint.type_param_str + ': ' + type_constraint.allowed_type_strs.map((item) => '<tt>' + item + '</tt>').join(', '));
+                    this._append(type_constraints, 'dt', `${type_constraint.type_param_str}: ${type_constraint.allowed_type_strs.map((item) => `<tt>${item}</tt>`).join(', ')}`);
                     this._append(type_constraints, 'dd', type_constraint.description);
                 }
             }
@@ -3042,10 +3109,6 @@ view.DocumentationSidebar = class extends view.Control {
                 for (const reference of type.references) {
                     this._append(references, 'li', reference.description);
                 }
-            }
-            if (type.domain && type.version && type.support_level) {
-                this._append(element, 'h2', 'Support');
-                this._append(element, 'dl', 'In domain <tt>' + type.domain + '</tt> since version <tt>' + type.version + '</tt> at support level <tt>' + type.support_level + '</tt>.');
             }
             if (this._host.type === 'Electron') {
                 element.addEventListener('click', (e) => {
@@ -3087,6 +3150,11 @@ view.FindSidebar = class extends view.Control {
         this._searchElement.addEventListener('input', (e) => {
             this.update(e.target.value);
             this.emit('search-text-changed', e.target.value);
+        });
+        this._searchElement.addEventListener('keydown', (e) => {
+            if (e.keyCode === 0x08 && !e.altKey && !e.ctrlKey && !e.shiftKey && !e.metaKey) {
+                e.stopPropagation();
+            }
         });
         this._contentElement = this.createElement('ol', 'sidebar-find-content');
         this._contentElement.addEventListener('click', (e) => {
@@ -3152,55 +3220,52 @@ view.FindSidebar = class extends view.Control {
             const term = unquote[1] || unquote[2];
             terms = [ term ];
             match = (name) => {
-                return term == name;
+                return term === name;
             };
         } else {
             terms = searchText.trim().toLowerCase().split(' ').map((term) => term.trim()).filter((term) => term.length > 0);
             match = (name) => {
-                return terms.every((term) => name.toLowerCase().indexOf(term) !== -1);
+                return terms.every((term) => name && name.toLowerCase().indexOf(term) !== -1);
             };
         }
         const edges = new Set();
-        const arg = (argument) => {
+        const matchValue = (value) => {
             if (terms.length === 0) {
                 return true;
             }
-            let match = false;
-            for (const term of terms) {
-                if (argument.name && argument.name.toLowerCase().indexOf(term) !== -1) {
-                    match = true;
-                    break;
-                }
-                if (argument.type) {
-                    if (argument.type.dataType && term === argument.type.dataType.toLowerCase()) {
-                        match = true;
-                        break;
+            if (value.name && match(value.name.split('\n').shift())) {
+                return true;
+            }
+            if (value.location && match(value.location)) {
+                return true;
+            }
+            if (value.type) {
+                for (const term of terms) {
+                    if (value.type.dataType && term === value.type.dataType.toLowerCase()) {
+                        return true;
                     }
-                    if (argument.type.shape) {
-                        if (term === argument.type.shape.toString().toLowerCase()) {
-                            match = true;
-                            break;
+                    if (value.type.shape) {
+                        if (term === value.type.shape.toString().toLowerCase()) {
+                            return true;
                         }
-                        if (argument.type.shape && Array.isArray(argument.type.shape.dimensions)) {
-                            const dimensions = argument.type.shape.dimensions.map((dimension) => dimension ? dimension.toString().toLowerCase() : '');
+                        if (value.type.shape && Array.isArray(value.type.shape.dimensions)) {
+                            const dimensions = value.type.shape.dimensions.map((dimension) => dimension ? dimension.toString().toLowerCase() : '');
                             if (term === dimensions.join(',')) {
-                                match = true;
-                                break;
+                                return true;
                             }
                             if (dimensions.some((dimension) => term === dimension)) {
-                                match = true;
-                                break;
+                                return true;
                             }
                         }
                     }
                 }
             }
-            return match;
+            return false;
         };
-        const edge = (argument) => {
-            if (argument.name && !edges.has(argument.name) && arg(argument)) {
-                add(argument, '\u2192 ' + argument.name.split('\n').shift()); // split custom argument id
-                edges.add(argument.name);
+        const edge = (value) => {
+            if (value.name && !edges.has(value.name) && matchValue(value)) {
+                add(value, `\u2192 ${value.name.split('\n').shift()}`); // split custom argument id
+                edges.add(value.name);
             }
         };
         for (const input of this._graph.inputs) {
@@ -3221,12 +3286,13 @@ view.FindSidebar = class extends view.Control {
             }
             const name = node.name;
             const type = node.type.name;
-            if ((name && match(name)) || (type && match(type))) {
-                add(node, '\u25A2 ' + (name || '[' + type + ']'));
+            const location = node.location;
+            if ((name && match(name)) || (type && match(type)) || (location && match(location))) {
+                add(node, `\u25A2 ${name || `[${type}]`}`);
             }
             for (const value of initializers) {
-                if (value.name && !edges.has(value.name) && arg(value)) {
-                    add(node, '\u25A0 ' + value.name.split('\n').shift()); // split custom argument id
+                if (value.name && !edges.has(value.name) && matchValue(value)) {
+                    add(node, `\u25A0 ${value.name.split('\n').shift()}`); // split custom argument id
                 }
             }
         }
@@ -3272,7 +3338,7 @@ view.Tensor = class {
                 break;
             }
             default: {
-                throw new view.Error("Unsupported tensor encoding '" + this._encoding + "'.");
+                throw new view.Error(`Unsupported tensor encoding '${this._encoding}'.`);
             }
         }
         switch (this._layout) {
@@ -3329,7 +3395,7 @@ view.Tensor = class {
                     case '|':
                         return !(Array.isArray(this._values) || ArrayBuffer.isView(this._values)) || this._values.length === 0;
                     default:
-                        throw new Error("Unsupported tensor encoding '" + this._encoding + "'.");
+                        throw new Error(`Unsupported tensor encoding '${this._encoding}'.`);
                 }
             }
         }
@@ -3347,7 +3413,7 @@ view.Tensor = class {
                 return this._decodeValues(context, 0, 0);
             }
             default: {
-                throw new Error("Unsupported tensor encoding '" + context.encoding + "'.");
+                throw new Error(`Unsupported tensor encoding '${context.encoding}'.`);
             }
         }
     }
@@ -3366,17 +3432,17 @@ view.Tensor = class {
                 return view.Tensor._stringify(value, '', '    ');
             }
             default: {
-                throw new Error("Unsupported tensor encoding '" + context.encoding + "'.");
+                throw new Error(`Unsupported tensor encoding '${context.encoding}'.`);
             }
         }
     }
 
     _context() {
         if (this._encoding !== '<' && this._encoding !== '>' && this._encoding !== '|') {
-            throw new Error("Tensor encoding '" + this._encoding + "' is not supported.");
+            throw new Error(`Tensor encoding '${this._encoding}' is not supported.`);
         }
         if (this._layout && (this._layout !== 'sparse' && this._layout !== 'sparse.coo')) {
-            throw new Error("Tensor layout '" + this._layout + "' is not supported.");
+            throw new Error(`Tensor layout '${this._layout}' is not supported.`);
         }
         const dataType = this._type.dataType;
         const context = {};
@@ -3450,14 +3516,14 @@ view.Tensor = class {
                             context.bits = parseInt(dataType.substring(3), 10);
                             context.itemsize = 1;
                         } else {
-                            throw new Error("Tensor data type '" + dataType + "' is not implemented.");
+                            throw new Error(`Tensor data type '${dataType}' is not implemented.`);
                         }
                         break;
                     }
                     case '|': {
                         context.data = this._values;
                         if (!view.Tensor.dataTypes.has(dataType) && dataType !== 'string' && dataType !== 'object') {
-                            throw new Error("Tensor data type '" + dataType + "' is not implemented.");
+                            throw new Error(`Tensor data type '${dataType}' is not implemented.`);
                         }
                         const size = context.dimensions.reduce((a, v) => a * v, 1);
                         if (size !== this._values.length) {
@@ -3466,7 +3532,7 @@ view.Tensor = class {
                         break;
                     }
                     default: {
-                        throw new view.Tensor("Unsupported tensor encoding '" + this._encoding + "'.");
+                        throw new view.Tensor(`Unsupported tensor encoding '${this._encoding}'.`);
                     }
                 }
             }
@@ -3545,7 +3611,7 @@ view.Tensor = class {
                     break;
                 case 'int':
                     for (; offset < size; offset += stride) {
-                        results.push(view.getIntBits(offset, context.bits));
+                        results.push(view.getIntBits(offset, context.bits, this._littleEndian));
                     }
                     break;
                 case 'quint8':
@@ -3573,7 +3639,7 @@ view.Tensor = class {
                     break;
                 case 'uint':
                     for (; offset < max; offset += stride) {
-                        results.push(view.getUintBits(offset, context.bits));
+                        results.push(view.getUintBits(offset, context.bits, this._littleEndian));
                     }
                     break;
                 case 'float16':
@@ -3627,7 +3693,7 @@ view.Tensor = class {
                     }
                     break;
                 default:
-                    throw new Error("Unsupported tensor data type '" + dataType + "'.");
+                    throw new Error(`Unsupported tensor data type '${dataType}'.`);
             }
             context.count += length;
             if (ellipsis) {
@@ -3694,39 +3760,95 @@ view.Tensor = class {
     static _stringify(value, indentation, indent) {
         if (Array.isArray(value)) {
             const result = [];
-            result.push(indentation + '[');
+            result.push(`${indentation}[`);
             const items = value.map((item) => view.Tensor._stringify(item, indentation + indent, indent));
             if (items.length > 0) {
                 result.push(items.join(',\n'));
             }
-            result.push(indentation + ']');
+            result.push(`${indentation}]`);
             return result.join('\n');
         }
         if (value === null) {
-            return indentation + 'null';
+            return `${indentation}null`;
         }
         switch (typeof value) {
             case 'boolean':
                 return indentation + value.toString();
             case 'string':
-                return indentation + '"' + value + '"';
+                return `${indentation}"${value}"`;
             case 'number':
                 if (value == Infinity) {
-                    return indentation + 'Infinity';
+                    return `${indentation}Infinity`;
                 }
                 if (value == -Infinity) {
-                    return indentation + '-Infinity';
+                    return `${indentation}-Infinity`;
                 }
                 if (isNaN(value)) {
-                    return indentation + 'NaN';
+                    return `${indentation}NaN`;
                 }
                 return indentation + value.toString();
             default:
                 if (value && value.toString) {
                     return indentation + value.toString();
                 }
-                return indentation + '(undefined)';
+                return `${indentation}(undefined)`;
         }
+    }
+};
+
+view.Quantization = class {
+
+    constructor(quantization) {
+        Object.assign(this, quantization);
+    }
+
+    toString() {
+        if (this.type === 'linear' || /^quant\d\d?_.*$/.test(this.type)) {
+            const content = [];
+            const scale = this.scale || [];
+            const offset = this.offset || [];
+            const bias = this.bias || [];
+            const max = this.max || [];
+            const min = this.min || [];
+            const length = Math.max(scale.length, offset.length, bias.length, min.length, max.length);
+            const size = length.toString().length;
+            for (let i = 0; i < length; i++) {
+                let s = 'q';
+                let bracket = false;
+                if (i < offset.length && offset[i] !== undefined && offset[i] !== 0) {
+                    const value = offset[i];
+                    s = value > 0 ? `${s} - ${value}` : `${s} + ${-value}`;
+                    bracket = true;
+                }
+                if (i < scale.length && scale[i] !== undefined && scale[i] !== 0) {
+                    const value = scale[i];
+                    s = bracket ? `(${s})` : s;
+                    s = `${value} * ${s}`;
+                    bracket = true;
+                }
+                if (i < bias.length && bias[i] !== undefined && bias[i] !== 0) {
+                    const value = bias[i];
+                    s = bracket ? `(${s})` : s;
+                    s = value < 0 ? `${s} - ${-value}` : `${s} + ${value}`;
+                }
+                if (i < min.length && min[i] !== undefined && min[i] !== 0) {
+                    s = `${min[i]} \u2264 ${s}`;
+                }
+                if (i < max.length && max[i] !== undefined && max[i] !== 0) {
+                    s = `${s} \u2264 ${max[i]}`;
+                }
+                content.push(length > 1 ? `${i.toString().padStart(size, ' ')}: ${s}` : `${s}`);
+            }
+            return content.join('\n');
+        } else if (this.type === 'lookup') {
+            const size = this.value.length.toString().length;
+            return this.value.map((value, index) => `${index.toString().padStart(size, ' ')}: ${value}`).join('\n');
+        } else if (this.type === 'annotation') {
+            return Array.from(this.value).map(([name, value]) => `${name} = ${value}`).join('\n');
+        } else if (/^q\d_[01k]$/.test(this.type)) {
+            return '';
+        }
+        throw new view.Error(`Unknown quantization type '${this.type}'.`);
     }
 };
 
@@ -3934,10 +4056,10 @@ view.Formatter = class {
     _format(value, type, quote) {
 
         if (value && value.__class__ && value.__class__.__module__ === 'builtins' && value.__class__.__name__ === 'type') {
-            return value.__module__ + '.' + value.__name__;
+            return `${value.__module__}.${value.__name__}`;
         }
         if (value && value.__class__ && value.__class__.__module__ === 'builtins' && value.__class__.__name__ === 'function') {
-            return value.__module__ + '.' + value.__name__;
+            return `${value.__module__}.${value.__name__}`;
         }
         if (typeof value === 'function') {
             return value();
@@ -3953,7 +4075,7 @@ view.Formatter = class {
                 return value ? value.toString() : '(null)';
             case 'shape[]':
                 if (value && !Array.isArray(value)) {
-                    throw new Error("Invalid shape '" + JSON.stringify(value) + "'.");
+                    throw new Error(`Invalid shape '${JSON.stringify(value)}'.`);
                 }
                 return value ? value.map((item) => item.toString()).join(', ') : '(null)';
             case 'graph':
@@ -3979,7 +4101,7 @@ view.Formatter = class {
                 break;
         }
         if (typeof value === 'string' && (!type || type != 'string')) {
-            return quote ? '"' + value + '"' : value;
+            return quote ? `"${value}"` : value;
         }
         if (Array.isArray(value)) {
             if (value.length == 0) {
@@ -4020,15 +4142,11 @@ view.Formatter = class {
         }
         this._values.add(value);
         let list = null;
-        const entries = Object.entries(value).filter((entry) => !entry[0].startsWith('__') && !entry[0].endsWith('__'));
+        const entries = Object.entries(value).filter(([name]) => !name.startsWith('__') && !name.endsWith('__'));
         if (entries.length == 1) {
             list = [ this._format(entries[0][1], null, true) ];
         } else {
-            list = new Array(entries.length);
-            for (let i = 0; i < entries.length; i++) {
-                const entry = entries[i];
-                list[i] = entry[0] + ': ' + this._format(entry[1], null, true);
-            }
+            list = entries.map(([name, value]) => `${name}: ${this._format(value, null, true)}`);
         }
         let objectType = value.__type__;
         if (!objectType && value.constructor.name && value.constructor.name !== 'Object') {
@@ -4126,7 +4244,7 @@ markdown.Generator = class {
                 source = source.substring(match[0].length);
                 const lastToken = tokens[tokens.length - 1];
                 if (lastToken && lastToken.type === 'paragraph') {
-                    lastToken.text += '\n' + match[0].trimRight();
+                    lastToken.text += `\n${match[0].trimRight()}`;
                 } else {
                     const text = match[0].replace(/^ {4}/gm, '').replace(/\n*$/, '');
                     tokens.push({ type: 'code', text: text });
@@ -4140,8 +4258,8 @@ markdown.Generator = class {
                 let content = match[3] || '';
                 const matchIndent = match[0].match(/^(\s+)(?:```)/);
                 if (matchIndent !== null) {
-                    const indent = matchIndent[1];
-                    content = content.split('\n').map(node => {
+                    const [, indent] = matchIndent;
+                    content = content.split('\n').map((node) => {
                         const match = node.match(/^\s+/);
                         return (match !== null && match[0].length >= indent.length) ? node.slice(indent.length) : node;
                     }).join('\n');
@@ -4194,12 +4312,12 @@ markdown.Generator = class {
             }
             match = this._listRegExp.exec(source);
             if (match) {
-                let raw = match[0];
-                const bull = match[2];
+                const [value, , bull] = match;
                 const ordered = bull.length > 1;
                 const parent = bull[bull.length - 1] === ')';
+                let raw = value;
                 const list = { type: 'list', raw: raw, ordered: ordered, start: ordered ? +bull.slice(0, -1) : '', loose: false, items: [] };
-                const itemMatch = match[0].match(this._itemRegExp);
+                const itemMatch = value.match(this._itemRegExp);
                 let next = false;
                 const length = itemMatch.length;
                 for (let i = 0; i < length; i++) {
@@ -4209,10 +4327,10 @@ markdown.Generator = class {
                     item = item.replace(/^ *([*+-]|\d+[.)]) ?/, '');
                     if (~item.indexOf('\n ')) {
                         space -= item.length;
-                        item = item.replace(new RegExp('^ {1,' + space + '}', 'gm'), '');
+                        item = item.replace(new RegExp(`^ {1,${space}}`, 'gm'), '');
                     }
                     if (i !== length - 1) {
-                        const bullet = this._bulletRegExp.exec(itemMatch[i + 1])[0];
+                        const [bullet] = this._bulletRegExp.exec(itemMatch[i + 1]);
                         if (ordered ? bullet.length === 1 || (!parent && bullet[bullet.length - 1] === ')') : (bullet.length > 1)) {
                             const addBack = itemMatch.slice(i + 1).join('\n');
                             list.raw = list.raw.substring(0, list.raw.length - addBack.length);
@@ -4305,13 +4423,13 @@ markdown.Generator = class {
                 source = source.substring(match[0].length);
                 const lastToken = tokens[tokens.length - 1];
                 if (lastToken && lastToken.type === 'text') {
-                    lastToken.text += '\n' + match[0];
+                    lastToken.text += `\n${match[0]}`;
                 } else {
                     tokens.push({ type: 'text', text: match[0] });
                 }
                 continue;
             }
-            throw new Error("Unexpected '" + source.charCodeAt(0) + "'.");
+            throw new Error(`Unexpected '${source.charCodeAt(0)}'.`);
         }
         return tokens;
     }
@@ -4324,7 +4442,7 @@ markdown.Generator = class {
                 const match = this._reflinkSearchRegExp.exec(maskedSource);
                 if (match) {
                     if (links.has(match[0].slice(match[0].lastIndexOf('[') + 1, -1))) {
-                        maskedSource = maskedSource.slice(0, match.index) + '[' + 'a'.repeat(match[0].length - 2) + ']' + maskedSource.slice(this._reflinkSearchRegExp.lastIndex);
+                        maskedSource = `${maskedSource.slice(0, match.index)}[${'a'.repeat(match[0].length - 2)}]${maskedSource.slice(this._reflinkSearchRegExp.lastIndex)}`;
                     }
                     continue;
                 }
@@ -4334,7 +4452,7 @@ markdown.Generator = class {
         while (maskedSource) {
             const match = this._blockSkipRegExp.exec(maskedSource);
             if (match) {
-                maskedSource = maskedSource.slice(0, match.index) + '[' + 'a'.repeat(match[0].length - 2) + ']' + maskedSource.slice(this._blockSkipRegExp.lastIndex);
+                maskedSource = `${maskedSource.slice(0, match.index)}[${'a'.repeat(match[0].length - 2)}]${maskedSource.slice(this._blockSkipRegExp.lastIndex)}`;
                 continue;
             }
             break;
@@ -4365,7 +4483,7 @@ markdown.Generator = class {
             match = this._linkRegExp.exec(source);
             if (match) {
                 let index = -1;
-                const ref = match[2];
+                const [, , ref] = match;
                 if (ref.indexOf(')') !== -1) {
                     let level = 0;
                     for (let i = 0; i < ref.length; i++) {
@@ -4478,8 +4596,8 @@ markdown.Generator = class {
             }
             match = this._delRegExp.exec(source);
             if (match) {
-                source = source.substring(match[0].length);
-                const text = match[1];
+                const [value, text] = match;
+                source = source.substring(value.length);
                 tokens.push({ type: 'del', text: text, tokens: this._tokenizeInline(text, links, inLink, inRawBlock, '') });
                 continue;
             }
@@ -4487,7 +4605,7 @@ markdown.Generator = class {
             if (match) {
                 source = source.substring(match[0].length);
                 const text = this._escape(match[1]);
-                const href = match[2] === '@' ? 'mailto:' + text : text;
+                const href = match[2] === '@' ? `mailto:${text}` : text;
                 tokens.push({ type: 'link', text: text, href: href, tokens: [ { type: 'text', raw: text, text } ] });
                 continue;
             }
@@ -4495,16 +4613,17 @@ markdown.Generator = class {
                 match = this._urlRegExp.exec(source);
                 if (match) {
                     const email = match[2] === '@';
+                    let [value] = match;
                     if (!email) {
                         let prevCapZero;
                         do {
-                            prevCapZero = match[0];
-                            match[0] = this._backpedalRegExp.exec(match[0])[0];
-                        } while (prevCapZero !== match[0]);
+                            prevCapZero = value;
+                            [value] = this._backpedalRegExp.exec(value);
+                        } while (prevCapZero !== value);
                     }
-                    const text = this._escape(match[0]);
-                    const href = email ? ('mailto:' + text) : (match[1] === 'www.' ? 'http://' + text : text);
-                    source = source.substring(match[0].length);
+                    const text = this._escape(value);
+                    const href = email ? (`mailto:${text}`) : (match[1] === 'www.' ? `http://${text}` : text);
+                    source = source.substring(value.length);
                     tokens.push({ type: 'link', text: text, href: href, tokens: [ { type: 'text', text: text } ] });
                     continue;
                 }
@@ -4516,7 +4635,7 @@ markdown.Generator = class {
                 tokens.push({ type: 'text' , text: inRawBlock ? match[0] : this._escape(match[0]) });
                 continue;
             }
-            throw new Error("Unexpected '" + source.charCodeAt(0) + "'.");
+            throw new Error(`Unexpected '${source.charCodeAt(0)}'.`);
         }
         return tokens;
     }
@@ -4567,13 +4686,13 @@ markdown.Generator = class {
                 }
                 case 'heading': {
                     const level = token.depth;
-                    html += '<h' + level + '">' + this._renderInline(token.tokens) + '</h' + level + '>\n';
+                    html += `<h${level}">${this._renderInline(token.tokens)}</h${level}>\n`;
                     continue;
                 }
                 case 'code': {
                     const code = token.text;
-                    const language = (token.language || '').match(/\S*/)[0];
-                    html += '<pre><code' + (language ? ' class="' + 'language-' + this._encode(language) + '"' : '') + '>' + (token.escaped ? code : this._encode(code)) + '</code></pre>\n';
+                    const [language] = (token.language || '').match(/\S*/);
+                    html += `<pre><code${language ? ` class="` + `language-${this._encode(language)}"` : ''}>${token.escaped ? code : this._encode(code)}</code></pre>\n`;
                     continue;
                 }
                 case 'table': {
@@ -4582,9 +4701,9 @@ markdown.Generator = class {
                     for (let j = 0; j < token.header.length; j++) {
                         const content = this._renderInline(token.tokens.header[j]);
                         const align = token.align[j];
-                        cell += '<th' + (align ? ' align="' + align + '"' : '') + '>' + content + '</th>\n';
+                        cell += `<th${align ? ` align="${align}"` : ''}>${content}</th>\n`;
                     }
-                    header += '<tr>\n' + cell + '</tr>\n';
+                    header += `<tr>\n${cell}</tr>\n`;
                     let body = '';
                     for (let j = 0; j < token.cells.length; j++) {
                         const row = token.tokens.cells[j];
@@ -4592,15 +4711,15 @@ markdown.Generator = class {
                         for (let k = 0; k < row.length; k++) {
                             const content = this._renderInline(row[k]);
                             const align = token.align[k];
-                            cell += '<td' + (align ? ' align="' + align + '"' : '') + '>' + content + '</td>\n';
+                            cell += `<td${align ? ` align="${align}"` : ''}>${content}</td>\n`;
                         }
-                        body += '<tr>\n' + cell + '</tr>\n';
+                        body += `<tr>\n${cell}</tr>\n`;
                     }
-                    html += '<table>\n<thead>\n' + header + '</thead>\n' + (body ? '<tbody>' + body + '</tbody>' : body) + '</table>\n';
+                    html += `<table>\n<thead>\n${header}</thead>\n${body ? `<tbody>${body}</tbody>` : body}</table>\n`;
                     continue;
                 }
                 case 'blockquote': {
-                    html += '<blockquote>\n' + this._render(token.tokens, true) + '</blockquote>\n';
+                    html += `<blockquote>\n${this._render(token.tokens, true)}</blockquote>\n`;
                     continue;
                 }
                 case 'list': {
@@ -4611,12 +4730,12 @@ markdown.Generator = class {
                     for (const item of token.items) {
                         let itemBody = '';
                         if (item.task) {
-                            const checkbox = '<input ' + (item.checked ? 'checked="" ' : '') + 'disabled="" type="checkbox"' + '> ';
+                            const checkbox = `<input ${item.checked ? 'checked="" ' : ''}disabled="" type="checkbox"` + `> `;
                             if (loose) {
                                 if (item.tokens.length > 0 && item.tokens[0].type === 'text') {
-                                    item.tokens[0].text = checkbox + ' ' + item.tokens[0].text;
+                                    item.tokens[0].text = `${checkbox} ${item.tokens[0].text}`;
                                     if (item.tokens[0].tokens && item.tokens[0].tokens.length > 0 && item.tokens[0].tokens[0].type === 'text') {
-                                        item.tokens[0].tokens[0].text = checkbox + ' ' + item.tokens[0].tokens[0].text;
+                                        item.tokens[0].tokens[0].text = `${checkbox} ${item.tokens[0].tokens[0].text}`;
                                     }
                                 } else {
                                     item.tokens.unshift({ type: 'text', text: checkbox });
@@ -4626,10 +4745,10 @@ markdown.Generator = class {
                             }
                         }
                         itemBody += this._render(item.tokens, loose);
-                        body += '<li>' + itemBody + '</li>\n';
+                        body += `<li>${itemBody}</li>\n`;
                     }
                     const type = (ordered ? 'ol' : 'ul');
-                    html += '<' + type + (ordered && start !== 1 ? (' start="' + start + '"') : '') + '>\n' + body + '</' + type + '>\n';
+                    html += `<${type}${ordered && start !== 1 ? (` start="${start}"`) : ''}>\n${body}</${type}>\n`;
                     continue;
                 }
                 case 'html': {
@@ -4637,7 +4756,7 @@ markdown.Generator = class {
                     continue;
                 }
                 case 'paragraph': {
-                    html += '<p>' + this._renderInline(token.tokens) + '</p>\n';
+                    html += `<p>${this._renderInline(token.tokens)}</p>\n`;
                     continue;
                 }
                 case 'text': {
@@ -4645,13 +4764,13 @@ markdown.Generator = class {
                     html += token.tokens ? this._renderInline(token.tokens) : token.text;
                     while (tokens.length > 0 && tokens[0].type === 'text') {
                         const token = tokens.shift();
-                        html += '\n' + (token.tokens ? this._renderInline(token.tokens) : token.text);
+                        html += `\n${token.tokens ? this._renderInline(token.tokens) : token.text}`;
                     }
                     html += top ? '</p>\n' : '';
                     continue;
                 }
                 default: {
-                    throw new Error("Unexpected token type '" + token.type + "'.");
+                    throw new Error(`Unexpected token type '${token.type}'.`);
                 }
             }
         }
@@ -4670,25 +4789,25 @@ markdown.Generator = class {
                 }
                 case 'link': {
                     const text = this._renderInline(token.tokens);
-                    html += '<a href="' + token.href + '"' + (token.title ? ' title="' + token.title + '"' : '') + ' target="_blank">' + text + '</a>';
+                    html += `<a href="${token.href}"${token.title ? ` title="${token.title}"` : ''} target="_blank">${text}</a>`;
                     break;
                 }
                 case 'image': {
-                    html += '<img src="' + token.href + '" alt="' + token.text + '"' + (token.title ? ' title="' + token.title + '"' : '') + '>';
+                    html += `<img src="${token.href}" alt="${token.text}"${token.title ? ` title="${token.title}"` : ''}>`;
                     break;
                 }
                 case 'strong': {
                     const text = this._renderInline(token.tokens);
-                    html += '<strong>' + text + '</strong>';
+                    html += `<strong>${text}</strong>`;
                     break;
                 }
                 case 'em': {
                     const text = this._renderInline(token.tokens);
-                    html += '<em>' + text + '</em>';
+                    html += `<em>${text}</em>`;
                     break;
                 }
                 case 'codespan': {
-                    html += '<code>' + token.text + '</code>';
+                    html += `<code>${token.text}</code>`;
                     break;
                 }
                 case 'br': {
@@ -4697,11 +4816,11 @@ markdown.Generator = class {
                 }
                 case 'del': {
                     const text = this._renderInline(token.tokens);
-                    html += '<del>' + text + '</del>';
+                    html += `<del>${text}</del>`;
                     break;
                 }
                 default: {
-                    throw new Error("Unexpected token type '" + token.type + "'.");
+                    throw new Error(`Unexpected token type '${token.type}'.`);
                 }
             }
         }
@@ -4751,67 +4870,38 @@ markdown.Generator = class {
     }
 };
 
-view.ModelContext = class {
+view.Context = class {
 
-    constructor(context) {
+    constructor(context, identifier, stream) {
         this._context = context;
         this._tags = new Map();
         this._content = new Map();
-        let stream = context.stream;
-        const entries = context.entries;
-        if (!stream && entries && entries.size > 0) {
-            this._entries = entries;
-            this._format = '';
-        } else {
-            this._entries = new Map();
-            const entry = context instanceof view.EntryContext;
-            try {
-                const archive = zip.Archive.open(stream, 'gzip');
-                if (archive) {
-                    this._entries = archive.entries;
-                    this._format = 'gzip';
-                    if (this._entries.size === 1) {
-                        stream = this._entries.values().next().value;
-                    }
-                }
-            } catch (error) {
-                if (!entry) {
-                    throw error;
-                }
-            }
-            try {
-                const formats = new Map([ [ 'zip', zip ], [ 'tar', tar ] ]);
-                for (const pair of formats) {
-                    const format = pair[0];
-                    const module = pair[1];
-                    const archive = module.Archive.open(stream);
-                    if (archive) {
-                        this._entries = archive.entries;
-                        this._format = format;
-                        break;
-                    }
-                }
-            } catch (error) {
-                if (!entry) {
-                    throw error;
-                }
-            }
-        }
+        this._identifier = typeof identifier === 'string' ? identifier : context.identifier;
+        this._stream = stream || context.stream;
     }
 
     get identifier() {
-        return this._context.identifier;
+        return this._identifier;
     }
 
     get stream() {
-        return this._context.stream;
+        return this._stream;
     }
 
-    request(file, encoding, base) {
-        return this._context.request(file, encoding, base);
+    get reader() {
+        return new base.StreamReader(this._stream);
     }
 
-    require(id) {
+    async request(file) {
+        return this._context.request(file, 'utf-8', null);
+    }
+
+    async fetch(file) {
+        const stream = await this._context.request(file, null);
+        return new view.Context(this, file, stream, new Map());
+    }
+
+    async require(id) {
         return this._context.require(id);
     }
 
@@ -4822,14 +4912,7 @@ view.ModelContext = class {
         this._context.exception(error, fatal);
     }
 
-    entries(format) {
-        if (format !== undefined && format !== this._format) {
-            return new Map();
-        }
-        return this._entries;
-    }
-
-    open(type) {
+    peek(type) {
         if (!this._content.has(type)) {
             this._content.set(type, undefined);
             const stream = this.stream;
@@ -4841,9 +4924,9 @@ view.ModelContext = class {
                 const buffer = stream.peek(Math.min(stream.length, 16));
                 const skip =
                     match(buffer, [ 0x80, undefined, 0x8a, 0x0a, 0x6c, 0xfc, 0x9c, 0x46, 0xf9, 0x20, 0x6a, 0xa8, 0x50, 0x19 ]) || // PyTorch
-                    match(buffer, [ 0x50, 0x4B, 0x03, 0x04 ]) || // Zip
-                    type !== 'hdf5' && match(buffer, [ 0x89, 0x48, 0x44, 0x46, 0x0D, 0x0A, 0x1A, 0x0A ]) || // \x89HDF\r\n\x1A\n
-                    Array.from(this._tags).some((entry) => entry[0] !== 'flatbuffers' && entry[1].size > 0) ||
+                    (type !== 'npz' && type !== 'zip' && match(buffer, [ 0x50, 0x4B, 0x03, 0x04 ])) || // Zip
+                    (type !== 'hdf5' && match(buffer, [ 0x89, 0x48, 0x44, 0x46, 0x0D, 0x0A, 0x1A, 0x0A ])) || // \x89HDF\r\n\x1A\n
+                    Array.from(this._tags).some(([key, value]) => key !== 'flatbuffers' && value.size > 0) ||
                     Array.from(this._content.values()).some((obj) => obj !== undefined);
                 if (!skip) {
                     switch (type) {
@@ -4866,9 +4949,9 @@ view.ModelContext = class {
                         }
                         case 'json.gz': {
                             try {
-                                const archive = zip.Archive.open(stream, 'gzip');
-                                if (archive && archive.entries.size === 1) {
-                                    const stream = archive.entries.values().next().value;
+                                const entries = this.peek('gzip');
+                                if (entries && entries.size === 1) {
+                                    const stream = entries.values().next().value;
                                     const reader = json.TextReader.open(stream);
                                     if (reader) {
                                         const obj = reader.read();
@@ -4912,9 +4995,7 @@ view.ModelContext = class {
                                     if (Array.isArray(saved_id) && saved_id.length > 3) {
                                         switch (saved_id[0]) {
                                             case 'storage': {
-                                                const storage_type = saved_id[1];
-                                                const key = saved_id[2];
-                                                const size = saved_id[4];
+                                                const [, storage_type, key, , size] = saved_id;
                                                 if (!storages.has(key)) {
                                                     const storage = new storage_type(size);
                                                     storages.set(key, storage);
@@ -4922,7 +5003,7 @@ view.ModelContext = class {
                                                 return storages.get(key);
                                             }
                                             default: {
-                                                throw new python.Error("Unsupported persistent load type '" + saved_id[0] + "'.");
+                                                throw new python.Error(`Unsupported persistent load type '${saved_id[0]}'.`);
                                             }
                                         }
                                     }
@@ -4936,7 +5017,7 @@ view.ModelContext = class {
                                 }
                                 if (Array.from(types).every((name) => !name.startsWith('__torch__.'))) {
                                     for (const name of types) {
-                                        this.exception(new view.Error("Unknown type name '" + name + "'."));
+                                        this.exception(new view.Error(`Unknown type name '${name}'.`));
                                     }
                                 } else {
                                     this._content.set(type, new view.Error("PyTorch standalone 'data.pkl' format not supported."));
@@ -4955,8 +5036,72 @@ view.ModelContext = class {
                             }
                             break;
                         }
+                        case 'zip':
+                        case 'tar':
+                        case 'gzip': {
+                            this._content.set('zip', undefined);
+                            this._content.set('tar', undefined);
+                            this._content.set('gzip', undefined);
+                            let stream = this._stream;
+                            try {
+                                const archive = zip.Archive.open(this._stream, 'gzip');
+                                if (archive) {
+                                    let entries = archive.entries;
+                                    if (entries.size === 1) {
+                                        const key = entries.keys().next().value;
+                                        stream = entries.values().next().value;
+                                        const name = key === '' ? this.identifier.replace(/\.gz$/, '') : key;
+                                        entries = new Map([[ name, stream ]]);
+                                    }
+                                    this._content.set('gzip', entries);
+                                }
+                            } catch (error) {
+                                this._content.set('gzip', error);
+                            }
+                            let skipTar = false;
+                            try {
+                                const archive = zip.Archive.open(stream, 'zip');
+                                if (archive) {
+                                    this._content.set('zip', archive.entries);
+                                    skipTar = true;
+                                }
+                            } catch (error) {
+                                this._content.set('zip', error);
+                            }
+                            if (!skipTar) {
+                                try {
+                                    const archive = tar.Archive.open(stream);
+                                    if (archive) {
+                                        this._content.set('tar', archive.entries);
+                                    }
+                                } catch (error) {
+                                    this._content.set('tar', error);
+                                }
+                            }
+                            break;
+                        }
+                        case 'npz': {
+                            try {
+                                const content = new Map();
+                                const entries = this.peek('zip');
+                                if (entries instanceof Map && entries.size > 0 &&
+                                    Array.from(entries.keys()).every((name) => name.endsWith('.npy'))) {
+                                    const execution = new python.Execution();
+                                    for (const [name, stream] of entries) {
+                                        const buffer = stream.peek();
+                                        const bytes = execution.invoke('io.BytesIO', [ buffer ]);
+                                        const array = execution.invoke('numpy.load', [ bytes ]);
+                                        content.set(name, array);
+                                    }
+                                    this._content.set(type, content);
+                                }
+                            } catch (error) {
+                                // continue regardless of error
+                            }
+                            break;
+                        }
                         default: {
-                            throw new view.Error("Unsupported open format type '" + type + "'.");
+                            throw new view.Error(`Unsupported open format type '${type}'.`);
                         }
                     }
                 }
@@ -4966,6 +5111,26 @@ view.ModelContext = class {
             }
         }
         return this._content.get(type);
+    }
+
+    read(type) {
+        if (!this._content.has(type)) {
+            switch (type) {
+                case 'json': {
+                    const reader = json.TextReader.open(this._stream);
+                    if (reader) {
+                        const obj = reader.read();
+                        this._content.set('json', obj);
+                        return obj;
+                    }
+                    throw new view.Error('Invalid JSON content.');
+                }
+                default: {
+                    break;
+                }
+            }
+        }
+        return this.peek(type);
     }
 
     tags(type) {
@@ -4982,7 +5147,7 @@ view.ModelContext = class {
                 ];
                 const skip =
                     signatures.some((signature) => signature.length <= stream.length && stream.peek(signature.length).every((value, index) => signature[index] === undefined || signature[index] === value)) ||
-                    (Array.from(this._tags).some((pair) => pair[0] !== 'flatbuffers' && pair[1].size > 0) && type !== 'pb+') ||
+                    (Array.from(this._tags).some(([key, value]) => key !== 'flatbuffers' && value.size > 0) && type !== 'pb+') ||
                     Array.from(this._content.values()).some((obj) => obj !== undefined) ||
                     (stream.length < 0x7ffff000 && json.TextReader.open(stream));
                 if (!skip && stream.length < 0x7ffff000) {
@@ -5021,13 +5186,13 @@ view.ModelContext = class {
                                     const element = document.documentElement;
                                     const namespaceURI = element.namespaceURI;
                                     const localName = element.localName;
-                                    const name = namespaceURI ? namespaceURI + ':' + localName : localName;
+                                    const name = namespaceURI ? `${namespaceURI}:${localName}` : localName;
                                     tags.set(name, element);
                                 }
                                 break;
                             }
                             default: {
-                                throw new view.Error("Unsupported tags format type '" + type + "'.");
+                                throw new view.Error(`Unsupported tags format type '${type}'.`);
                             }
                         }
                     } catch (error) {
@@ -5050,27 +5215,9 @@ view.ModelContext = class {
 
 view.EntryContext = class {
 
-    constructor(host, entries, rootFolder, identifier, stream) {
+    constructor(host, entries) {
         this._host = host;
-        this._entries = new Map();
-        if (entries) {
-            for (const entry of entries) {
-                if (entry[0].startsWith(rootFolder)) {
-                    const name = entry[0].substring(rootFolder.length);
-                    this._entries.set(name, entry[1]);
-                }
-            }
-        }
-        this._identifier = identifier.substring(rootFolder.length);
-        this._stream = stream;
-    }
-
-    get identifier() {
-        return this._identifier;
-    }
-
-    get stream() {
-        return this._stream;
+        this._entries = entries;
     }
 
     async request(file, encoding, base) {
@@ -5090,7 +5237,7 @@ view.EntryContext = class {
         return this._host.request(file, encoding, base);
     }
 
-    require(id) {
+    async require(id) {
         return this._host.require(id);
     }
 
@@ -5111,34 +5258,32 @@ view.ModelFactoryService = class {
 
     constructor(host) {
         this._host = host;
-        this._extensions = new Set([ '.zip', '.tar', '.tar.gz', '.tgz', '.gz' ]);
+        this._patterns = new Set([ '.zip', '.tar', '.tar.gz', '.tgz', '.gz' ]);
         this._factories = [];
         this.register('./server', [ '.netron']);
-        this.register('./pytorch', [ '.pt', '.pth', '.ptl', '.pt1', '.pyt', '.pyth', '.pkl', '.pickle', '.h5', '.t7', '.model', '.dms', '.tar', '.ckpt', '.chkpt', '.tckpt', '.bin', '.pb', '.zip', '.nn', '.torchmodel', '.torchscript', '.pytorch', '.ot', '.params', '.trt', '.ff', '.ptmf', '.jit', '.pte' ], [ '.model' ]);
+        this.register('./pytorch', [ '.pt', '.pth', '.ptl', '.pt1', '.pyt', '.pyth', '.pkl', '.pickle', '.h5', '.t7', '.model', '.dms', '.tar', '.ckpt', '.chkpt', '.tckpt', '.bin', '.pb', '.zip', '.nn', '.torchmodel', '.torchscript', '.pytorch', '.ot', '.params', '.trt', '.ff', '.ptmf', '.jit', '.pte', '.bin.index.json', 'serialized_exported_program.json' ], [ '.model', '.pt2' ]);
         this.register('./onnx', [ '.onnx', '.onn', '.pb', '.onnxtxt', '.pbtxt', '.prototxt', '.txt', '.model', '.pt', '.pth', '.pkl', '.ort', '.ort.onnx', 'onnxmodel', 'ngf', 'json' ]);
         this.register('./mxnet', [ '.json', '.params' ], [ '.mar']);
-        this.register('./coreml', [ '.mlmodel', '.bin', 'manifest.json', 'metadata.json', 'featuredescriptions.json', '.pb' ], [ '.mlpackage' ]);
+        this.register('./coreml', [ '.mlmodel', '.bin', 'manifest.json', 'metadata.json', 'featuredescriptions.json', '.pb', '.pbtxt' ], [ '.mlpackage' ]);
         this.register('./caffe', [ '.caffemodel', '.pbtxt', '.prototxt', '.pt', '.txt' ]);
         this.register('./caffe2', [ '.pb', '.pbtxt', '.prototxt' ]);
         this.register('./torch', [ '.t7', '.net' ]);
-        this.register('./tflite', [ '.tflite', '.lite', '.tfl', '.bin', '.pb', '.tmfile', '.h5', '.model', '.json', '.txt' ]);
-        this.register('./circle', [ '.circle' ]);
+        this.register('./tflite', [ '.tflite', '.lite', '.tfl', '.bin', '.pb', '.tmfile', '.h5', '.model', '.json', '.txt', '.dat', '.nb', '.ckpt' ]);
         this.register('./tf', [ '.pb', '.meta', '.pbtxt', '.prototxt', '.txt', '.pt', '.json', '.index', '.ckpt', '.graphdef', '.pbmm', /.data-[0-9][0-9][0-9][0-9][0-9]-of-[0-9][0-9][0-9][0-9][0-9]$/, /^events.out.tfevents./ ], [ '.zip' ]);
-        this.register('./mediapipe', [ '.pbtxt' ]);
-        this.register('./uff', [ '.uff', '.pb', '.pbtxt', '.uff.txt', '.trt', '.engine' ]);
         this.register('./tensorrt', [ '.trt', '.trtmodel', '.engine', '.model', '.txt', '.uff', '.pb', '.tmfile', '.onnx', '.pth', '.dnn', '.plan', '.pt', '.dat' ]);
+        this.register('./keras', [ '.h5', '.hd5', '.hdf5', '.keras', '.json', '.cfg', '.model', '.pb', '.pth', '.weights', '.pkl', '.lite', '.tflite', '.ckpt', '.pb', 'model.weights.npz' ], [ '.zip' ]);
         this.register('./numpy', [ '.npz', '.npy', '.pkl', '.pickle', '.model', '.model2', '.mge', '.joblib' ]);
         this.register('./lasagne', [ '.pkl', '.pickle', '.joblib', '.model', '.pkl.z', '.joblib.z' ]);
         this.register('./lightgbm', [ '.txt', '.pkl', '.model' ]);
-        this.register('./keras', [ '.h5', '.hd5', '.hdf5', '.keras', '.json', '.cfg', '.model', '.pb', '.pth', '.weights', '.pkl', '.lite', '.tflite', '.ckpt', '.pb' ], [ '.zip' ]);
         this.register('./sklearn', [ '.pkl', '.pickle', '.joblib', '.model', '.meta', '.pb', '.pt', '.h5', '.pkl.z', '.joblib.z', '.pickle.dat' ]);
         this.register('./megengine', [ '.tm', '.mge' ]);
         this.register('./pickle', [ '.pkl', '.pickle', '.joblib', '.model', '.meta', '.pb', '.pt', '.h5', '.pkl.z', '.joblib.z', '.pdstates', '.mge' ]);
         this.register('./cntk', [ '.model', '.cntk', '.cmf', '.dnn' ]);
+        this.register('./uff', [ '.uff', '.pb', '.pbtxt', '.uff.txt', '.trt', '.engine' ]);
         this.register('./paddle', [ '.pdmodel', '.pdiparams', '.pdparams', '.pdopt', '.paddle', '__model__', '.__model__', '.pbtxt', '.txt', '.tar', '.tar.gz', '.nb' ]);
         this.register('./bigdl', [ '.model', '.bigdl' ]);
         this.register('./darknet', [ '.cfg', '.model', '.txt', '.weights' ]);
-        this.register('./weka', [ '.model' ]);
+        this.register('./mediapipe', [ '.pbtxt' ]);
         this.register('./rknn', [ '.rknn', '.nb', '.onnx', '.json' ]);
         this.register('./dlc', [ '.dlc', 'model', '.params' ]);
         this.register('./armnn', [ '.armnn', '.json' ]);
@@ -5148,6 +5293,7 @@ view.ModelFactoryService = class {
         this.register('./tengine', ['.tmfile']);
         this.register('./mslite', [ '.ms']);
         this.register('./barracuda', [ '.nn' ]);
+        this.register('./circle', [ '.circle' ]);
         this.register('./dnn', [ '.dnn' ]);
         this.register('./xmodel', [ '.xmodel' ]);
         this.register('./kmodel', [ '.kmodel' ]);
@@ -5159,43 +5305,61 @@ view.ModelFactoryService = class {
         this.register('./imgdnn', [ '.dnn', 'params', '.json' ]);
         this.register('./flax', [ '.msgpack' ]);
         this.register('./om', [ '.om', '.onnx', '.pb', '.engine' ]);
+        this.register('./gguf', [ '.gguf', /^[^.]+$/ ]);
         this.register('./nnabla', [ '.nntxt' ], [ '.nnp' ]);
         this.register('./hickle', [ '.h5', '.hkl' ]);
         this.register('./nnef', [ '.nnef', '.dat' ]);
-        this.register('./cambricon', [ '.cambricon' ]);
         this.register('./onednn', [ '.json']);
         this.register('./mlir', [ '.mlir']);
         this.register('./sentencepiece', [ '.model' ]);
-        this.register('./hailo', [ '.hn', '.har' ]);
+        this.register('./hailo', [ '.hn', '.har', '.metadata.json' ]);
         this.register('./nnc', [ '.nnc' ]);
-        this.register('./safetensors', [ '.safetensors' ]);
+        this.register('./safetensors', [ '.safetensors', '.safetensors.index.json' ]);
+        this.register('./modular', [ '.maxviz' ]);
+        this.register('./cambricon', [ '.cambricon' ]);
+        this.register('./weka', [ '.model' ]);
     }
 
-    register(id, factories, containers) {
-        for (const extension of factories) {
-            this._factories.push({ extension: extension, id: id });
-            this._extensions.add(extension);
+    register(module, factories, containers) {
+        for (const pattern of factories) {
+            this._factories.push({ pattern: pattern, module: module });
+            this._patterns.add(pattern);
         }
-        for (const extension of containers || []) {
-            this._extensions.add(extension);
+        for (const pattern of containers || []) {
+            this._patterns.add(pattern);
         }
     }
 
     async open(context) {
         try {
             await this._openSignature(context);
-            const modelContext = new view.ModelContext(context);
-            const model = await this._openContext(modelContext);
+            const content = new view.Context(context);
+            const model = await this._openContext(content);
             if (!model) {
-                const entries = modelContext.entries();
-                if (!entries || entries.size === 0) {
-                    this._unsupported(modelContext);
+                const check = (obj) => {
+                    if (obj instanceof Error) {
+                        throw obj;
+                    }
+                    return obj instanceof Map && obj.size > 0;
+                };
+                let entries = context.entries;
+                if (!check(entries)) {
+                    entries = content.peek('zip');
+                    if (!check(entries)) {
+                        entries = content.peek('tar');
+                        if (!check(entries)) {
+                            entries = content.peek('gzip');
+                        }
+                    }
                 }
-                const context = await this._openEntries(entries);
-                if (!context) {
-                    this._unsupported(modelContext);
+                if (!check(entries)) {
+                    this._unsupported(content);
                 }
-                return this._openContext(context);
+                const entryContext = await this._openEntries(entries);
+                if (!entryContext) {
+                    this._unsupported(content);
+                }
+                return this._openContext(entryContext);
             }
             return model;
         } catch (error) {
@@ -5218,7 +5382,9 @@ view.ModelFactoryService = class {
         for (const callback of callbacks) {
             let archive = null;
             try {
+                /* eslint-disable no-await-in-loop */
                 archive = callback(stream);
+                /* eslint-enable no-await-in-loop */
             } catch (error) {
                 // continue regardless of error
             }
@@ -5227,7 +5393,7 @@ view.ModelFactoryService = class {
             }
         }
         const json = () => {
-            const obj = context.open('json');
+            const obj = context.peek('json');
             if (obj) {
                 const formats = [
                     { name: 'Netron metadata', tags: [ '[].name', '[].schema' ] },
@@ -5258,11 +5424,11 @@ view.ModelFactoryService = class {
                 };
                 for (const format of formats) {
                     if (format.tags.every((tag) => match(obj, tag))) {
-                        throw new view.Error('Invalid file content. File contains ' + format.name + '.');
+                        throw new view.Error(`Invalid file content. File contains ${format.name}.`);
                     }
                 }
-                const content = JSON.stringify(obj).substring(0, 100).replace(/\s/, '').substring(0, 48) + '...';
-                throw new view.Error("Unsupported JSON content '" + (content.length > 64 ? content.substring(0, 100) + '...' : content) + "' for extension '." + extension + "'.");
+                const content = `${JSON.stringify(obj).substring(0, 100).replace(/\s/, '').substring(0, 48)}...`;
+                throw new view.Error(`Unsupported JSON content '${content.length > 64 ? `${content.substring(0, 100)}...` : content}' for extension '.${extension}'.`);
             }
         };
         const pbtxt = () => {
@@ -5289,16 +5455,16 @@ view.ModelFactoryService = class {
             if (tags.size > 0) {
                 for (const format of formats) {
                     if (format.tags.every((tag) => tags.has(tag))) {
-                        const error = new view.Error('Invalid file content. File contains ' + format.name + '.');
+                        const error = new view.Error(`Invalid file content. File contains ${format.name}.`);
                         error.context = context.identifier;
                         throw error;
                     }
                 }
                 const entries = [];
-                entries.push(...Array.from(tags).filter((pair) => pair[0].toString().indexOf('.') === -1));
-                entries.push(...Array.from(tags).filter((pair) => pair[0].toString().indexOf('.') !== -1));
-                const content = entries.map((pair) => pair[1] === true ? pair[0] : pair[0] + ':' + JSON.stringify(pair[1])).join(',');
-                throw new view.Error("Unsupported Protocol Buffers text content '" + (content.length > 64 ? content.substring(0, 100) + '...' : content) + "' for extension '." + extension + "'.");
+                entries.push(...Array.from(tags).filter(([key]) => key.toString().indexOf('.') === -1));
+                entries.push(...Array.from(tags).filter(([key]) => key.toString().indexOf('.') !== -1));
+                const content = entries.map(([key, value]) => value === true ? key : `${key}:${JSON.stringify(value)}`).join(',');
+                throw new view.Error(`Unsupported Protocol Buffers text content '${content.length > 64 ? `${content.substring(0, 100)}...` : content}' for extension '.${extension}'.`);
             }
         };
         const pb = () => {
@@ -5308,12 +5474,12 @@ view.ModelFactoryService = class {
                     { name: 'sentencepiece.ModelProto data', tags: [[1,[[1,2],[2,5],[3,0]]],[2,[[1,2],[2,2],[3,0],[4,0],[5,2],[6,0],[7,2],[10,5],[16,0],[40,0],[41,0],[42,0],[43,0]]],[3,[]],[4,[]],[5,[]]] },
                     { name: 'mediapipe.BoxDetectorIndex data', tags: [[1,[[1,[[1,[[1,5],[2,5],[3,5],[4,5],[6,0],[7,5],[8,5],[10,5],[11,0],[12,0]]],[2,5],[3,[]]]],[2,false],[3,false],[4,false],[5,false]]],[2,false],[3,false]] },
                     { name: 'third_party.tensorflow.python.keras.protobuf.SavedMetadata data', tags: [[1,[[1,[[1,0],[2,0]]],[2,0],[3,2],[4,2],[5,2]]]] },
-                    { name: 'pblczero.Net data', tags: [[1,5],[2,2],[3,[[1,0],[2,0],[3,0]],[10,[[1,[]],[2,[]],[3,[]],[4,[]],[5,[]],[6,[]]]],[11,[]]]] } // https://github.com/LeelaChessZero/lczero-common/blob/master/proto/net.proto
+                    { name: 'pblczero.Net data', tags: [[1,5],[2,2],[3,[[1,0],[2,0],[3,0]],[10,[[1,[]],[2,[]],[3,[]],[4,[]],[5,[]],[6,[]]]],[11,[]]]] }, // https://github.com/LeelaChessZero/lczero-common/blob/master/proto/net.proto
+                    { name: 'optimization_guide.proto.PageTopicsOverrideList', tags: [[1,[[1,2],[2,[]]]]] }, // https://github.com/chromium/chromium/blob/main/components/optimization_guide/proto/page_topics_override_list.proto
+                    { name: 'optimization_guide.proto.ModelInfo', tags: [[1,0],[2,0],[4,0],[6,[]],[7,[]],[9,0]] } // https://github.com/chromium/chromium/blob/22b0d711657b451b61d50dd2e242b3c6e38e6ef5/components/optimization_guide/proto/models.proto#L80
                 ];
                 const match = (tags, schema) => {
-                    for (const pair of schema) {
-                        const key = pair[0];
-                        const inner = pair[1];
+                    for (const [key, inner] of schema) {
                         const value = tags[key];
                         if (value === undefined) {
                             continue;
@@ -5337,21 +5503,19 @@ view.ModelFactoryService = class {
                 const tags = context.tags('pb+');
                 for (const format of formats) {
                     if (match(tags, format.tags)) {
-                        const error = new view.Error('Invalid file content. File contains ' + format.name + '.');
+                        const error = new view.Error(`Invalid file content. File contains ${format.name}.`);
                         error.context = context.identifier;
                         throw error;
                     }
                 }
                 const format = (tags) => {
-                    const content = Object.entries(tags).map((pair) => {
-                        const key = pair[0];
-                        const value = pair[1];
-                        return key.toString() + ':' + (Object(value) === value ? '{' + format(value) + '}' : value.toString());
+                    const content = Object.entries(tags).map(([key, value]) => {
+                        return `${key}:${Object(value) === value ? `{${format(value)}}` : value}`;
                     });
                     return content.join(',');
                 };
                 const content = format(tags);
-                throw new view.Error("Unsupported Protocol Buffers content '" + (content.length > 64 ? content.substring(0, 100) + '...' : content) + "' for extension '." + extension + "'.");
+                throw new view.Error(`Unsupported Protocol Buffers content '${content.length > 64 ? `${content.substring(0, 100)}...` : content}' for extension '.${extension}'.`);
             }
         };
         const flatbuffers = () => {
@@ -5364,7 +5528,7 @@ view.ModelFactoryService = class {
                 ];
                 for (const format of formats) {
                     if (file_identifier === format.identifier) {
-                        throw new view.Error('Invalid file content. File contains ' + format.name + '.');
+                        throw new view.Error(`Invalid file content. File contains ${format.name}.`);
                     }
                 }
             }
@@ -5378,16 +5542,16 @@ view.ModelFactoryService = class {
                 ];
                 for (const format of formats) {
                     if (format.tags.some((tag) => tags.has(tag))) {
-                        const error = new view.Error('Invalid file content. File contains ' + format.name + '.');
+                        const error = new view.Error(`Invalid file content. File contains ${format.name}.`);
                         error.content = context.identifier;
                         throw error;
                     }
                 }
-                throw new view.Error("Unsupported XML content '" + tags.keys().next().value + "'.");
+                throw new view.Error(`Unsupported XML content '${tags.keys().next().value}'.`);
             }
         };
         const hdf5 = () => {
-            const obj = context.open('hdf5');
+            const obj = context.peek('hdf5');
             if (obj instanceof Error) {
                 throw obj;
             }
@@ -5397,8 +5561,8 @@ view.ModelFactoryService = class {
                 stream.seek(0);
                 const buffer = stream.peek(Math.min(16, stream.length));
                 const bytes = Array.from(buffer).map((c) => (c < 16 ? '0' : '') + c.toString(16)).join('');
-                const content = stream.length > 268435456 ? '(' + bytes + ') [' + stream.length.toString() + ']': '(' + bytes + ')';
-                throw new view.Error("Unsupported file content " + content + " for extension '." + extension + "'.");
+                const content = stream.length > 268435456 ? `(${bytes}) [${stream.length}]`: `(${bytes})`;
+                throw new view.Error(`Unsupported file content ${content} for extension '.${extension}'.`);
             }
             throw new view.Error("Unsupported file directory.");
         };
@@ -5417,27 +5581,36 @@ view.ModelFactoryService = class {
         let success = false;
         const next = async () => {
             if (modules.length > 0) {
+                let module = null;
                 try {
                     const id = modules.shift();
-                    const module = await this._host.require(id);
+                    module = await this._host.require(id);
                     if (!module.ModelFactory) {
-                        throw new view.Error("Failed to load module '" + id + "'.");
-                    }
-                    const modelFactory = new module.ModelFactory();
-                    const target = modelFactory.match(context);
-                    if (target) {
-                        success = true;
-                        const model = await modelFactory.open(context, target);
-                        if (!model.identifier) {
-                            model.identifier = context.identifier;
-                        }
-                        return model;
+                        throw new view.Error(`Failed to load module '${id}'.`);
                     }
                 } catch (error) {
-                    if (context.stream && context.stream.position !== 0) {
-                        context.stream.seek(0);
-                    }
+                    success = true;
+                    modules.splice(0, modules.length);
                     errors.push(error);
+                }
+                if (module) {
+                    try {
+                        const modelFactory = new module.ModelFactory();
+                        const target = modelFactory.match(context);
+                        if (target) {
+                            success = true;
+                            const model = await modelFactory.open(context, target);
+                            if (!model.identifier) {
+                                model.identifier = context.identifier;
+                            }
+                            return model;
+                        }
+                    } catch (error) {
+                        if (context.stream && context.stream.position !== 0) {
+                            context.stream.seek(0);
+                        }
+                        errors.push(error);
+                    }
                 }
                 return await next();
             }
@@ -5456,14 +5629,14 @@ view.ModelFactoryService = class {
         try {
             const rootFolder = (files) => {
                 const map = files.map((file) => file.split('/').slice(0, -1));
-                const at = index => list => list[index];
-                const rotate = list => list.length === 0 ? [] : list[0].map((item, index) => list.map(at(index)));
-                const equals = list => list.every((item) => item === list[0]);
+                const at = (index) => (list) => list[index];
+                const rotate = (list) => list.length === 0 ? [] : list[0].map((item, index) => list.map(at(index)));
+                const equals = (list) => list.every((item) => item === list[0]);
                 const folder = rotate(map).filter(equals).map(at(0)).join('/');
-                return folder.length === 0 ? folder : folder + '/';
+                return folder.length === 0 ? folder : `${folder}/`;
             };
-            const list = Array.from(entries).map((entry) => {
-                return { name: entry[0], stream: entry[1] };
+            const list = Array.from(entries).map(([name, stream]) => {
+                return { name: name, stream: stream };
             });
             const files = list.filter((entry) => {
                 if (entry.name.endsWith('/')) {
@@ -5478,118 +5651,132 @@ view.ModelFactoryService = class {
                 return true;
             });
             const folder = rootFolder(files.map((entry) => entry.name));
-            const filter = async (queue) => {
+            const filter = async (queue, entries) => {
+                entries = new Map(Array.from(entries)
+                    .filter(([path]) => path.startsWith(folder))
+                    .map(([path, stream]) => [ path.substring(folder.length), stream ]));
+                const entryContext = new view.EntryContext(this._host, entries);
                 let matches = [];
-                const nextEntry = async () => {
-                    if (queue.length > 0) {
-                        const entry = queue.shift();
-                        const context = new view.ModelContext(new view.EntryContext(this._host, entries, folder, entry.name, entry.stream));
-                        const modules = this._filter(context);
-                        const nextModule = async () => {
-                            if (modules.length > 0) {
-                                const id = modules.shift();
-                                const module = await this._host.require(id);
-                                if (!module.ModelFactory) {
-                                    throw new view.ArchiveError("Failed to load module '" + id + "'.", null);
-                                }
-                                const modelFactory = new module.ModelFactory();
-                                if (modelFactory.match(context)) {
-                                    matches.push(context);
-                                    modules.splice(0, modules.length);
-                                }
-                                return await nextModule();
-                            }
-                            return await nextEntry();
-                        };
-                        return await nextModule();
+                for (const entry of queue) {
+                    const identifier = entry.name.substring(folder.length);
+                    const context = new view.Context(entryContext, identifier, entry.stream);
+                    const modules = this._filter(context);
+                    for (const id of modules) {
+                        /* eslint-disable no-await-in-loop */
+                        const module = await this._host.require(id);
+                        /* eslint-enable no-await-in-loop */
+                        if (!module.ModelFactory) {
+                            throw new view.ArchiveError(`Failed to load module '${id}'.`, null);
+                        }
+                        const modelFactory = new module.ModelFactory();
+                        if (modelFactory.match(context)) {
+                            matches.push(context);
+                            break;
+                        }
                     }
-                    if (matches.length === 0) {
-                        return null;
-                    }
-                    // MXNet
-                    if (matches.length === 2 &&
-                        matches.some((context) => context.identifier.toLowerCase().endsWith('.params')) &&
-                        matches.some((context) => context.identifier.toLowerCase().endsWith('-symbol.json'))) {
-                        matches = matches.filter((context) => context.identifier.toLowerCase().endsWith('.params'));
-                    }
-                    // TensorFlow.js
-                    if (matches.length > 0 &&
-                        matches.some((context) => context.identifier.toLowerCase().endsWith('.bin')) &&
-                        matches.some((context) => context.identifier.toLowerCase().endsWith('.json'))) {
-                        matches = matches.filter((context) => context.identifier.toLowerCase().endsWith('.json'));
-                    }
-                    // ncnn
-                    if (matches.length > 0 &&
-                        matches.some((context) => context.identifier.toLowerCase().endsWith('.bin')) &&
-                        matches.some((context) => context.identifier.toLowerCase().endsWith('.param'))) {
-                        matches = matches.filter((context) => context.identifier.toLowerCase().endsWith('.param'));
-                    }
-                    // ncnn
-                    if (matches.length > 0 &&
-                        matches.some((context) => context.identifier.toLowerCase().endsWith('.bin')) &&
-                        matches.some((context) => context.identifier.toLowerCase().endsWith('.param.bin'))) {
-                        matches = matches.filter((context) => context.identifier.toLowerCase().endsWith('.param.bin'));
-                    }
-                    // NNEF
-                    if (matches.length > 0 &&
-                        matches.some((context) => context.identifier.toLowerCase().endsWith('.nnef')) &&
-                        matches.some((context) => context.identifier.toLowerCase().endsWith('.dat'))) {
-                        matches = matches.filter((context) => context.identifier.toLowerCase().endsWith('.nnef'));
-                    }
-                    // Paddle
-                    if (matches.length > 0 &&
-                        matches.some((context) => context.identifier.toLowerCase().endsWith('.pdmodel')) &&
-                        (matches.some((context) => context.identifier.toLowerCase().endsWith('.pdparams')) ||
-                            matches.some((context) => context.identifier.toLowerCase().endsWith('.pdopt')) ||
-                            matches.some((context) => context.identifier.toLowerCase().endsWith('.pdiparams')))) {
-                        matches = matches.filter((context) => context.identifier.toLowerCase().endsWith('.pdmodel'));
-                    }
-                    // Paddle Lite
-                    if (matches.length > 0 &&
-                        matches.some((context) => context.identifier.toLowerCase().split('/').pop() === '__model__.nb') &&
-                        matches.some((context) => context.identifier.toLowerCase().split('/').pop() === 'param.nb')) {
-                        matches = matches.filter((context) => context.identifier.toLowerCase().split('/').pop() == '__model__.nb');
-                    }
-                    // TensorFlow Bundle
-                    if (matches.length > 1 &&
-                        matches.some((context) => context.identifier.toLowerCase().endsWith('.data-00000-of-00001'))) {
-                        matches = matches.filter((context) => !context.identifier.toLowerCase().endsWith('.data-00000-of-00001'));
-                    }
-                    // TensorFlow SavedModel
-                    if (matches.length === 2 &&
-                        matches.some((context) => context.identifier.toLowerCase().split('/').pop() === 'keras_metadata.pb')) {
-                        matches = matches.filter((context) => context.identifier.toLowerCase().split('/').pop() !== 'keras_metadata.pb');
-                    }
-                    // Keras
-                    if (matches.length === 3 &&
-                        matches.some((context) => context.identifier.toLowerCase().split('/').pop() === 'model.weights.h5') &&
-                        matches.some((context) => context.identifier.toLowerCase().split('/').pop() === 'config.json') &&
-                        matches.some((context) => context.identifier.toLowerCase().split('/').pop() === 'metadata.json')) {
-                        matches = matches.filter((context) => context.identifier.toLowerCase().split('/').pop() == 'model.weights.h5');
-                    }
-                    if (matches.length === 2 &&
-                        matches.some((context) => context.identifier.toLowerCase().split('/').pop() === 'model.weights.h5') &&
-                        matches.some((context) => context.identifier.toLowerCase().split('/').pop() === 'config.json')) {
-                        matches = matches.filter((context) => context.identifier.toLowerCase().split('/').pop() == 'model.weights.h5');
-                    }
-                    if ((matches.length === 2) &&
-                        matches.some((context) => context.identifier.toLowerCase().split('/').pop() === 'config.json') &&
-                        matches.some((context) => context.identifier.toLowerCase().split('/').pop() === 'metadata.json')) {
-                        matches = matches.filter((context) => context.identifier.toLowerCase().split('/').pop() == 'config.json');
-                    }
-                    if (matches.length > 1) {
-                        throw new view.ArchiveError('Archive contains multiple model files.');
-                    }
-                    const match = matches.shift();
-                    return match;
-                };
-                return await nextEntry();
+                }
+                if (matches.length === 0) {
+                    return null;
+                }
+                // PyTorch
+                if (matches.length === 2 &&
+                    matches.some((context) => context.identifier === 'serialized_exported_program.json') &&
+                    matches.some((context) => context.identifier === 'serialized_state_dict.pt')) {
+                    matches = matches.filter((context) => context.identifier === 'serialized_exported_program.json');
+                }
+                if (matches.length === 3 &&
+                    matches.some((context) => context.identifier === 'serialized_exported_program.json') &&
+                    matches.some((context) => context.identifier === 'serialized_state_dict.pt') &&
+                    matches.some((context) => context.identifier === 'serialized_constants.pt')) {
+                    matches = matches.filter((context) => context.identifier === 'serialized_exported_program.json');
+                }
+                // MXNet
+                if (matches.length === 2 &&
+                    matches.some((context) => context.identifier.toLowerCase().endsWith('.params')) &&
+                    matches.some((context) => context.identifier.toLowerCase().endsWith('-symbol.json'))) {
+                    matches = matches.filter((context) => context.identifier.toLowerCase().endsWith('.params'));
+                }
+                // TensorFlow.js
+                if (matches.length > 0 &&
+                    matches.some((context) => context.identifier.toLowerCase().endsWith('.bin')) &&
+                    matches.some((context) => context.identifier.toLowerCase().endsWith('.json'))) {
+                    matches = matches.filter((context) => context.identifier.toLowerCase().endsWith('.json'));
+                }
+                // ncnn
+                if (matches.length > 0 &&
+                    matches.some((context) => context.identifier.toLowerCase().endsWith('.bin')) &&
+                    matches.some((context) => context.identifier.toLowerCase().endsWith('.param'))) {
+                    matches = matches.filter((context) => context.identifier.toLowerCase().endsWith('.param'));
+                }
+                // ncnn
+                if (matches.length > 0 &&
+                    matches.some((context) => context.identifier.toLowerCase().endsWith('.bin')) &&
+                    matches.some((context) => context.identifier.toLowerCase().endsWith('.param.bin'))) {
+                    matches = matches.filter((context) => context.identifier.toLowerCase().endsWith('.param.bin'));
+                }
+                // NNEF
+                if (matches.length > 0 &&
+                    matches.some((context) => context.identifier.toLowerCase().endsWith('.nnef')) &&
+                    matches.some((context) => context.identifier.toLowerCase().endsWith('.dat'))) {
+                    matches = matches.filter((context) => context.identifier.toLowerCase().endsWith('.nnef'));
+                }
+                // Paddle
+                if (matches.length > 0 &&
+                    matches.some((context) => context.identifier.toLowerCase().endsWith('.pdmodel')) &&
+                    (matches.some((context) => context.identifier.toLowerCase().endsWith('.pdparams')) ||
+                        matches.some((context) => context.identifier.toLowerCase().endsWith('.pdopt')) ||
+                        matches.some((context) => context.identifier.toLowerCase().endsWith('.pdiparams')))) {
+                    matches = matches.filter((context) => context.identifier.toLowerCase().endsWith('.pdmodel'));
+                }
+                // Paddle Lite
+                if (matches.length > 0 &&
+                    matches.some((context) => context.identifier.toLowerCase().split('/').pop() === '__model__.nb') &&
+                    matches.some((context) => context.identifier.toLowerCase().split('/').pop() === 'param.nb')) {
+                    matches = matches.filter((context) => context.identifier.toLowerCase().split('/').pop() == '__model__.nb');
+                }
+                // TensorFlow Bundle
+                if (matches.length > 1 &&
+                    matches.some((context) => context.identifier.toLowerCase().endsWith('.data-00000-of-00001'))) {
+                    matches = matches.filter((context) => !context.identifier.toLowerCase().endsWith('.data-00000-of-00001'));
+                }
+                // TensorFlow SavedModel
+                if (matches.length === 2 &&
+                    matches.some((context) => context.identifier.toLowerCase().split('/').pop() === 'keras_metadata.pb')) {
+                    matches = matches.filter((context) => context.identifier.toLowerCase().split('/').pop() !== 'keras_metadata.pb');
+                }
+                // Keras
+                if (matches.length === 3 &&
+                    matches.some((context) => context.identifier.toLowerCase().split('/').pop() === 'model.weights.h5' || context.identifier.toLowerCase().split('/').pop() === 'model.weights.npz') &&
+                    matches.some((context) => context.identifier.toLowerCase().split('/').pop() === 'config.json') &&
+                    matches.some((context) => context.identifier.toLowerCase().split('/').pop() === 'metadata.json')) {
+                    matches = matches.filter((context) => context.identifier.toLowerCase().split('/').pop() == 'model.weights.h5' || context.identifier.toLowerCase().split('/').pop() === 'model.weights.npz');
+                }
+                if (matches.length === 2 &&
+                    matches.some((context) => context.identifier.toLowerCase().split('/').pop() === 'model.weights.h5' || context.identifier.toLowerCase().split('/').pop() === 'model.weights.npz') &&
+                    matches.some((context) => context.identifier.toLowerCase().split('/').pop() === 'config.json')) {
+                    matches = matches.filter((context) => context.identifier.toLowerCase().split('/').pop() == 'model.weights.h5' || context.identifier.toLowerCase().split('/').pop() === 'model.weights.npz');
+                }
+                if (matches.length === 2 &&
+                    matches.some((context) => context.identifier.toLowerCase().split('/').pop() === 'config.json') &&
+                    matches.some((context) => context.identifier.toLowerCase().split('/').pop() === 'metadata.json')) {
+                    matches = matches.filter((context) => context.identifier.toLowerCase().split('/').pop() == 'config.json');
+                }
+                // Hailo
+                if (matches.length >= 2 &&
+                    matches.some((context) => context.identifier.toLowerCase().endsWith('.metadata.json'))) {
+                    matches = matches.filter((context) => context.identifier.toLowerCase().endsWith('.metadata.json'));
+                }
+                if (matches.length > 1) {
+                    throw new view.ArchiveError('Archive contains multiple model files.');
+                }
+                const match = matches.shift();
+                return match;
             };
             const queue = files.slice(0).filter((entry) => entry.name.substring(folder.length).indexOf('/') < 0);
-            const context = await filter(queue);
+            const context = await filter(queue, entries);
             if (!context) {
                 const queue = files.slice(0).filter((entry) => entry.name.substring(folder.length).indexOf('/') >= 0);
-                return await filter(queue);
+                return await filter(queue, entries);
             }
             return context;
         } catch (error) {
@@ -5601,8 +5788,9 @@ view.ModelFactoryService = class {
         const extension = identifier.indexOf('.') === -1 ? '' : identifier.split('.').pop().toLowerCase();
         identifier = identifier.toLowerCase().split('/').pop();
         let accept = false;
-        for (const extension of this._extensions) {
-            if ((typeof extension === 'string' && identifier.endsWith(extension)) || (extension instanceof RegExp && extension.exec(identifier))) {
+        for (const extension of this._patterns) {
+            if ((typeof extension === 'string' && identifier.endsWith(extension)) ||
+                (extension instanceof RegExp && extension.exec(identifier))) {
                 accept = true;
                 break;
             }
@@ -5618,9 +5806,9 @@ view.ModelFactoryService = class {
     _filter(context) {
         const identifier = context.identifier.toLowerCase().split('/').pop();
         const list = this._factories.filter((entry) =>
-            (typeof entry.extension === 'string' && identifier.endsWith(entry.extension)) ||
-            (entry.extension instanceof RegExp && entry.extension.exec(identifier)));
-        return Array.from(new Set(list.map((entry) => entry.id)));
+            (typeof entry.pattern === 'string' && identifier.endsWith(entry.pattern)) ||
+            (entry.pattern instanceof RegExp && entry.pattern.test(identifier)));
+        return Array.from(new Set(list.map((entry) => entry.module)));
     }
 
     async _openSignature(context) {
@@ -5673,7 +5861,7 @@ view.ModelFactoryService = class {
             const content = String.fromCharCode.apply(null, buffer);
             for (const entry of entries) {
                 if (content.match(entry.value) && (!entry.identifier || entry.identifier === context.identifier)) {
-                    throw new view.Error('Invalid file content. File contains ' + entry.name + '.');
+                    throw new view.Error(`Invalid file content. File contains ${entry.name}.`);
                 }
             }
         }
@@ -5684,30 +5872,29 @@ view.Metadata = class {
 
     static async open(context, name) {
         view.Metadata._metadata = view.Metadata._metadata || new Map();
-        if (view.Metadata._metadata.has(name)) {
-            return view.Metadata._metadata.get(name);
+        const metadata = view.Metadata._metadata;
+        if (!metadata.has(name)) {
+            try {
+                const content = await context.request(name);
+                const types = JSON.parse(content);
+                metadata.set(name, new view.Metadata(types));
+            } catch (error) {
+                metadata.set(name, new view.Metadata(null));
+            }
         }
-        try {
-            const json = await context.request(name, 'utf-8', null);
-            const data = JSON.parse(json);
-            const library = new view.Metadata(data);
-            view.Metadata._metadata.set(name, library);
-            return library;
-        } catch (error) {
-            const library = new view.Metadata(null);
-            view.Metadata._metadata.set(name, library);
-            return library;
-        }
+        return metadata.get(name);
     }
 
-    constructor(data) {
+    constructor(types) {
         this._types = new Map();
         this._attributes = new Map();
         this._inputs = new Map();
-        for (const entry of data || []) {
-            this._types.set(entry.name, entry);
-            if (entry.identifier !== undefined) {
-                this._types.set(entry.identifier, entry);
+        if (Array.isArray(types)) {
+            for (const type of types) {
+                this._types.set(type.name, type);
+                if (type.identifier !== undefined) {
+                    this._types.set(type.identifier, type);
+                }
             }
         }
     }
@@ -5720,13 +5907,13 @@ view.Metadata = class {
     }
 
     attribute(type, name) {
-        const key = type + ':' + name;
+        const key = `${type}:${name}`;
         if (!this._attributes.has(key)) {
             this._attributes.set(key, null);
             const metadata = this.type(type);
             if (metadata && Array.isArray(metadata.attributes)) {
                 for (const attribute of metadata.attributes) {
-                    this._attributes.set(type + ':' + attribute.name, attribute);
+                    this._attributes.set(`${type}:${attribute.name}`, attribute);
                 }
             }
         }
@@ -5734,13 +5921,13 @@ view.Metadata = class {
     }
 
     input(type, name) {
-        const key = type + ':' + name;
+        const key = `${type}:${name}`;
         if (!this._inputs.has(key)) {
             this._inputs.set(key, null);
             const metadata = this.type(type);
             if (metadata && Array.isArray(metadata.inputs)) {
                 for (const input of metadata.inputs) {
-                    this._inputs.set(type + ':' + input.name, input);
+                    this._inputs.set(`${type}:${input.name}`, input);
                 }
             }
         }
@@ -5756,10 +5943,13 @@ view.Error = class extends Error {
     }
 };
 
-if (typeof module !== 'undefined' && typeof module.exports === 'object') {
-    module.exports.View = view.View;
-    module.exports.ModelFactoryService = view.ModelFactoryService;
-    module.exports.Documentation = view.Documentation;
-    module.exports.Formatter = view.Formatter;
-    module.exports.Tensor = view.Tensor;
+if (typeof window !== 'undefined' && window.exports) {
+    window.exports.view = view;
 }
+
+export const View = view.View;
+export const ModelFactoryService = view.ModelFactoryService;
+export const Documentation = view.Documentation;
+export const Formatter = view.Formatter;
+export const Tensor = view.Tensor;
+export const Quantization = view.Quantization;

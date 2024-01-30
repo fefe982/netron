@@ -1,12 +1,13 @@
 
-var mediapipe = {};
-var protobuf = require('./protobuf');
+import * as protobuf from './protobuf.js';
+
+const mediapipe = {};
 
 mediapipe.ModelFactory = class {
 
     match(context) {
         const tags = context.tags('pbtxt');
-        if (tags.has('node') && ['input_stream', 'output_stream', 'input_side_packet', 'output_side_packet'].some((key) => tags.has(key) || tags.has('node.' + key))) {
+        if (tags.has('node') && ['input_stream', 'output_stream', 'input_side_packet', 'output_side_packet'].some((key) => tags.has(key) || tags.has(`node.${key}`))) {
             return 'mediapipe.pbtxt';
         }
         return null;
@@ -23,7 +24,7 @@ mediapipe.ModelFactory = class {
             config = new mediapipe.Object(reader);
         } catch (error) {
             const message = error && error.message ? error.message : error.toString();
-            throw new mediapipe.Error('File text format is not mediapipe.CalculatorGraphConfig (' + message.replace(/\.$/, '') + ').');
+            throw new mediapipe.Error(`File text format is not mediapipe.CalculatorGraphConfig (${message.replace(/\.$/, '')}).`);
         }
         return new mediapipe.Model(config);
     }
@@ -75,9 +76,9 @@ mediapipe.Graph = class {
             node.output_side_packet = type(node.output_side_packet);
         }
         const values = new Map();
-        for (const entry of types) {
-            const type = Array.from(entry[1]).join(',');
-            values.set(entry[0], new mediapipe.Value(entry[0], type || null));
+        for (const [name, value] of types) {
+            const type = Array.from(value).join(',');
+            values.set(name, new mediapipe.Value(name, type || null));
         }
         const value = (name) => {
             return values.get(name);
@@ -156,21 +157,22 @@ mediapipe.Node = class {
                     }
                 }
                 const message = new mediapipe.Object(reader);
-                for (const entry of Object.entries(message)) {
-                    options.set(entry[0], entry[1]);
+                for (const [name, value] of Object.entries(message)) {
+                    options.set(name, value);
                 }
             }
         } else {
             for (const option of node_options) {
-                for (const entry of Object.entries(option)) {
-                    if (entry[0] !== '__type__') {
-                        options.set(entry[0], entry[1]);
+                for (const [name, value] of Object.entries(option)) {
+                    if (name !== '__type__') {
+                        options.set(name, value);
                     }
                 }
             }
         }
-        for (const pair of options) {
-            this.attributes.push(new mediapipe.Argument(pair[0], pair[1]));
+        for (const [name, value] of options) {
+            const attribute = new mediapipe.Argument(name, value);
+            this.attributes.push(attribute);
         }
     }
 };
@@ -187,7 +189,7 @@ mediapipe.Value = class {
 
     constructor(name, type) {
         if (typeof name !== 'string') {
-            throw new mediapipe.Error("Invalid value identifier '" + JSON.stringify(name) + "'.");
+            throw new mediapipe.Error(`Invalid value identifier '${JSON.stringify(name)}'.`);
         }
         this.name = name;
         this.type = type || null;
@@ -275,6 +277,4 @@ mediapipe.Error = class extends Error {
     }
 };
 
-if (typeof module !== 'undefined' && typeof module.exports === 'object') {
-    module.exports.ModelFactory = mediapipe.ModelFactory;
-}
+export const ModelFactory = mediapipe.ModelFactory;

@@ -1,6 +1,7 @@
 
-var kmodel = {};
-var base = require('./base');
+import * as base from './base.js';
+
+const kmodel = {};
 
 kmodel.ModelFactory = class {
 
@@ -17,7 +18,7 @@ kmodel.ModelFactory = class {
 kmodel.Model = class {
 
     constructor(model) {
-        this.format = 'kmodel v' + model.version.toString();
+        this.format = `kmodel v${model.version}`;
         this.graphs = model.modules.map((module) => new kmodel.Graph(module));
     }
 };
@@ -55,7 +56,7 @@ kmodel.Graph = class {
             }
             for (const output of layer.outputs || []) {
                 for (const arg of output.value) {
-                    const name = scopes.has(arg.name) ? arg.name + '#' + index.toString() : arg.name;
+                    const name = scopes.has(arg.name) ? `${arg.name}#${index}` : arg.name;
                     scopes.set(arg.name, name); // custom argument id
                     arg.name = name;
                     if (arg.name && arg.shape && !arg.data) {
@@ -125,7 +126,7 @@ kmodel.Value = class {
 
     constructor(name, type, initializer) {
         if (typeof name !== 'string') {
-            throw new kmodel.Error("Invalid value identifier '" + JSON.stringify(name) + "'.");
+            throw new kmodel.Error(`Invalid value identifier '${JSON.stringify(name)}'.`);
         }
         this.name = name;
         this.type = type ? type : initializer ? initializer.type : null;
@@ -171,7 +172,7 @@ kmodel.TensorShape = class {
 
     toString() {
         if (this.dimensions && Array.isArray(this.dimensions) && this.dimensions.length > 0) {
-            return '[' + this.dimensions.map((dim) => dim ? dim.toString() : '?').join(',') + ']';
+            return `[${this.dimensions.map((dim) => dim ? dim.toString() : '?').join(',')}]`;
         }
         return '';
     }
@@ -196,9 +197,7 @@ kmodel.Node = class {
         this.chain = [];
         this.attributes = [];
         this.chain = [];
-        for (const entry of Object.entries(layer)) {
-            const name = entry[0];
-            const value = entry[1];
+        for (const [name, value] of Object.entries(layer)) {
             if (name === 'type' || name === 'location' || name === 'inputs' || name === 'outputs' || name === 'chain') {
                 continue;
             }
@@ -258,7 +257,7 @@ kmodel.Reader = class {
     read() {
         if (this._stream) {
             if (this.version < 3 || this.version > 5) {
-                throw new kmodel.Error("Unsupported model version '" + this.version.toString() + "'.");
+                throw new kmodel.Error(`Unsupported model version '${this.version}'.`);
             }
             const types = new Map();
             const register = (type, name, category, callback) => {
@@ -271,7 +270,7 @@ kmodel.Reader = class {
                     const layers = new Array(model_header.layers_length);
                     const outputs = new Array(model_header.output_count);
                     for (let i = 0; i < model_header.output_count; i++) {
-                        outputs[i] = reader.kpu_model_output_t('output' + (i > 0 ? i.toString() : ''));
+                        outputs[i] = reader.kpu_model_output_t(`output${i > 0 ? i.toString() : ''}`);
                     }
                     for (let i = 0; i < layers.length; i++) {
                         layers[i] = reader.kpu_model_layer_header_t();
@@ -376,7 +375,7 @@ kmodel.Reader = class {
                         ];
                         if (act !== 0) {
                             if (act > activations.length) {
-                                throw new kmodel.Error("Unsupported FULLY_CONNECTED activation '" + act.toString() + "'.");
+                                throw new kmodel.Error(`Unsupported FULLY_CONNECTED activation '${act}'.`);
                             }
                             layer.chain = [ { type: activations[act] } ];
                         }
@@ -513,10 +512,10 @@ kmodel.Reader = class {
                     for (const layer of layers) {
                         const type = types.get(layer.type);
                         if (!type) {
-                            throw new kmodel.Error("Unsupported version '" + this.version.toString() + "' layer type '" + layer.type.toString() + "'.");
+                            throw new kmodel.Error(`Unsupported version '${this.version}' layer type '${layer.type}'.`);
                         }
                         if (!type.callback) {
-                            throw new kmodel.Error("Unsupported version '" + this.version.toString() + "' layer '" + type.type.name + "'.");
+                            throw new kmodel.Error(`Unsupported version '${this.version}' layer '${type.type.name}'.`);
                         }
                         layer.type = type.type;
                         reader.seek(layer.offset);
@@ -556,14 +555,14 @@ kmodel.Reader = class {
                     };
                     const inputs = new Array(model_header.inputs);
                     for (let i = 0; i < inputs.length; i++) {
-                        inputs[i] = reader.parameter('input' + (i == 0 ? '' : (i + 1).toString()));
+                        inputs[i] = reader.parameter(`input${i == 0 ? '' : (i + 1)}`);
                     }
                     for (let i = 0; i < inputs.length; i++) {
                         inputs[i].value[0].shape = reader.runtime_shape_t();
                     }
                     const outputs = new Array(model_header.outputs);
                     for (let i = 0; i < outputs.length; i++) {
-                        outputs[i] = reader.parameter('output' + (i == 0 ? '' : (i + 1).toString()));
+                        outputs[i] = reader.parameter(`output${i == 0 ? '' : (i + 1)}`);
                     }
                     reader.constants(model_header.constants);
                     const layers = new Array(model_header.nodes);
@@ -737,21 +736,21 @@ kmodel.Reader = class {
                         layer.inputs = [ reader.parameter('input') ];
                         layer.outputs = [ reader.parameter('output') ];
                         layer.inputs[0].value[0].shape = reader.runtime_shape_t();
-                        layer.groups = layer.int32();
-                        layer.out_channels = layer.int32();
+                        layer.groups = reader.int32();
+                        layer.out_channels = reader.int32();
                         layer.padding_h = reader.padding();
                         layer.padding_w = reader.padding();
-                        layer.filter_h = layer.int32();
-                        layer.filter_w = layer.int32();
-                        layer.stride_h = layer.int32();
-                        layer.stride_w = layer.int32();
-                        layer.dilation_h = layer.int32();
-                        layer.dilation_w = layer.int32();
-                        layer.input_offset = layer.int32();
-                        layer.filter_offset = layer.int32();
-                        layer.output_mul = layer.int32();
-                        layer.output_shift = layer.int32();
-                        layer.output_offset = layer.int32();
+                        layer.filter_h = reader.int32();
+                        layer.filter_w = reader.int32();
+                        layer.stride_h = reader.int32();
+                        layer.stride_w = reader.int32();
+                        layer.dilation_h = reader.int32();
+                        layer.dilation_w = reader.int32();
+                        layer.input_offset = reader.int32();
+                        layer.filter_offset = reader.int32();
+                        layer.output_mul = reader.int32();
+                        layer.output_shift = reader.int32();
+                        layer.output_offset = reader.int32();
                         const bias = reader.span('int32', [ layer.out_channels ]);
                         if (bias) {
                             layer.inputs.push({ name: 'bias', value: [ bias ] });
@@ -829,8 +828,8 @@ kmodel.Reader = class {
                         layer.interrupt_enabe = reader.uint64_bits({ int_en: 0, ram_flag: 1, full_add: 2, depth_wise_layer: 3 });
                         const image_src_addr = reader.uint32();
                         const image_dst_addr = reader.uint32();
-                        layer.inputs = [ { name: 'input', value: [ { name: 'kpu:' + image_src_addr.toString() } ] } ];
-                        const outputs = [ { name: 'output', value: [ { name: 'kpu:' + image_dst_addr.toString() } ] } ];
+                        layer.inputs = [ { name: 'input', value: [ { name: `kpu:${image_src_addr}` } ] } ];
+                        const outputs = [ { name: 'output', value: [ { name: `kpu:${image_dst_addr}` } ] } ];
                         layer.outputs[0].value.push(outputs[0].value[0]);
                         // layer.outputs = layer.flags & 1 ? layer.outputs : outputs;
                         layer.image_channel_num = reader.uint64_bits({ i_ch_num: 0, o_ch_num: 32, o_ch_num_coef: 48 });
@@ -877,10 +876,10 @@ kmodel.Reader = class {
                     for (const layer of layers) {
                         const type = types.get(layer.opcode);
                         if (!type) {
-                            throw new kmodel.Error("Unsupported version '" + this.version.toString() + "' layer type '" + layer.type.toString() + "'.");
+                            throw new kmodel.Error(`Unsupported version '${this.version}' layer type '${layer.type}'.`);
                         }
                         if (!type.callback) {
-                            throw new kmodel.Error("Unsupported version '" + this.version.toString() + "' layer '" + type.type.name + "'.");
+                            throw new kmodel.Error(`Unsupported version '${this.version}' layer '${type.type.name}'.`);
                         }
                         layer.type = type.type;
                         reader.seek(layer.offset);
@@ -913,7 +912,7 @@ kmodel.Reader = class {
                     const reader = new kmodel.BinaryReader.v5(this._stream);
                     const model_header = reader.model_header();
                     if (model_header.header_size < 32) {
-                        throw new kmodel.Error("Invalid header size '" + model_header.header_size + "'.");
+                        throw new kmodel.Error(`Invalid header size '${model_header.header_size}'.`);
                     }
                     if (model_header.header_size > reader.position) {
                         reader.skip(model_header.header_size - reader.position);
@@ -945,14 +944,14 @@ kmodel.Reader = class {
                             }
                             const inputs = new Array(function_header.inputs);
                             for (let i = 0; i < inputs.length; i++) {
-                                inputs[i] = reader.parameter('input' + (i == 0 ? '' : (i + 1).toString()));
+                                inputs[i] = reader.parameter(`input${i == 0 ? '' : (i + 1)}`);
                             }
                             for (let i = 0; i < inputs.length; i++) {
                                 inputs[i].value[0].shape = reader.shape();
                             }
                             const outputs = new Array(function_header.outputs);
                             for (let i = 0; i < outputs.length; i++) {
-                                outputs[i] = reader.parameter('output' + (i == 0 ? '' : (i + 1).toString()));
+                                outputs[i] = reader.parameter(`output${i == 0 ? '' : (i + 1)}`);
                             }
                             for (let i = 0; i < outputs.length; i++) {
                                 outputs[i].value[0].shape = reader.shape();
@@ -996,7 +995,7 @@ kmodel.Reader = class {
                                 case 'k510':
                                     break;
                                 default:
-                                    throw new kmodel.Error("Unsupported module type '" + module_header.type + "'.");
+                                    throw new kmodel.Error(`Unsupported module type '${module_header.type}'.`);
                             }
                         }
                         const name = this.modules.length > 1 ? i.toString() : '';
@@ -1009,7 +1008,7 @@ kmodel.Reader = class {
                     break;
                 }
                 default: {
-                    throw new kmodel.Error("Unsupported model version '" + this.version.toString() + "'.");
+                    throw new kmodel.Error(`Unsupported model version '${this.version}'.`);
                 }
             }
             delete this._stream;
@@ -1025,10 +1024,12 @@ kmodel.BinaryReader = class extends base.BinaryReader {
         fields.push([ null, Math.min(64, fields[fields.length - 1][1] + 56)]);
         const obj = {};
         for (let i = 0; i < fields.length - 1; i++) {
-            const key = fields[i][0];
+            const current = fields[i];
+            const next = fields[i + 1];
+            const [key, start] = current;
+            const [, end] = next;
             let value = 0;
-            let position = fields[i][1];
-            const end = fields[i + 1][1];
+            let position = start;
             while (position < end) {
                 const offset = (position / 8) >> 0;
                 const start = (position & 7);
@@ -1077,7 +1078,7 @@ kmodel.BinaryReader.v3 = class extends kmodel.BinaryReader {
     argument(memory_type) {
         memory_type = memory_type || 'main';
         const address = this.uint32();
-        return { name: memory_type + ':' + address.toString() };
+        return { name: `${memory_type}:${address}` };
     }
 
     parameter(name, memory_type) {
@@ -1116,7 +1117,7 @@ kmodel.BinaryReader.v4 = class extends kmodel.BinaryReader {
     argument() {
         const memory = this.memory_range();
         const value = {
-            name: memory.memory_type + ':' + memory.start.toString(),
+            name: `${memory.memory_type}:${memory.start}`,
             datatype: memory.datatype
         };
         if (memory.memory_type === 'const') {
@@ -1284,7 +1285,7 @@ kmodel.BinaryReader.v5 = class extends kmodel.BinaryReader {
     memory_location_t() {
         const value = this.byte();
         if (!this._memory_locations.has(value)) {
-            throw new kmodel.Error("Unsupported memory location '" + value + "'.");
+            throw new kmodel.Error(`Unsupported memory location '${value}'.`);
         }
         return this._memory_locations.get(value);
     }
@@ -1307,7 +1308,7 @@ kmodel.BinaryReader.v5 = class extends kmodel.BinaryReader {
     argument() {
         const memory = this.memory_range();
         const value = {
-            name: memory.memory_location + ':' + memory.start.toString(),
+            name: `${memory.memory_location}:${memory.start}`,
             datatype: memory.datatype
         };
         /*
@@ -1351,6 +1352,4 @@ kmodel.Error = class extends Error {
     }
 };
 
-if (typeof module !== 'undefined' && typeof module.exports === 'object') {
-    module.exports.ModelFactory = kmodel.ModelFactory;
-}
+export const ModelFactory = kmodel.ModelFactory;

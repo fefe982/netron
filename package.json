@@ -6,19 +6,22 @@
         "email": "lutzroeder@users.noreply.github.com",
         "url": "https://www.lutzroeder.com"
     },
-    "version": "7.2.7",
-    "date": "2023-10-28 04:01:37",
+    "version": "7.4.1",
+    "date": "2024-01-27 05:38:37",
     "description": "Visualizer for neural network, deep learning, and machine learning models",
     "license": "MIT",
     "repository": "lutzroeder/netron",
+    "type": "module",
     "main": "source/app.js",
     "scripts": {
         "start": "node package.js start",
         "server": "python package.py build start",
         "test": "node test/models.js",
         "lint": "node package.js lint",
+        "validate": "node package.js validate",
         "clean": "node package.js clean",
         "purge": "node package.js purge",
+        "install": "node package.js install",
         "build": "node package.js build",
         "publish": "node package.js publish",
         "version": "node package.js version",
@@ -28,17 +31,17 @@
         "pull": "node package.js pull"
     },
     "dependencies": {
-        "electron-updater": "6.1.4"
+        "electron-updater": "6.1.7"
     },
     "devDependencies": {
-        "electron": "27.0.2",
-        "electron-builder": "24.6.4",
-        "@electron/notarize": "2.1.0",
-        "eslint": "8.52.0"
+        "electron": "28.2.0",
+        "electron-builder": "24.9.1",
+        "@electron/notarize": "2.2.1",
+        "eslint": "8.56.0"
     },
     "eslintConfig": {
         "env": {
-            "es2017": true,
+            "es2020": true,
             "browser": true,
             "node": true
         },
@@ -48,6 +51,7 @@
         },
         "rules": {
             "array-callback-return": "error",
+            "arrow-parens": "error",
             "brace-style": "error",
             "curly": "error",
             "consistent-return": "error",
@@ -55,7 +59,6 @@
             "default-case-last": "error",
             "indent": [ "error", 4, { "SwitchCase": 1 } ],
             "keyword-spacing": "error",
-            "linebreak-style": "off",
             "no-array-constructor": "error",
             "no-await-in-loop": "error",
             "no-console": "error",
@@ -63,8 +66,10 @@
             "no-duplicate-imports": "error",
             "no-else-return": "error",
             "no-extra-semi": "error",
+            "no-global-assign": "error",
             "no-invalid-this": "error",
             "no-iterator": "error",
+            "no-import-assign": "error",
             "no-labels": "error",
             "no-lone-blocks": "error",
             "no-lonely-if": "error",
@@ -78,17 +83,26 @@
             "no-unreachable-loop": "error",
             "no-unused-private-class-members": "error",
             "no-use-before-define": "error",
+            "no-var": "error",
             "object-curly-spacing": [ "error", "always" ],
-            "prefer-const": [ "error", { "destructuring": "all" } ],
+            "prefer-const": [ "error" ],
+            "prefer-destructuring": [ "error", { "array": true } ],
+            "prefer-template": "error",
             "require-atomic-updates": "error",
             "semi": [ "error", "always" ],
             "space-before-blocks": "error",
-            "space-in-parens": "error"
+            "space-in-parens": "error",
+            "template-curly-spacing": "error"
         },
         "globals": {
             "flatbuffers": "readonly",
             "protobuf": "readonly"
         }
+    },
+    "nyc": {
+        "reporter": [ "lcov" ],
+        "report-dir": "dist/nyc/coverage",
+        "temp-dir": "dist/nyc/.nyc_output"
     },
     "build": {
         "appId": "com.lutzroeder.netron",
@@ -103,6 +117,7 @@
             { "ext": "cmf",         "name": "CNTK Model"               },
             { "ext": "dlc",         "name": "DLC Model"                },
             { "ext": "dnn",         "name": "CNTK Model"               },
+            { "ext": "gguf",        "name": "GGUF Model"               },
             { "ext": "h5",          "name": "Keras Model"              },
             { "ext": "har",         "name": "Hailo Model"              },
             { "ext": "hd5",         "name": "Keras Model"              },
@@ -112,6 +127,7 @@
             { "ext": "kmodel",      "name": "Kendryte Model"           },
             { "ext": "lite",        "name": "TensorFlow Lite Model"    },
             { "ext": "mar",         "name": "MXNet Model"              },
+            { "ext": "maxviz",      "name": "Modular Model"            },
             { "ext": "meta",        "name": "TensorFlow Meta Graph"    },
             { "ext": "mge",         "name": "MegEngine Mge Model"      },
             { "ext": "mlmodel",     "name": "Core ML Model"            },
@@ -139,6 +155,7 @@
             { "ext": "pkl",         "name": "Pickle Model"             },
             { "ext": "prototxt",    "name": "Text Protocol Buffer"     },
             { "ext": "pt",          "name": "PyTorch Model"            },
+            { "ext": "pt2",         "name": "PyTorch Model"            },
             { "ext": "pth",         "name": "PyTorch Model"            },
             { "ext": "ptl",         "name": "PyTorch Model"            },
             { "ext": "rknn",        "name": "RKNN Model"               },
@@ -153,7 +170,7 @@
             { "ext": "uff",         "name": "UFF Model"                },
             { "ext": "xmodel",      "name": "Vitis AI Model"           }
         ],
-        "afterSign": "./publish/notarize.js",
+        "afterSign": "./publish/notarize.cjs",
         "publish": [
             { "provider": "github", "releaseType": "release" }
         ],

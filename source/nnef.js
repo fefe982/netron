@@ -1,6 +1,7 @@
 
-var nnef = {};
-var text = require('./text');
+import * as text from './text.js';
+
+const nnef = {};
 
 nnef.ModelFactory = class {
 
@@ -30,13 +31,13 @@ nnef.ModelFactory = class {
             case 'nnef.graph': {
                 const stream = context.stream;
                 const reader = nnef.TextReader.open(stream);
-                throw new nnef.Error("NNEF v" + reader.version + " support not implemented.");
+                throw new nnef.Error(`NNEF v${reader.version} support not implemented.`);
             }
             case 'nnef.dat': {
                 throw new nnef.Error('NNEF dat format support not implemented.');
             }
             default: {
-                throw new nnef.Error("Unsupported NNEF format '" + target + "'.");
+                throw new nnef.Error(`Unsupported NNEF format '${target}'.`);
             }
         }
     }
@@ -79,6 +80,4 @@ nnef.Error = class extends Error {
     }
 };
 
-if (typeof module !== 'undefined' && typeof module.exports === 'object') {
-    module.exports.ModelFactory = nnef.ModelFactory;
-}
+export const ModelFactory = nnef.ModelFactory;

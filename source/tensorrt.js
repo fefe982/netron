@@ -1,6 +1,7 @@
 
-var tensorrt = {};
-var base = require('./base');
+import * as base from './base.js';
+
+const tensorrt = {};
 
 tensorrt.ModelFactory = class {
 
@@ -103,7 +104,7 @@ tensorrt.Engine = class {
                 }
                 default: {
                     const content = Array.from(buffer).map((c) => (c < 16 ? '0' : '') + c.toString(16)).join('');
-                    throw new tensorrt.Error("Unsupported TensorRT engine signature (" + content.substring(8) + ").");
+                    throw new tensorrt.Error(`Unsupported TensorRT engine signature (${content.substring(8)}).`);
                 }
             }
             // const content = Array.from(buffer).map((c) => (c < 16 ? '0' : '') + c.toString(16)).join('');
@@ -178,6 +179,4 @@ tensorrt.Error = class extends Error {
     }
 };
 
-if (typeof module !== 'undefined' && typeof module.exports === 'object') {
-    module.exports.ModelFactory = tensorrt.ModelFactory;
-}
+export const ModelFactory = tensorrt.ModelFactory;

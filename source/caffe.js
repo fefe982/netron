@@ -1,6 +1,7 @@
 
-var caffe = {};
-var protobuf = require('./protobuf');
+import * as protobuf from './protobuf.js';
+
+const caffe = {};
 
 caffe.ModelFactory = class {
 
@@ -52,7 +53,7 @@ caffe.ModelFactory = class {
                         }
                         return;
                     }
-                    throw new Error("Unknown field '" + tag + "'" + this.location());
+                    throw new Error(`Unknown field '${tag}' ${this.location()}`);
                 };
                 reader.enum = function(type) {
                     const token = this.token();
@@ -82,7 +83,7 @@ caffe.ModelFactory = class {
                 netParameter = caffe.proto.NetParameter.decodeText(reader);
             } catch (error) {
                 const message = error && error.message ? error.message : error.toString();
-                throw new caffe.Error('File text format is not caffe.NetParameter (' + message.replace(/\.$/, '') + ').');
+                throw new caffe.Error(`File text format is not caffe.NetParameter (${message.replace(/\.$/, '')}).`);
             }
             return openModel(context, netParameter);
         };
@@ -95,21 +96,21 @@ caffe.ModelFactory = class {
                         message[tag] = this.read();
                         return;
                     }
-                    throw new Error("Unknown field '" + tag + "'" + this.location());
+                    throw new Error(`Unknown field '${tag}'${this.location()}`);
                 };
                 const solver = caffe.proto.SolverParameter.decodeText(reader);
                 if (solver.net_param) {
                     return openModel(context, solver.net_param);
                 }
-                let file = solver.net || solver.train_net;
-                file = file.split('/').pop();
+                let name = solver.net || solver.train_net;
+                name = name.split('/').pop();
                 try {
-                    const stream = await context.request(file, null);
-                    const buffer = stream.peek();
-                    return openNetParameterText(context, file, buffer);
+                    const content = await context.fetch(name);
+                    const buffer = content.stream.peek();
+                    return openNetParameterText(context, name, buffer);
                 } catch (error) {
                     const message = error.message ? error.message : error.toString();
-                    throw new caffe.Error("Failed to load '" + file + "' (" + message.replace(/\.$/, '') + ').');
+                    throw new caffe.Error(`Failed to load '${name}' (${message.replace(/\.$/, '')}).`);
                 }
             }
             case 'caffe.pbtxt': {
@@ -123,12 +124,12 @@ caffe.ModelFactory = class {
                     netParameter = caffe.proto.NetParameter.decode(reader);
                 } catch (error) {
                     const message = error && error.message ? error.message : error.toString();
-                    throw new caffe.Error('File format is not caffe.NetParameter (' + message.replace(/\.$/, '') + ').');
+                    throw new caffe.Error(`File format is not caffe.NetParameter (${message.replace(/\.$/, '')}).`);
                 }
                 return openModel(context, netParameter);
             }
             default: {
-                throw new caffe.Error("Unsupported Caffe format '" + target + "'.");
+                throw new caffe.Error(`Unsupported Caffe format '${target}'.`);
             }
         }
     }
@@ -190,7 +191,7 @@ caffe.Model = class {
     }
 
     get format() {
-        return 'Caffe' + (this._version ? ' v' + this._version.toString() : '');
+        return `Caffe${this._version ? ` v${this._version}` : ''}`;
     }
 
     get graphs() {
@@ -226,7 +227,7 @@ caffe.Graph = class {
         for (const layer of layers) {
             layer.input = layer.input.map((input) => scopes.has(input) ? scopes.get(input) : input);
             layer.output = layer.output.map((output) => {
-                const value = scopes.has(output) ? output + '\n' + index.toString() : output;
+                const value = scopes.has(output) ? `${output}\n${index}` : output;
                 scopes.set(output, value);
                 return value;
             });
@@ -252,7 +253,7 @@ caffe.Graph = class {
             if (!values.has(name)) {
                 values.set(name, new caffe.Value(name, type));
             } else if (type) {
-                throw new caffe.Error("Duplicate value '" + name + "'.");
+                throw new caffe.Error(`Duplicate value '${name}'.`);
             }
             return values.get(name);
         };
@@ -368,7 +369,7 @@ caffe.Value = class {
 
     constructor(name, type, initializer) {
         if (typeof name !== 'string') {
-            throw new caffe.Error("Invalid value identifier '" + JSON.stringify(name) + "'.");
+            throw new caffe.Error(`Invalid value identifier '${JSON.stringify(name)}'.`);
         }
         this._name = name;
         this._type = type || null;
@@ -411,7 +412,7 @@ caffe.Node = class {
                 break;
             }
             default: {
-                throw new new caffe.Error("Unsupported Caffe version '" + version + "'.");
+                throw new new caffe.Error(`Unsupported Caffe version '${version}'.`);
             }
         }
         this._type = metadata.type(type) || { name: type };
@@ -462,7 +463,7 @@ caffe.Node = class {
                 break;
             }
             default: {
-                throw new caffe.Error("Unsupported Caffe version '" + version + "'.");
+                throw new caffe.Error(`Unsupported Caffe version '${version}'.`);
             }
         }
         this._inputs = [];
@@ -667,7 +668,7 @@ caffe.TensorShape = class {
     }
 
     toString() {
-        return this._dimensions ? ('[' + this._dimensions.map((dimension) => dimension.toString()).join(',') + ']') : '';
+        return this._dimensions ? (`[${this._dimensions.map((dimension) => dimension.toString()).join(',')}]`) : '';
     }
 };
 
@@ -695,7 +696,7 @@ caffe.Utility = class {
         if (type) {
             caffe.Utility._enumKeyMap = caffe.Utility._enumKeyMap || new Map();
             if (!caffe.Utility._enumKeyMap.has(name)) {
-                const map = new Map(Object.entries(type).map((pair) => [ pair[1], pair[0] ]));
+                const map = new Map(Object.entries(type).map(([name, value]) => [ value, name ]));
                 caffe.Utility._enumKeyMap.set(name, map);
             }
             const map = caffe.Utility._enumKeyMap.get(name);
@@ -715,6 +716,4 @@ caffe.Error = class extends Error {
     }
 };
 
-if (typeof module !== 'undefined' && typeof module.exports === 'object') {
-    module.exports.ModelFactory = caffe.ModelFactory;
-}
+export const ModelFactory = caffe.ModelFactory;
