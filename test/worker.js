@@ -28,11 +28,11 @@ const dirname = (...args) => {
 
 const decompress = (buffer) => {
     let archive = zip.Archive.open(buffer, 'gzip');
-    if (archive && archive.entries.size == 1) {
+    if (archive && archive.entries.size === 1) {
         const stream = archive.entries.values().next().value;
         buffer = stream.peek();
     }
-    const formats = [ zip, tar ];
+    const formats = [zip, tar];
     for (const module of formats) {
         archive = module.Archive.open(buffer);
         if (archive) {
@@ -47,17 +47,10 @@ const host = {};
 host.TestHost = class {
 
     constructor(window) {
-        this._window = window;
-        this._document = window.document;
+        this.errors = [];
+        this.window = window;
+        this.document = window.document;
         host.TestHost.source = host.TestHost.source || dirname('..', 'source');
-    }
-
-    get window() {
-        return this._window;
-    }
-
-    get document() {
-        return this._document;
     }
 
     async view(/* view */) {
@@ -67,7 +60,7 @@ host.TestHost = class {
     }
 
     environment(name) {
-        if (name == 'zoom') {
+        if (name === 'zoom') {
             return 'none';
         }
         return null;
@@ -98,8 +91,8 @@ host.TestHost = class {
     event(/* name, params */) {
     }
 
-    exception(err /*, fatal */) {
-        throw err;
+    exception(error /*, fatal */) {
+        this.errors.push(error);
     }
 };
 
@@ -310,7 +303,7 @@ export class Target {
         this.events = {};
         this.tags = new Set(this.tags);
         this.folder = item.type ? path.normalize(dirname('..', 'third_party' , 'test', item.type)) : process.cwd();
-        this.measures = new Map([ [ 'name', this.name ] ]);
+        this.measures = new Map([['name', this.name]]);
     }
 
     on(event, callback) {
@@ -349,6 +342,7 @@ export class Target {
             }
         };
         this.status({ name: 'name', target: this.name });
+        const errors = [];
         try {
             await time(this.download);
             await time(this.load);
@@ -356,13 +350,15 @@ export class Target {
             if (!this.tags.has('skip-render')) {
                 await time(this.render);
             }
-            if (this.error) {
-                throw new Error('Expected error.');
-            }
         } catch (error) {
-            if (!this.error || error.message !== this.error) {
-                throw error;
-            }
+            errors.push(error);
+        }
+        errors.push(...this.host.errors);
+        if (errors.length === 0 && this.error) {
+            throw new Error('Expected error.');
+        }
+        if (errors.length > 0 && (!this.error || errors.map((error) => error.message).join('\n') !== this.error)) {
+            throw errors[0];
         }
     }
 
@@ -435,7 +431,7 @@ export class Target {
             sources = sources && sources.startsWith(',') ? sources.substring(1).trim() : '';
         } else {
             const commaIndex = sources.indexOf(',');
-            if (commaIndex != -1) {
+            if (commaIndex !== -1) {
                 source = sources.substring(0, commaIndex);
                 sources = sources.substring(commaIndex + 1);
             } else {
@@ -521,13 +517,13 @@ export class Target {
     }
 
     validate() {
-        if (!this.model.format || (this.format && this.format != this.model.format)) {
+        if (!this.model.format || (this.format && this.format !== this.model.format)) {
             throw new Error(`Invalid model format '${this.model.format}'.`);
         }
-        if (this.producer && this.model.producer != this.producer) {
+        if (this.producer && this.model.producer !== this.producer) {
             throw new Error(`Invalid producer '${this.model.producer}'.`);
         }
-        if (this.runtime && this.model.runtime != this.runtime) {
+        if (this.runtime && this.model.runtime !== this.runtime) {
             throw new Error(`Invalid runtime '${this.model.runtime}'.`);
         }
         if (this.model.metadata && !(this.model.metadata instanceof Map)) {
@@ -564,6 +560,7 @@ export class Target {
         if (this.model.version || this.model.description || this.model.author || this.model.license) {
             // continue
         }
+        /* eslint-disable no-unused-expressions */
         const validateGraph = (graph) => {
             const values = new Map();
             const validateValue = (value) => {
@@ -640,7 +637,7 @@ export class Target {
             }
             for (const node of graph.nodes) {
                 const type = node.type;
-                if (!type || typeof type.name != 'string') {
+                if (!type || typeof type.name !== 'string') {
                     throw new Error(`Invalid node type '${JSON.stringify(node.type)}'.`);
                 }
                 if (Array.isArray(type.nodes)) {
@@ -688,6 +685,7 @@ export class Target {
                 // new dialog.NodeSidebar(host, node);
             }
         };
+        /* eslint-enable no-unused-expressions */
         for (const graph of this.model.graphs) {
             validateGraph(graph);
         }

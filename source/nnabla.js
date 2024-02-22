@@ -1,5 +1,4 @@
 
-import * as protobuf from './protobuf.js';
 import * as text from './text.js';
 
 const nnabla = {};
@@ -11,19 +10,17 @@ nnabla.ModelFactory = class {
         if (identifier.endsWith('.nntxt')) {
             const tags = context.tags('pbtxt');
             if (tags.has('network')) {
-                return 'nnabla.pbtxt';
+                context.type = 'nnabla.pbtxt';
             }
         }
-        return undefined;
     }
 
-    async open(context, target) {
-        await context.require('./nnabla-proto');
-        nnabla.proto = protobuf.get('nnabla').nnabla;
-        switch (target) {
+    async open(context) {
+        nnabla.proto = await context.require('./nnabla-proto');
+        nnabla.proto = nnabla.proto.nnabla;
+        switch (context.type) {
             case 'nnabla.pbtxt': {
-                const stream = context.stream;
-                const reader = protobuf.TextReader.open(stream);
+                const reader = context.read('protobuf.text');
                 const model = nnabla.proto.NNablaProtoBuf.decodeText(reader);
                 const open = async (model, version) => {
                     const metadata = await context.metadata('nnabla-metadata.json');
@@ -35,7 +32,7 @@ nnabla.ModelFactory = class {
                         context.fetch('parameter.protobuf')
                     ]);
                     const version = text.Reader.open(contexts[0].stream).read();
-                    const reader = protobuf.BinaryReader.open(contexts[1].stream);
+                    const reader = contexts[1].read('protobuf.binary');
                     const params = nnabla.proto.NNablaProtoBuf.decode(reader);
                     model.parameter = params.parameter;
                     return await open(model, version);
@@ -44,7 +41,7 @@ nnabla.ModelFactory = class {
                 }
             }
             default: {
-                throw new nnabla.Error(`Unsupported nnabla format '${target}'.`);
+                throw new nnabla.Error(`Unsupported nnabla format '${context.type}'.`);
             }
         }
     }
@@ -59,9 +56,9 @@ nnabla.Model = class {
             const name = parameter.variable_name;
             const shape = new nnabla.TensorShape(parameter.shape.dim);
             const type = new nnabla.TensorType(shape);
-            return [ name, new nnabla.Tensor(name, type, parameter.data) ];
+            return [name, new nnabla.Tensor(name, type, parameter.data)];
         }));
-        const networks = new Map(model.network.map((network) => [ network.name, network ]));
+        const networks = new Map(model.network.map((network) => [network.name, network]));
         for (const executor of model.executor) {
             const network = networks.get(executor.network_name);
             const graph = new nnabla.Graph(metadata, network, executor.data_variable, executor.output_variable, tensors);
@@ -88,7 +85,7 @@ nnabla.Graph = class {
             const name = variable.name;
             const shape = new nnabla.TensorShape(variable.shape.dim);
             const type = new nnabla.TensorType(shape);
-            return [ name, new nnabla.Value(name, type, tensors.get(name)) ];
+            return [name, new nnabla.Value(name, type, tensors.get(name))];
         }));
         values.map = (name) => {
             if (!values.has(name)) {
@@ -98,11 +95,11 @@ nnabla.Graph = class {
         };
         this.inputs = inputs.map((item) => {
             const name = item.variable_name;
-            return new nnabla.Argument(name, [ values.map(name) ]);
+            return new nnabla.Argument(name, [values.map(name)]);
         });
         this.outputs = outputs.map((output) => {
             const name = output.variable_name;
-            return new nnabla.Argument(name, [ values.map(name) ]);
+            return new nnabla.Argument(name, [values.map(name)]);
         });
         const get_parameters = (func) => {
             for (const [key, value] of Object.entries(func)) {
@@ -243,7 +240,7 @@ nnabla.Attribute = class {
                 this.value = value;
                 break;
         }
-        if (Object.prototype.hasOwnProperty.call(attribute, 'default') && this.value == attribute.default) {
+        if (Object.prototype.hasOwnProperty.call(attribute, 'default') && this.value === attribute.default) {
             this.visible = false;
         }
     }
@@ -272,7 +269,6 @@ nnabla.TensorType = class {
     constructor(shape) {
         this.dataType = "float32";
         this.shape = shape;
-        this.denotation = null; // TODO
     }
 
     toString() {

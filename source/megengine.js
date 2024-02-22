@@ -17,52 +17,50 @@ megengine.ModelFactory = class {
                 buffer = stream.peek(24).slice(position, position + 12);
                 const size = buffer[0] + (buffer[1] << 8) + (buffer[2] << 16) + (buffer[3] << 24);
                 if (position > 0 || size === (stream.length - position - 4)) {
-                    const reader = flatbuffers.BinaryReader.open(buffer.slice(4, 12));
+                    const reader = flatbuffers.BinaryReader.open(stream, position + 4);
                     if (reader.identifier === 'mgv2') {
-                        return 'megengine.mge';
+                        context.type = 'megengine.mge';
+                        context.target = reader;
+                        return;
                     }
                 }
             }
-            for (const value of [ 'mgb0001', 'mgb0000a', 'MGBS', 'MGBC' ]) {
+            for (const value of ['mgb0001', 'mgb0000a', 'MGBS', 'MGBC']) {
                 if (tag.startsWith(value)) {
-                    return `megengine.${value}`;
+                    context.type = `megengine.${value}`;
+                    return;
                 }
             }
         }
         const obj = context.peek('pkl');
         if (obj && obj.__class__ && obj.__class__.__module__ === 'megengine.traced_module.traced_module' && obj.__class__.__name__ === 'TracedModule') {
-            return 'megengine.tm';
+            context.type = 'megengine.tm';
+            return;
         }
-        return '';
     }
 
-    async open(context, target) {
+    async open(context) {
         const metadata = await context.metadata('megengine-metadata.json');
-        switch (target) {
+        switch (context.type) {
             case 'megengine.tm': {
                 const obj = context.peek('pkl');
-                return new megengine.Model(metadata, obj, target);
+                return new megengine.Model(metadata, obj, context.type);
             }
             case 'megengine.mge': {
-                await context.require('./megengine-schema');
-                megengine.schema = flatbuffers.get('megengine').mgb.serialization.fbs;
+                megengine.schema = await context.require('./megengine-schema');
+                megengine.schema = megengine.schema.mgb.serialization.fbs;
                 let model = null;
-                const stream = context.stream;
                 try {
-                    const buffer = stream.peek(12);
-                    const tag = String.fromCharCode.apply(null, buffer);
-                    stream.skip(tag.startsWith('mgbtest0') ? 12 : 0);
-                    stream.skip(4);
-                    const reader = flatbuffers.BinaryReader.open(stream);
+                    const reader = context.target;
                     model = megengine.schema.v2.Model.create(reader);
                 } catch (error) {
                     const message = error && error.message ? error.message : error.toString();
                     throw new megengine.Error(`File format is not megengine.Model (${message.replace(/\.$/, '')}).`);
                 }
-                return new megengine.Model(metadata, model, target);
+                return new megengine.Model(metadata, model, context.type);
             }
             default: {
-                throw new megengine.Error(`Unsupported MegEngine format '${target.replace(/^megengine\./, '')}'.`);
+                throw new megengine.Error(`Unsupported MegEngine format '${context.type.replace(/^megengine\./, '')}'.`);
             }
         }
     }
@@ -77,7 +75,7 @@ megengine.Model = class {
         } else if (type === 'megengine.mge') {
             this.format += ` Mge${obj.model_version ? ` v${obj.model_version}` : ''}`;
         }
-        this.graphs = [ new megengine.Graph(metadata, obj) ];
+        this.graphs = [new megengine.Graph(metadata, obj)];
     }
 };
 
@@ -114,7 +112,7 @@ megengine.Graph = class {
                         const initializer = i.initializer !== undefined ? i.initializer : null;
                         const name = `inp${inpIdx}`;
                         const type = getTensorType(i._dtype, i._shape);
-                        const argument = new megengine.Argument(name, [ value(i._fullname, type, initializer) ]);
+                        const argument = new megengine.Argument(name, [value(i._fullname, type, initializer)]);
                         node.inputs.push(argument);
                         inpIdx += 1;
                     }
@@ -128,7 +126,7 @@ megengine.Graph = class {
                         /* eslint-enable prefer-destructuring */
                     }
                     const type = getTensorType(o._dtype, o._shape);
-                    const argument = new megengine.Argument(`out${outIdx}`, [ value(o._fullname, type, null) ]);
+                    const argument = new megengine.Argument(`out${outIdx}`, [value(o._fullname, type, null)]);
                     node.outputs.push(argument);
                 }
                 if (qparams !== null) {
@@ -143,7 +141,7 @@ megengine.Graph = class {
                             return obj && (obj.state || obj._forward_pre_hooks);
                         };
                         const isTensor = (obj) => {
-                            return obj && obj.__class__ && obj.__class__.__module__ == 'megengine.tensor' && (obj.__class__.__name__ === 'Tensor' || obj.__class__.__name__ === 'Parameter');
+                            return obj && obj.__class__ && obj.__class__.__module__ === 'megengine.tensor' && (obj.__class__.__name__ === 'Tensor' || obj.__class__.__name__ === 'Parameter');
                         };
                         if (!key.startsWith('_') && !isModule(state[key])) {
                             if (!isTensor(state[key])) {
@@ -154,7 +152,7 @@ megengine.Graph = class {
                                 const type = getTensorType(tensor.dtype, tensor.data.shape);
                                 const data = tensor.data.data;
                                 const initializer = new megengine.Tensor(key, type, data);
-                                const argument = new megengine.Argument(key, [ value('', type, initializer) ]);
+                                const argument = new megengine.Argument(key, [value('', type, initializer)]);
                                 node.inputs.push(argument);
                             }
                         }
@@ -166,13 +164,13 @@ megengine.Graph = class {
                 for (const node of igraph._inputs) {
                     if (node.__class__.__name__ !== 'ModuleNode') {
                         const type = getTensorType(node._dtype, node._shape);
-                        const argument = new megengine.Argument(node._name, [ value(node._name, type, null) ]);
+                        const argument = new megengine.Argument(node._name, [value(node._name, type, null)]);
                         this.inputs.push(argument);
                     }
                 }
                 for (const node of igraph._outputs) {
                     const type = getTensorType(node._dtype, node._shape);
-                    const argument = new megengine.Argument(node._name, [ value(node._name, type, null) ]);
+                    const argument = new megengine.Argument(node._name, [value(node._name, type, null)]);
                     this.outputs.push(argument);
                 }
             }
@@ -196,7 +194,7 @@ megengine.Graph = class {
                         inp = inp.replace('Tensor', `inp${startIdx}`);
                         startIdx += 1;
                     }
-                    return [ inp, startIdx ];
+                    return [inp, startIdx];
                 };
                 const formatTreeDef = (obj) => {
                     if (obj.__class__.__name__ !== 'TreeDef' && obj.__class__.__name__ !== 'LeafDef') {
@@ -478,8 +476,8 @@ megengine.Value = class {
         if (quantization && ((quantization.scale !== undefined && quantization.scale !== 0) || quantization.zeroPoint !== undefined && quantization.zeroPoint !== 0)) {
             this.quantization = {
                 type: 'linear',
-                scale: [ quantization.scale ],
-                offset: [ quantization.zeroPoint ]
+                scale: [quantization.scale],
+                offset: [quantization.zeroPoint]
             };
         }
     }
@@ -500,14 +498,14 @@ megengine.Node = class {
         this.chain = [];
         this.attributes = [];
         if (item.inputs && item.outputs) {
-            const inputSchemas = this.type && this.type.inputs ? [ ...this.type.inputs ] : [];
+            const inputSchemas = this.type && this.type.inputs ? [...this.type.inputs] : [];
             for (let i = 0; i < item.inputs.length; i++) {
                 const inputOpr = allOprAndTensor.get(item.inputs[i]);
                 const inputSchema = inputSchemas.length > 0 ? inputSchemas.shift() : { name: (`input${i}`) };
                 const argument = new megengine.Argument(inputSchema.name, inputOpr.extraInfo.args);
                 this.inputs.push(argument);
             }
-            const outputSchemas = this.type && this.type.outputs ? [ ...this.type.outputs ] : [];
+            const outputSchemas = this.type && this.type.outputs ? [...this.type.outputs] : [];
             for (let i = 0; i < item.outputs.length; i++) {
                 const outputOpr = allOprAndTensor.get(item.outputs[i]);
                 const outputSchema = outputSchemas.length > 0 ? outputSchemas.shift() : { name: (`output${i}`) };
@@ -561,13 +559,14 @@ megengine.Tensor = class {
 megengine.TensorType = class {
 
     constructor(dataType, shape) {
-        dataType = megengine.Utility.enum(megengine.schema, 'DTypeEnum', dataType).toLowerCase();
+        dataType = megengine.Utility.enum(megengine.schema, 'DTypeEnum', dataType);
+        dataType = typeof dataType === 'string' ? dataType.toLowerCase() : dataType;
         megengine.TensorType._dataTypes = megengine.TensorType._dataTypes || new Map([
-            [ 'bool', 'boolean' ],
-            [ 'byte', 'uint8' ], [ 'quantizeds4asymm', 'uint8' ], [ 'quantizeds8asymm', 'uint8' ], [ 'uintb4', 'uint8' ],
-            [ 'quantizeds1', 'int8' ], [ 'quantizeds4', 'int8' ], [ 'quantizeds8', 'int8' ], [ 'intb1', 'int8' ], [ 'intb2', 'int8' ], [ 'intb4', 'int8' ], [ 'qint8', 'int8' ],
-            [ 'quantizeds16', 'int16' ],
-            [ 'quantizeds32', 'int32' ]
+            ['bool', 'boolean'],
+            ['byte', 'uint8'], ['quantizeds4asymm', 'uint8'], ['quantizeds8asymm', 'uint8'], ['uintb4', 'uint8'],
+            ['quantizeds1', 'int8'], ['quantizeds4', 'int8'], ['quantizeds8', 'int8'], ['intb1', 'int8'], ['intb2', 'int8'], ['intb4', 'int8'], ['qint8', 'int8'],
+            ['quantizeds16', 'int16'],
+            ['quantizeds32', 'int32']
         ]);
         this.dataType = megengine.TensorType._dataTypes.get(dataType) || dataType;
         this.shape = shape;
@@ -609,7 +608,7 @@ megengine.Utility = class {
         if (type) {
             megengine.Utility._enums = megengine.Utility._enums || new Map();
             if (!megengine.Utility._enums.has(name)) {
-                const entries = new Map(Object.entries(type).map(([key, value]) => [ value, key ]));
+                const entries = new Map(Object.entries(type).map(([key, value]) => [value, key]));
                 megengine.Utility._enums.set(name, entries);
             }
             const map = megengine.Utility._enums.get(name);

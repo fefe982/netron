@@ -6,10 +6,15 @@ const gguf = {};
 gguf.ModelFactory = class {
 
     match(context) {
-        return gguf.Reader.open(context.stream);
+        const reader = gguf.Reader.open(context.stream);
+        if (reader) {
+            context.type = 'gguf';
+            context.target = reader;
+        }
     }
 
-    async open(context, target) {
+    async open(context) {
+        const target = context.target;
         target.read();
         return new gguf.Model(target);
     }
@@ -58,11 +63,11 @@ gguf.Model = class {
                 this.metadata.set(name, value);
             }
         }
-        const graph = { layers: [ model ] };
+        const graph = { layers: [model] };
         if (tokenizer.metadata.size > 0) {
             graph.layers.push(tokenizer);
         }
-        this.graphs = [ new gguf.Graph(graph) ];
+        this.graphs = [new gguf.Graph(graph)];
     }
 };
 
@@ -110,7 +115,7 @@ gguf.Node = class {
             for (const [name, weight] of layer.weights) {
                 const tensor = new gguf.Tensor(weight);
                 const value = new gguf.Value(weight.name, tensor);
-                const argument = new gguf.Argument(name, [ value ]);
+                const argument = new gguf.Argument(name, [value]);
                 this.inputs.push(argument);
             }
         }
@@ -179,7 +184,6 @@ gguf.Tensor = class {
     }
 };
 
-
 gguf.Reader = class {
 
     static open(stream) {
@@ -193,31 +197,31 @@ gguf.Reader = class {
     }
 
     constructor(stream) {
-        this._stream = stream;
+        this.stream = stream;
         const QK_K = 256;
         gguf.Reader.GGML_QUANT_SIZES = gguf.Reader.GGML_QUANT_SIZES || new Map([
-            [ gguf.QuantizationType.F32,  [ 1, 4, 'float32' ] ],
-            [ gguf.QuantizationType.F16,  [ 1, 2, 'float16' ] ],
-            [ gguf.QuantizationType.Q4_0, [ 32, 2 + 16, '' ] ],
-            [ gguf.QuantizationType.Q4_1, [ 32, 2 + 2 + 16, '' ] ],
-            [ gguf.QuantizationType.Q5_0, [ 32, 2 + 4 + 16, '' ] ],
-            [ gguf.QuantizationType.Q5_1, [ 32, 2 + 2 + 4 + 16, '' ] ],
-            [ gguf.QuantizationType.Q8_0, [ 32, 2 + 32, ''] ],
-            [ gguf.QuantizationType.Q8_1, [ 32, 4 + 4 + 32, ''] ],
-            [ gguf.QuantizationType.Q2_K, [ 256, 2 + 2 + Math.floor(QK_K / 16) + Math.floor(QK_K / 4), '' ] ],
-            [ gguf.QuantizationType.Q3_K, [ 256, 2 + Math.floor(QK_K / 4) + Math.floor(QK_K / 8) + 12, '' ] ],
-            [ gguf.QuantizationType.Q4_K, [ 256, 2 + 2 + Math.floor(QK_K / 2) + 12, '' ] ],
-            [ gguf.QuantizationType.Q5_K, [ 256, 2 + 2 + Math.floor(QK_K / 2) + Math.floor(QK_K / 8) + 12, '' ] ],
-            [ gguf.QuantizationType.Q6_K, [ 256, 2 + Math.floor(QK_K / 2) + Math.floor(QK_K / 4) + Math.floor(QK_K / 16), '' ] ],
-            [ gguf.QuantizationType.Q8_K, [ 256, 4 + QK_K + Math.floor(QK_K / 8), '' ] ],
-            [ gguf.QuantizationType.I8,   [ 1, 4, 'int8' ] ],
-            [ gguf.QuantizationType.I16,  [ 1, 2, 'int16' ] ],
-            [ gguf.QuantizationType.I32,  [ 1, 4, 'int32' ] ]
+            [gguf.QuantizationType.F32,  [1, 4, 'float32']],
+            [gguf.QuantizationType.F16,  [1, 2, 'float16']],
+            [gguf.QuantizationType.Q4_0, [32, 2 + 16, '']],
+            [gguf.QuantizationType.Q4_1, [32, 2 + 2 + 16, '']],
+            [gguf.QuantizationType.Q5_0, [32, 2 + 4 + 16, '']],
+            [gguf.QuantizationType.Q5_1, [32, 2 + 2 + 4 + 16, '']],
+            [gguf.QuantizationType.Q8_0, [32, 2 + 32, '']],
+            [gguf.QuantizationType.Q8_1, [32, 4 + 4 + 32, '']],
+            [gguf.QuantizationType.Q2_K, [256, 2 + 2 + Math.floor(QK_K / 16) + Math.floor(QK_K / 4), '']],
+            [gguf.QuantizationType.Q3_K, [256, 2 + Math.floor(QK_K / 4) + Math.floor(QK_K / 8) + 12, '']],
+            [gguf.QuantizationType.Q4_K, [256, 2 + 2 + Math.floor(QK_K / 2) + 12, '']],
+            [gguf.QuantizationType.Q5_K, [256, 2 + 2 + Math.floor(QK_K / 2) + Math.floor(QK_K / 8) + 12, '']],
+            [gguf.QuantizationType.Q6_K, [256, 2 + Math.floor(QK_K / 2) + Math.floor(QK_K / 4) + Math.floor(QK_K / 16), '']],
+            [gguf.QuantizationType.Q8_K, [256, 4 + QK_K + Math.floor(QK_K / 8), '']],
+            [gguf.QuantizationType.I8,   [1, 4, 'int8']],
+            [gguf.QuantizationType.I16,  [1, 2, 'int16']],
+            [gguf.QuantizationType.I32,  [1, 4, 'int32']]
         ]);
     }
 
     read() {
-        const reader = new gguf.StreamReader(this._stream);
+        const reader = new gguf.StreamReader(this.stream);
         this.tensors = new Map();
         this.metadata = new Map();
         const context = {};
@@ -226,8 +230,8 @@ gguf.Reader = class {
         context.header.version = reader.uint32();
         this.format = `GGUF v${context.header.version}`;
         if (context.header.version >= 2) {
-            context.header.n_tensors = reader.uint64();
-            context.header.n_kv = reader.uint64();
+            context.header.n_tensors = Number(reader.uint64());
+            context.header.n_kv = Number(reader.uint64());
             for (let i = 0; i < context.header.n_kv; i++) {
                 const entry = reader.entry();
                 this.metadata.set(entry.name, entry.value);
@@ -240,11 +244,11 @@ gguf.Reader = class {
                 }
                 context.alignment = this.metadata.get('general.alignment') || 32;
                 const offset_pad = reader.position % context.alignment;
-                if (offset_pad != 0) {
+                if (offset_pad !== 0) {
                     reader.skip(context.alignment - offset_pad);
                 }
                 context.offset = reader.position;
-                if (context.offset < this._stream.length) {
+                if (context.offset < this.stream.length) {
                     for (const tensor of this.tensors.values()) {
                         reader.seek(context.offset + tensor.offset);
                         if (!gguf.Reader.GGML_QUANT_SIZES.has(tensor.type)) {
@@ -259,8 +263,8 @@ gguf.Reader = class {
                 }
             }
         }
-        this._stream.seek(0);
-        delete this._stream;
+        this.stream.seek(0);
+        delete this.stream;
     }
 };
 
@@ -271,7 +275,7 @@ gguf.StreamReader = class extends base.StreamReader {
     }
 
     string() {
-        const size = this.uint64();
+        const size = Number(this.uint64());
         const buffer = this.read(size);
         return String.fromCharCode.apply(null, buffer);
     }
@@ -295,7 +299,7 @@ gguf.StreamReader = class extends base.StreamReader {
             }
             case gguf.Type.ARRAY: {
                 const type = this.uint32();
-                const size = this.uint64();
+                const size = Number(this.uint64());
                 const value = new Array(size);
                 for (let i = 0; i < size; i++) {
                     value[i] = this.value(type);
@@ -321,10 +325,10 @@ gguf.StreamReader = class extends base.StreamReader {
         const n_dims = this.uint32();
         tensor.ne = new Array(n_dims);
         for (let i = 0; i < n_dims; i++) {
-            tensor.ne[i] = this.uint64();
+            tensor.ne[i] = Number(this.uint64());
         }
         tensor.type = this.uint32();
-        tensor.offset = this.uint64();
+        tensor.offset = Number(this.uint64());
         return tensor;
     }
 };
@@ -370,7 +374,7 @@ gguf.Utility = class {
     static enum(type, value) {
         gguf.Utility._enums = gguf.Utility._enums || new Map();
         if (!gguf.Utility._enums.has(type)) {
-            const entries = new Map(Object.entries(type).map(([key, value]) => [ value, key ]));
+            const entries = new Map(Object.entries(type).map(([key, value]) => [value, key]));
             gguf.Utility._enums.set(type, entries);
         }
         const entires = gguf.Utility._enums.get(type);

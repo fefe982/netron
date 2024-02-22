@@ -1,26 +1,18 @@
 
-import * as flatbuffers from './flatbuffers.js';
-
 const mslite = {};
 
 mslite.ModelFactory = class {
 
     match(context) {
-        const stream = context.stream;
-        if (stream && stream.length >= 8) {
-            const buffer = stream.peek(8);
-            const reader = flatbuffers.BinaryReader.open(buffer);
-            if (reader.identifier === '' || reader.identifier === 'MSL1' || reader.identifier === 'MSL2') {
-                return 'mslite';
-            }
+        const reader = context.peek('flatbuffers.binary');
+        if (reader && (reader.identifier === '' || reader.identifier === 'MSL1' || reader.identifier === 'MSL2')) {
+            context.type = 'mslite';
+            context.target = reader;
         }
-        return '';
     }
 
     async open(context) {
-        await context.require('./mslite-schema');
-        const stream = context.stream;
-        const reader = flatbuffers.BinaryReader.open(stream);
+        const reader = context.target;
         switch (reader.identifier) {
             case '': {
                 throw new mslite.Error('MSL0 format is deprecated.');
@@ -33,9 +25,10 @@ mslite.ModelFactory = class {
             default:
                 throw new mslite.Error(`Unsupported file identifier '${reader.identifier}'.`);
         }
+        mslite.schema = await context.require('./mslite-schema');
+        mslite.schema = mslite.schema.mindspore.schema;
         let model = null;
         try {
-            mslite.schema = flatbuffers.get('mslite').mindspore.schema;
             model = mslite.schema.MetaGraph.create(reader);
         } catch (error) {
             const message = error && error.message ? error.message : error.toString();
@@ -81,11 +74,11 @@ mslite.Graph = class {
         if (subgraph === model) {
             for (let i = 0; i < subgraph.inputIndex.length; i++) {
                 const index = subgraph.inputIndex[i];
-                this.inputs.push(new mslite.Argument(i.toString(), [ values[index] ]));
+                this.inputs.push(new mslite.Argument(i.toString(), [values[index]]));
             }
             for (let i = 0; i < subgraph.outputIndex.length; i++) {
                 const index = subgraph.outputIndex[i];
-                this.outputs.push(new mslite.Argument(i.toString(), [ values[index] ]));
+                this.outputs.push(new mslite.Argument(i.toString(), [values[index]]));
             }
             for (let i = 0; i < subgraph.nodes.length; i++) {
                 this.nodes.push(new mslite.Node(metadata, subgraph.nodes[i], values));
@@ -93,11 +86,11 @@ mslite.Graph = class {
         } else {
             for (let i = 0; i < subgraph.inputIndices.length; i++) {
                 const index = subgraph.inputIndices[i];
-                this.inputs.push(new mslite.Argument(i.toString(), [ values[index] ]));
+                this.inputs.push(new mslite.Argument(i.toString(), [values[index]]));
             }
             for (let i = 0; i < subgraph.outputIndices.length; i++) {
                 const index = subgraph.outputIndices[i];
-                this.outputs.push(new mslite.Argument(i.toString(), [ values[index] ]));
+                this.outputs.push(new mslite.Argument(i.toString(), [values[index]]));
             }
             for (const name of subgraph.nodeIndices) {
                 const node = new mslite.Node(metadata, model.nodes[name], values);
@@ -130,13 +123,13 @@ mslite.Node = class {
                     break;
                 }
                 const index = op.inputIndex[i];
-                this.inputs.push(new mslite.Argument(input.name, [ values[index] ]));
+                this.inputs.push(new mslite.Argument(input.name, [values[index]]));
                 i += 1;
             }
         }
         for (let j = i; j < input_num; j++) {
             const index = op.inputIndex[j];
-            this.inputs.push(new mslite.Argument(j.toString(), [ values[index] ]));
+            this.inputs.push(new mslite.Argument(j.toString(), [values[index]]));
         }
 
         const output_num = op.outputIndex.length;
@@ -147,14 +140,14 @@ mslite.Node = class {
                     break;
                 }
                 const index = op.outputIndex[i];
-                const argument = new mslite.Argument(output.name, [ values[index] ]);
+                const argument = new mslite.Argument(output.name, [values[index]]);
                 this.outputs.push(argument);
                 i += 1;
             }
         }
         for (let j = i; j < output_num; j++) {
             const index = op.outputIndex[j];
-            const argument = new mslite.Argument(j.toString(), [ values[index] ]);
+            const argument = new mslite.Argument(j.toString(), [values[index]]);
             this.outputs.push(argument);
         }
     }
@@ -327,17 +320,19 @@ mslite.TensorShape = class {
 mslite.Utility = class {
 
     static enum(name, value) {
-        const type = name && mslite.schema ? mslite.schema[name] : undefined;
-        if (type) {
-            mslite.Utility._enumKeyMap = mslite.Utility._enumKeyMap || new Map();
-            if (!mslite.Utility._enumKeyMap.has(name)) {
-                const entries = new Map(Object.entries(type).map(([key, value]) => [ value, key ]));
-                mslite.Utility._enumKeyMap.set(name, entries);
+        mslite.Utility._enumKeyMap = mslite.Utility._enumKeyMap || new Map();
+        if (!mslite.Utility._enumKeyMap.has(name)) {
+            const type = name && mslite.schema ? mslite.schema[name] : undefined;
+            if (type) {
+                if (!mslite.Utility._enumKeyMap.has(name)) {
+                    const entries = new Map(Object.entries(type).map(([key, value]) => [value, key]));
+                    mslite.Utility._enumKeyMap.set(name, entries);
+                }
             }
-            const map = mslite.Utility._enumKeyMap.get(name);
-            if (map.has(value)) {
-                return map.get(value);
-            }
+        }
+        const map = mslite.Utility._enumKeyMap.get(name);
+        if (map && map.has(value)) {
+            return map.get(value);
         }
         return value;
     }

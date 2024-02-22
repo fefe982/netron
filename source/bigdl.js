@@ -1,28 +1,25 @@
 
 // Experimental
 
-import * as protobuf from './protobuf.js';
-
 const bigdl = {};
 
 bigdl.ModelFactory = class {
 
     match(context) {
         const tags = context.tags('pb');
-        if (tags.has(2) && tags.has(7) && tags.has(8) && tags.has(9) && tags.has(10) && tags.has(11) && tags.has(12)) {
-            return 'bigdl';
+        if (tags.has(2) && tags.has(7) && tags.has(8) &&
+            tags.has(9) && tags.has(10) && tags.has(11) && tags.has(12)) {
+            context.type = 'bigdl';
         }
-        return '';
     }
 
     async open(context) {
-        await context.require('./bigdl-proto');
+        bigdl.proto = await context.require('./bigdl-proto');
+        bigdl.proto = bigdl.proto.com.intel.analytics.bigdl.serialization;
         let module = null;
         try {
             // https://github.com/intel-analytics/BigDL/blob/master/spark/dl/src/main/resources/serialization/bigdl.proto
-            bigdl.proto = protobuf.get('bigdl').com.intel.analytics.bigdl.serialization;
-            const stream = context.stream;
-            const reader = protobuf.BinaryReader.open(stream);
+            const reader = context.read('protobuf.binary');
             module = bigdl.proto.BigDLModule.decode(reader);
         } catch (error) {
             const message = error && error.message ? error.message : error.toString();
@@ -38,7 +35,7 @@ bigdl.Model = class {
     constructor(metadata, module) {
         const version = module && module.version ? module.version : '';
         this.format = `BigDL${version ? ` v${version}` : ''}`;
-        this.graphs = [ new bigdl.Graph(metadata, module) ];
+        this.graphs = [new bigdl.Graph(metadata, module)];
     }
 };
 
@@ -67,7 +64,7 @@ bigdl.Graph = class {
                     break;
                 }
                 case 'com.intel.analytics.bigdl.nn.Input': {
-                    const argument = new bigdl.Argument(module.name, [ values.map(module.name) ]);
+                    const argument = new bigdl.Argument(module.name, [values.map(module.name)]);
                     this.inputs.push(argument);
                     break;
                 }
@@ -141,7 +138,7 @@ bigdl.Node = class {
             }
             if (value.dataType === bigdl.proto.DataType.TENSOR) {
                 if (value.value) {
-                    this.inputs.push(new bigdl.Argument(key, [ new bigdl.Value('', null, new bigdl.Tensor(value.tensorValue, tensors)) ]));
+                    this.inputs.push(new bigdl.Argument(key, [new bigdl.Value('', null, new bigdl.Tensor(value.tensorValue, tensors))]));
                 }
                 continue;
             }
@@ -155,7 +152,7 @@ bigdl.Node = class {
             this.attributes.push(new bigdl.Attribute(key, value));
         }
         const output = this.name || this.type + module.namePostfix;
-        this.outputs.push(new bigdl.Argument('output', [ values.map(output) ]));
+        this.outputs.push(new bigdl.Argument('output', [values.map(output)]));
     }
 };
 

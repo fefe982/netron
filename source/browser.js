@@ -124,7 +124,7 @@ host.BrowserHost = class {
                     return obj;
                 });
             };
-            const capabilities = filter([ 'fetch', 'DataView.prototype.getBigInt64', 'Worker' ]);
+            const capabilities = filter(['fetch', 'DataView.prototype.getBigInt64', 'Worker']);
             this.event('browser_open', {
                 browser_capabilities: capabilities.map((capability) => capability.split('.').pop()).join(',')
             });
@@ -140,11 +140,13 @@ host.BrowserHost = class {
         const hash = this.window.location.hash ? this.window.location.hash.replace(/^#/, '') : '';
         const search = this.window.location.search;
         const params = new URLSearchParams(search + (hash ? `&${hash}` : ''));
-        if (this._meta.file && this._meta.identifier) {
+        if (this._meta.file) {
             const [url] = this._meta.file;
             if (this._view.accept(url)) {
                 this._openModel(this._url(url), null);
-                this._document.title = this._meta.identifier;
+                if (this._meta.identifier) {
+                    this._document.title = this._meta.identifier;
+                }
                 return;
             }
         }
@@ -213,7 +215,7 @@ host.BrowserHost = class {
     }
 
     async error(message, detail /*, cancel */) {
-        alert((message == 'Error' ? '' : `${message} `) + detail);
+        alert((message === 'Error' ? '' : `${message} `) + detail);
         return 0;
     }
 
@@ -351,8 +353,8 @@ host.BrowserHost = class {
             };
             request.onload = () => {
                 progress(0);
-                if (request.status == 200) {
-                    if (request.responseType == 'arraybuffer') {
+                if (request.status === 200) {
+                    if (request.responseType === 'arraybuffer') {
                         const buffer = new Uint8Array(request.response);
                         const stream = new base.BinaryStream(buffer);
                         resolve(stream);

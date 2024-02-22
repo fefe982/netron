@@ -6,7 +6,7 @@ const zlib = {};
 zip.Archive = class {
 
     static async import() {
-        if (typeof process === 'object' && typeof process.versions == 'object' && typeof process.versions.node !== 'undefined') {
+        if (typeof process === 'object' && typeof process.versions === 'object' && typeof process.versions.node !== 'undefined') {
             zip.zlib = await import('zlib');
         }
     }
@@ -29,10 +29,10 @@ zip.Archive = class {
                     return new zlib.Archive(stream);
                 }
             }
-            if ((!format || format == 'gzip') && buffer.length > 18 && buffer[0] === 0x1f && buffer[1] === 0x8b) { // gzip
+            if ((!format || format === 'gzip') && buffer.length > 18 && buffer[0] === 0x1f && buffer[1] === 0x8b) { // gzip
                 return new gzip.Archive(stream);
             }
-            if (!format || format == 'zip') {
+            if (!format || format === 'zip') {
                 const search = buffer[0] === 0x50 && buffer[1] === 0x4B;
                 const location = stream.position;
                 const seek = (signature, size) => {
@@ -109,12 +109,13 @@ zip.Archive = class {
                     reader.startDisk = reader.uint32();
                     header.diskRecords = reader.uint64();
                     header.totalRecords = reader.uint64();
-                    header.size = reader.uint64();
+                    header.size = Number(reader.uint64());
                     header.offset = reader.uint64();
-                    if (header.offset === undefined) {
+                    if (header.offset > Number.MAX_SAFE_INTEGER) {
                         stream.seek(location);
                         throw new zip.Error('Zip 64-bit central directory offset not supported.');
                     }
+                    header.offset = Number(header.offset);
                 }
                 position -= header.size;
                 if (position < 0 || position > stream.length) {
@@ -146,7 +147,7 @@ zip.Archive = class {
             reader.uint16(); // version made by
             reader.skip(2); // version needed to extract
             const flags = reader.uint16();
-            if ((flags & 1) == 1) {
+            if ((flags & 1) === 1) {
                 throw new zip.Error('Encrypted Zip entries not supported.');
             }
             header.encoding = flags & 0x800 ? 'utf-8' : 'ascii';
@@ -174,19 +175,19 @@ zip.Archive = class {
                     switch (type) {
                         case 0x0001:
                             if (header.size === 0xffffffff) {
-                                header.size = reader.uint64();
+                                header.size = Number(reader.uint64());
                                 if (header.size === undefined) {
                                     throw new zip.Error('Zip 64-bit size not supported.');
                                 }
                             }
                             if (header.compressedSize === 0xffffffff) {
-                                header.compressedSize = reader.uint64();
+                                header.compressedSize = Number(reader.uint64());
                                 if (header.compressedSize === undefined) {
                                     throw new zip.Error('Zip 64-bit compressed size not supported.');
                                 }
                             }
                             if (header.localHeaderOffset === 0xffffffff) {
-                                header.localHeaderOffset = reader.uint64();
+                                header.localHeaderOffset = Number(reader.uint64());
                                 if (header.localHeaderOffset === undefined) {
                                     throw new zip.Error('Zip 64-bit offset not supported.');
                                 }
@@ -275,9 +276,9 @@ zip.Inflater = class {
             const writer = length === undefined ? new zip.BlockWriter() : new zip.BufferWriter(length);
             if (!zip.Inflater._staticLengthTree) {
                 zip.Inflater._codeLengths = new Uint8Array(19);
-                zip.Inflater._codeOrder = [ 16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15 ];
-                zip.Inflater._lengthBase = [ 24, 32, 40, 48, 56, 64, 72, 80, 89, 105, 121, 137, 154,  186,  218,  250,  283,  347, 411,  475,  540,  668,  796,  924, 1053, 1309, 1565, 1821, 2064, 7992, 7992, 7992 ];
-                zip.Inflater._distanceBase = [ 16, 32, 48, 64, 81, 113, 146, 210, 275, 403, 532, 788, 1045, 1557, 2070, 3094, 4119, 6167, 8216, 12312, 16409, 24601, 32794, 49178, 65563, 98331, 131100, 196636, 262173, 393245, 1048560, 1048560 ];
+                zip.Inflater._codeOrder = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15];
+                zip.Inflater._lengthBase = [24, 32, 40, 48, 56, 64, 72, 80, 89, 105, 121, 137, 154,  186,  218,  250,  283,  347, 411,  475,  540,  668,  796,  924, 1053, 1309, 1565, 1821, 2064, 7992, 7992, 7992];
+                zip.Inflater._distanceBase = [16, 32, 48, 64, 81, 113, 146, 210, 275, 403, 532, 788, 1045, 1557, 2070, 3094, 4119, 6167, 8216, 12312, 16409, 24601, 32794, 49178, 65563, 98331, 131100, 196636, 262173, 393245, 1048560, 1048560];
             }
             let type;
             do {
@@ -306,7 +307,7 @@ zip.Inflater = class {
                         throw new zip.Error('Unsupported block type.');
                     }
                 }
-            } while ((type & 1) == 0);
+            } while ((type & 1) === 0);
             if (length !== undefined && length !== writer.length) {
                 throw new zip.Error('Invalid uncompressed size.');
             }
@@ -456,7 +457,7 @@ zip.HuffmanTree = class {
                 const rest = bits - c;
                 let index = codes[i] << rest;
                 const max = index + (1 << rest);
-                for (; index != max; index++) {
+                for (; index !== max; index++) {
                     table[rev15[index] >>> shift] = value;
                 }
             }
@@ -783,12 +784,9 @@ zip.BinaryReader = class {
     }
 
     uint64() {
-        const lo = this.uint32();
-        const hi = this.uint32();
-        if (hi > 0xffff) {
-            return undefined;
-        }
-        return hi * 4294967296 + lo;
+        const position = this._position;
+        this.skip(8);
+        return this._view.getBigUint64(position, true);
     }
 };
 
@@ -797,7 +795,7 @@ zlib.Archive = class {
     constructor(stream) {
         const position = stream.position;
         stream.read(2);
-        this._entries = new Map([ [ '', new zip.InflaterStream(stream) ] ]);
+        this._entries = new Map([['', new zip.InflaterStream(stream)]]);
         stream.seek(position);
     }
 
@@ -818,7 +816,7 @@ gzip.Archive = class {
 
     constructor(stream) {
         const position = stream.position;
-        const signature = [ 0x1f, 0x8b ];
+        const signature = [0x1f, 0x8b];
         if (stream.position + 2 > stream.length ||
             !stream.read(2).every((value, index) => value === signature[index])) {
             throw new gzip.Error('Invalid gzip signature.');
@@ -835,27 +833,27 @@ gzip.Archive = class {
             return content;
         };
         const reader = new zip.BinaryReader(stream.read(8));
-        const compressionMethod = reader.byte();
-        if (compressionMethod != 8) {
+        const compression = reader.byte();
+        if (compression !== 8) {
             stream.seek(position);
-            throw new gzip.Error(`Invalid compression method '${compressionMethod}'.`);
+            throw new gzip.Error(`Invalid compression method '${compression}'.`);
         }
         const flags = reader.byte();
         reader.uint32(); // MTIME
         reader.byte(); // XFL
         reader.byte(); // OS
-        if ((flags & 4) != 0) { // FEXTRA
+        if ((flags & 4) !== 0) { // FEXTRA
             const xlen = stream.byte() | (stream.byte() << 8);
             stream.skip(xlen);
         }
-        const name = (flags & 8) != 0 ? string() : ''; // FNAME
-        if ((flags & 16) != 0) { // FCOMMENT
+        const name = (flags & 8) !== 0 ? string() : ''; // FNAME
+        if ((flags & 16) !== 0) { // FCOMMENT
             string();
         }
-        if ((flags & 1) != 0) { // FHCRC
+        if ((flags & 1) !== 0) { // FHCRC
             stream.skip(2);
         }
-        this._entries = new Map([ [ name, new gzip.InflaterStream(stream) ] ]);
+        this._entries = new Map([[name, new gzip.InflaterStream(stream)]]);
         stream.seek(position);
     }
 

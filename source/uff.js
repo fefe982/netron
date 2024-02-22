@@ -1,6 +1,4 @@
 
-import * as protobuf from './protobuf.js';
-
 const uff = {};
 
 uff.ModelFactory = class {
@@ -16,27 +14,27 @@ uff.ModelFactory = class {
                 tags.has(3) && tags.get(3) === 2 &&
                 tags.has(4) && tags.get(4) === 2 &&
                 (!tags.has(5) || tags.get(5) === 2)) {
-                return 'uff.pb';
+                context.type = 'uff.pb';
+                return;
             }
         }
         if (extension === 'pbtxt' || identifier.toLowerCase().endsWith('.uff.txt')) {
             const tags = context.tags('pbtxt');
             if (tags.has('version') && tags.has('descriptors') && tags.has('graphs')) {
-                return 'uff.pbtxt';
+                context.type = 'uff.pbtxt';
+                return;
             }
         }
-        return undefined;
     }
 
-    async open(context, target) {
-        await context.require('./uff-proto');
-        uff.proto = protobuf.get('uff').uff;
+    async open(context) {
+        uff.proto = await context.require('./uff-proto');
+        uff.proto = uff.proto.uff;
         let meta_graph = null;
-        switch (target) {
+        switch (context.type) {
             case 'uff.pb': {
                 try {
-                    const stream = context.stream;
-                    const reader = protobuf.BinaryReader.open(stream);
+                    const reader = context.read('protobuf.binary');
                     meta_graph = uff.proto.MetaGraph.decode(reader);
                 } catch (error) {
                     const message = error && error.message ? error.message : error.toString();
@@ -46,8 +44,7 @@ uff.ModelFactory = class {
             }
             case 'uff.pbtxt': {
                 try {
-                    const stream = context.stream;
-                    const reader = protobuf.TextReader.open(stream);
+                    const reader = context.read('protobuf.text');
                     meta_graph = uff.proto.MetaGraph.decodeText(reader);
                 } catch (error) {
                     throw new uff.Error(`File text format is not uff.MetaGraph (${error.message}).`);
@@ -55,7 +52,7 @@ uff.ModelFactory = class {
                 break;
             }
             default: {
-                throw new uff.Error(`Unsupported UFF format '${target}'.`);
+                throw new uff.Error(`Unsupported UFF format '${context.type}'.`);
             }
         }
         const metadata = await context.metadata('uff-metadata.json');
@@ -69,7 +66,7 @@ uff.Model = class {
         const version = meta_graph.version;
         this.format = `UFF${version ? ` v${version}` : ''}`;
         this.imports = meta_graph.descriptors.map((descriptor) => `${descriptor.id} v${descriptor.version}`);
-        const references = new Map(meta_graph.referenced_data.map((item) => [ item.key, item.value ]));
+        const references = new Map(meta_graph.referenced_data.map((item) => [item.key, item.value]));
         for (const graph of meta_graph.graphs) {
             for (const node of graph.nodes) {
                 for (const field of node.fields) {
@@ -128,11 +125,11 @@ uff.Graph = class {
         }
         for (const node of graph.nodes) {
             if (node.operation === 'Input') {
-                this.inputs.push(new uff.Argument(node.id, [ values.get(node.id) ]));
+                this.inputs.push(new uff.Argument(node.id, [values.get(node.id)]));
                 continue;
             }
             if (node.operation === 'MarkOutput' && node.inputs.length === 1) {
-                this.outputs.push(new uff.Argument(node.id, [ values.get(node.inputs[0]) ]));
+                this.outputs.push(new uff.Argument(node.id, [values.get(node.inputs[0])]));
                 continue;
             }
             this.nodes.push(new uff.Node(metadata, node, value));
@@ -186,10 +183,10 @@ uff.Node = class {
             }
             this.inputs.push(...node.inputs.slice(index).map((identifier, i) => {
                 const name = ((index + i) === 0) ? 'input' : (index + i).toString();
-                return new uff.Argument(name, [ value(identifier) ]);
+                return new uff.Argument(name, [value(identifier)]);
             }));
         }
-        this.outputs.push(new uff.Argument('output', [ value(node.id) ]));
+        this.outputs.push(new uff.Argument('output', [value(node.id)]));
         for (const field of node.fields) {
             let type = null;
             switch (field.value.type) {

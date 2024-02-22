@@ -6,13 +6,13 @@ hickle.ModelFactory = class {
     match(context) {
         const group = context.peek('hdf5');
         if (group && group.attributes && group.attributes.get('CLASS') === 'hickle') {
-            return group;
+            context.type = 'hickle';
+            context.target = group;
         }
-        return null;
     }
 
-    async open(context, target) {
-        return new hickle.Model(target);
+    async open(context) {
+        return new hickle.Model(context.target);
     }
 };
 
@@ -20,7 +20,7 @@ hickle.Model = class {
 
     constructor(group) {
         this.format = 'Hickle Weights';
-        this.graphs = [ new hickle.Graph(group) ];
+        this.graphs = [new hickle.Graph(group)];
     }
 };
 
@@ -36,7 +36,7 @@ hickle.Graph = class {
                     switch (type[0]) {
                         case 'hickle':
                         case 'dict_item': {
-                            if (group.groups.size == 1) {
+                            if (group.groups.size === 1) {
                                 return deserialize(group.groups.values().next().value);
                             }
                             throw new hickle.Error(`Invalid Hickle type value '${type[0]}'.`);

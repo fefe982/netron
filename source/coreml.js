@@ -1,6 +1,5 @@
 
 import * as base from './base.js';
-import * as protobuf from './protobuf.js';
 
 const coreml = {};
 
@@ -26,15 +25,17 @@ coreml.ModelFactory = class {
                     (key >= 2000 && key < 2010) ||
                     (key === 3000);
                 if (!keys.some((key) => match(key))) {
-                    return null;
+                    return;
                 }
             }
-            return 'coreml.pb';
+            context.type = 'coreml.pb';
+            return;
         }
         if (extension === 'pbtxt') {
             const tags = context.tags('pbtxt');
             if (tags.has('specificationVersion') && tags.has('description')) {
-                return 'coreml.pbtxt';
+                context.type = 'coreml.pbtxt';
+                return;
             }
         }
         if (identifier === 'manifest.json') {
@@ -42,20 +43,23 @@ coreml.ModelFactory = class {
             if (obj && obj.rootModelIdentifier && obj.itemInfoEntries) {
                 const entries = Object.keys(obj.itemInfoEntries).map((key) => obj.itemInfoEntries[key]);
                 if (entries.filter((entry) => entry.path.toLowerCase().endsWith('.mlmodel').length === 1)) {
-                    return 'coreml.manifest';
+                    context.type = 'coreml.manifest';
+                    return;
                 }
             }
         }
         if (identifier === 'metadata.json') {
             const obj = context.peek('json');
             if (obj && obj.rootModelIdentifier && obj.itemInfoEntries) {
-                return 'coreml.metadata';
+                context.type = 'coreml.metadata';
+                return;
             }
         }
         if (identifier === 'featuredescriptions.json') {
             const obj = context.peek('json');
             if (obj && (obj.Inputs || obj.Outputs)) {
-                return 'coreml.featuredescriptions';
+                context.type = 'coreml.featuredescriptions';
+                return;
             }
         }
         if (extension === 'bin' && stream.length > 16) {
@@ -63,21 +67,21 @@ coreml.ModelFactory = class {
             for (let i = 0; i < buffer.length - 4; i++) {
                 const signature = (buffer[i] | buffer[i + 1] << 8 | buffer[i + 2] << 16 | buffer [i + 3] << 24) >>> 0;
                 if (signature === 0xdeadbeef) {
-                    return 'coreml.weights';
+                    context.type = 'coreml.weights';
+                    return;
                 }
             }
         }
-        return undefined;
     }
 
-    async open(context, target) {
-        await context.require('./coreml-proto');
+    async open(context) {
+        coreml.proto = await context.require('./coreml-proto');
+        coreml.proto = coreml.proto.CoreML.Specification;
         const metadata = await context.metadata('coreml-metadata.json');
-        const openBinary = async (stream, context, path, format) => {
+        const openBinary = async (content, context, path, format) => {
             let model = null;
             try {
-                coreml.proto = protobuf.get('coreml').CoreML.Specification;
-                const reader = protobuf.BinaryReader.open(stream);
+                const reader = content.read('protobuf.binary');
                 model = coreml.proto.Model.decode(reader);
             } catch (error) {
                 const message = error && error.message ? error.message : error.toString();
@@ -134,11 +138,10 @@ coreml.ModelFactory = class {
             }
             return new coreml.Model(metadata, format, model, weights);
         };
-        const openText = async (stream) => {
+        const openText = async (context) => {
             let model = null;
             try {
-                coreml.proto = protobuf.get('coreml').CoreML.Specification;
-                const reader = protobuf.TextReader.open(stream);
+                const reader = context.read('protobuf.text');
                 model = coreml.proto.Model.decodeText(reader);
             } catch (error) {
                 const message = error && error.message ? error.message : error.toString();
@@ -154,7 +157,7 @@ coreml.ModelFactory = class {
             }
             const name = `${path}Data/${entries[0].path}`;
             const content = await context.fetch(name);
-            return openBinary(content.stream, context, name, 'Core ML Package');
+            return openBinary(content, context, name, 'Core ML Package');
         };
         const openManifestStream = async (context, path) => {
             const name = `${path}Manifest.json`;
@@ -162,12 +165,12 @@ coreml.ModelFactory = class {
             const obj = content.read('json');
             return openManifest(obj, context, path);
         };
-        switch (target) {
+        switch (context.type) {
             case 'coreml.pb': {
-                return openBinary(context.stream, context, context.identifier);
+                return openBinary(context, context, context.identifier);
             }
             case 'coreml.pbtxt': {
-                return openText(context.stream, context, context.identifier);
+                return openText(context, context, context.identifier);
             }
             case 'coreml.manifest': {
                 const obj = context.peek('json');
@@ -181,7 +184,7 @@ coreml.ModelFactory = class {
                 return openManifestStream(context, '../../../');
             }
             default: {
-                throw new coreml.Error(`Unsupported Core ML format '${target}'.`);
+                throw new coreml.Error(`Unsupported Core ML format '${context.type}'.`);
             }
         }
     }
@@ -194,7 +197,7 @@ coreml.Model = class {
         this.metadata = new Map();
         const context = new coreml.Context(metadata, model, weights);
         const graph = new coreml.Graph(context);
-        this.graphs = [ graph ];
+        this.graphs = [graph];
         if (model.description && model.description.metadata) {
             const properties = model.description.metadata;
             if (properties.versionString) {
@@ -328,9 +331,12 @@ coreml.Attribute = class {
                 this.visible = false;
             } else if (Object.prototype.hasOwnProperty.call(metadata, 'default')) {
                 if (Array.isArray(value)) {
-                    value = value.map((item) => item.toNumber());
+                    value = value.map((item) => Number(item));
                 }
-                if (JSON.stringify(metadata.default) == JSON.stringify(value)) {
+                if (typeof value === 'bigint') {
+                    value = Number(value);
+                }
+                if (JSON.stringify(metadata.default) === JSON.stringify(value)) {
                     this.visible = false;
                 }
             }
@@ -397,7 +403,7 @@ coreml.TensorType = class {
 coreml.TensorShape = class {
 
     constructor(dimensions) {
-        this.dimensions = dimensions.map((dim) => typeof dim === 'string' || Number.isInteger(dim) ? dim : dim.toNumber());
+        this.dimensions = dimensions.map((dim) => typeof dim === 'bigint' ? Number(dim) : dim);
     }
 
     equals(obj) {
@@ -520,14 +526,14 @@ coreml.Context = class {
             for (const description of inputs) {
                 const value = this.output(description.name);
                 this.update(value, description);
-                this.inputs.push({ name: description.name, visible: true, value: [ value ] });
+                this.inputs.push({ name: description.name, visible: true, value: [value] });
             }
             this.type = this.model(model, '', description);
             const outputs = description && Array.isArray(description.output) ? description.output : [];
             for (const description of outputs) {
                 const value = this.input(description.name);
                 this.update(value, description);
-                this.outputs.push({ name: description.name, visible: true, value: [ value ] });
+                this.outputs.push({ name: description.name, visible: true, value: [value] });
             }
         }
     }
@@ -634,43 +640,43 @@ coreml.Context = class {
             const input = this.metadata.input(type, name);
             const visible = input && input.visible === false ? false : true;
             const value = { obj: new coreml.Value('', null, null, tensor) };
-            initializers.push({ name: name, visible: visible, value: [ value ] });
+            initializers.push({ name: name, visible: visible, value: [value] });
         };
         const vector = (value) => {
-            return (value && Object.keys(value).length == 1 && value.vector) ? value.vector : value;
+            return (value && Object.keys(value).length === 1 && value.vector) ? value.vector : value;
         };
         const weights = (type, data) => {
             switch (type) {
                 case 'convolution': {
-                    const weightsShape = [ data.outputChannels, data.kernelChannels, data.kernelSize[0], data.kernelSize[1] ];
+                    const weightsShape = [data.outputChannels, data.kernelChannels, data.kernelSize[0], data.kernelSize[1]];
                     if (data.isDeconvolution) {
                         weightsShape[0] = data.kernelChannels;
-                        weightsShape[1] = Math.floor(data.outputChannels / (data.nGroups != 0 ? data.nGroups : 1));
+                        weightsShape[1] = Math.floor(Number(data.outputChannels / (data.nGroups !== 0 ? data.nGroups : 1)));
                     }
                     initializer(type, 'weights', weightsShape, data.weights);
                     if (data.hasBias) {
-                        initializer(type, 'bias', [ data.outputChannels ], data.bias);
+                        initializer(type, 'bias', [data.outputChannels], data.bias);
                     }
                     return { 'weights': true, 'bias': data.hasBias };
                 }
                 case 'innerProduct':
-                    initializer(type, 'weights', [ data.outputChannels, data.inputChannels ], data.weights);
+                    initializer(type, 'weights', [data.outputChannels, data.inputChannels], data.weights);
                     if (data.hasBias) {
-                        initializer(type, 'bias', [ data.outputChannels ], data.bias);
+                        initializer(type, 'bias', [data.outputChannels], data.bias);
                     }
                     return { 'weights': true, 'bias': data.hasBias };
                 case 'batchnorm':
-                    initializer(type, 'gamma', [ data.channels ], data.gamma);
-                    initializer(type, 'beta', [ data.channels ], data.beta);
+                    initializer(type, 'gamma', [data.channels], data.gamma);
+                    initializer(type, 'beta', [data.channels], data.beta);
                     if (data.mean) {
-                        initializer(type, 'mean', [ data.channels ], data.mean);
+                        initializer(type, 'mean', [data.channels], data.mean);
                     }
                     if (data.variance) {
-                        initializer(type, 'variance', [ data.channels ], data.variance);
+                        initializer(type, 'variance', [data.channels], data.variance);
                     }
                     return { 'gamma': true, 'beta': true, 'mean': true, 'variance': true };
                 case 'embedding':
-                    initializer(type, 'weights', [ data.inputDim, data.outputChannels ], data.weights);
+                    initializer(type, 'weights', [data.inputDim, data.outputChannels], data.weights);
                     return { 'weights': true };
                 case 'loadConstant':
                 case 'loadConstantND':
@@ -686,16 +692,16 @@ coreml.Context = class {
                     initializer(type, 'bias', data.shape, data.bias);
                     return { 'bias': true };
                 case 'simpleRecurrent':
-                    initializer(type, 'weights', [ data.outputVectorSize, data.inputVectorSize ], data.weightMatrix);
-                    initializer(type, 'recurrent', [ data.outputVectorSize, data.inputVectorSize ], data.recursionMatrix);
+                    initializer(type, 'weights', [data.outputVectorSize, data.inputVectorSize], data.weightMatrix);
+                    initializer(type, 'recurrent', [data.outputVectorSize, data.inputVectorSize], data.recursionMatrix);
                     if (data.hasBiasVectors) {
-                        initializer(type, 'bias', [ data.outputVectorSize ], data.biasVector);
+                        initializer(type, 'bias', [data.outputVectorSize], data.biasVector);
                     }
                     return { 'weightMatrix': true, 'recursionMatrix': true, 'biasVector': data.hasBiasVectors };
                 case 'gru': {
-                    const recursionMatrixShape = [ data.outputVectorSize, data.outputVectorSize ];
-                    const weightMatrixShape = [ data.outputVectorSize, data.inputVectorSize ];
-                    const biasVectorShape = [ data.outputVectorSize ];
+                    const recursionMatrixShape = [data.outputVectorSize, data.outputVectorSize];
+                    const weightMatrixShape = [data.outputVectorSize, data.inputVectorSize];
+                    const biasVectorShape = [data.outputVectorSize];
                     initializer(type, 'updateGateWeightMatrix', weightMatrixShape, data.updateGateWeightMatrix);
                     initializer(type, 'resetGateWeightMatrix', weightMatrixShape, data.resetGateWeightMatrix);
                     initializer(type, 'outputGateWeightMatrix', weightMatrixShape, data.outputGateWeightMatrix);
@@ -715,12 +721,12 @@ coreml.Context = class {
                 }
                 case 'uniDirectionalLSTM':
                 case 'biDirectionalLSTM': {
-                    const count = (type == 'uniDirectionalLSTM') ? 1 : 2;
+                    const count = (type === 'uniDirectionalLSTM') ? 1 : 2;
                     const h = data.outputVectorSize;
                     const x = data.inputVectorSize;
                     for (let i = 0; i < count; i++) {
-                        const weights = count == 1 ? data.weightParams : data.weightParams[i];
-                        const suffix = (i == 0) ? '' : '_rev';
+                        const weights = count === 1 ? data.weightParams : data.weightParams[i];
+                        const suffix = (i === 0) ? '' : '_rev';
                         initializer(type, `inputGateWeightMatrix${suffix}`, [h,x], weights.inputGateWeightMatrix);
                         initializer(type, `forgetGateWeightMatrix${suffix}`, [h,x], weights.forgetGateWeightMatrix);
                         initializer(type, `blockInputWeightMatrix${suffix}`, [h,x], weights.blockInputWeightMatrix);
@@ -857,31 +863,31 @@ coreml.Context = class {
                         offset: model.glmClassifier.offset,
                         weights: model.glmClassifier.weights
                     },
-                    [ model.description.input[0].name ],
-                    [ model.description.output[0].name ]);
+                    [model.description.input[0].name],
+                    [model.description.output[0].name]);
                 this.updateClassifierOutput(group, model.glmClassifier, description);
                 return 'Generalized Linear Classifier';
             }
             case 'glmRegressor': {
                 this.node(group, 'glmRegressor', null, shortDescription,
                     model.glmRegressor,
-                    [ model.description.input[0].name ],
-                    [ model.description.output[0].name ]);
+                    [model.description.input[0].name],
+                    [model.description.output[0].name]);
                 return 'Generalized Linear Regressor';
             }
             case 'treeEnsembleClassifier': {
                 this.node(group, 'treeEnsembleClassifier', null, shortDescription,
                     model.treeEnsembleClassifier.treeEnsemble,
-                    [ model.description.input[0].name ],
-                    [ model.description.output[0].name ]);
+                    [model.description.input[0].name],
+                    [model.description.output[0].name]);
                 this.updateClassifierOutput(group, model.treeEnsembleClassifier, description);
                 return 'Tree Ensemble Classifier';
             }
             case 'treeEnsembleRegressor': {
                 this.node(group, 'treeEnsembleRegressor', null, shortDescription,
                     model.treeEnsembleRegressor.treeEnsemble,
-                    [ model.description.input[0].name ],
-                    [ model.description.output[0].name ]);
+                    [model.description.input[0].name],
+                    [model.description.output[0].name]);
                 return 'Tree Ensemble Regressor';
             }
             case 'supportVectorClassifier': {
@@ -896,8 +902,8 @@ coreml.Context = class {
                         rho: model.supportVectorClassifier.rho,
                         supportVectors: model.supportVectorClassifier.supportVectors
                     },
-                    [ model.description.input[0].name ],
-                    [ model.description.output[0].name ]);
+                    [model.description.input[0].name],
+                    [model.description.output[0].name]);
                 this.updateClassifierOutput(group, model.supportVectorClassifier, description);
                 return 'Support Vector Classifier';
             }
@@ -909,8 +915,8 @@ coreml.Context = class {
                         rho: model.supportVectorRegressor.rho,
                         supportVectors: model.supportVectorRegressor.supportVectors
                     },
-                    [ model.description.input[0].name ],
-                    [ model.description.output[0].name ]);
+                    [model.description.input[0].name],
+                    [model.description.output[0].name]);
                 return 'Support Vector Regressor';
             }
             case 'oneHotEncoder': {
@@ -919,8 +925,8 @@ coreml.Context = class {
                 oneHotEncoderParams[categoryType] = model.oneHotEncoder[categoryType];
                 this.node(group, 'oneHotEncoder', null, shortDescription,
                     oneHotEncoderParams,
-                    [ model.description.input[0].name ],
-                    [ model.description.output[0].name ]);
+                    [model.description.input[0].name],
+                    [model.description.output[0].name]);
                 return 'One Hot Encoder';
             }
             case 'imputer': {
@@ -931,50 +937,50 @@ coreml.Context = class {
                 imputerParams[replaceValue] = model.imputer[replaceValue];
                 this.node(group, 'oneHotEncoder', null, shortDescription,
                     imputerParams,
-                    [ model.description.input[0].name ],
-                    [ model.description.output[0].name ]);
+                    [model.description.input[0].name],
+                    [model.description.output[0].name]);
                 return 'Imputer';
             }
             case 'featureVectorizer': {
                 this.node(group, 'featureVectorizer', null, shortDescription,
                     model.featureVectorizer,
                     model.description.input.map((item) => item.name),
-                    [ model.description.output[0].name ]);
+                    [model.description.output[0].name]);
                 return 'Feature Vectorizer';
             }
             case 'dictVectorizer': {
                 this.node(group, 'dictVectorizer', null, shortDescription,
                     model.dictVectorizer,
-                    [ model.description.input[0].name ],
-                    [ model.description.output[0].name ]);
+                    [model.description.input[0].name],
+                    [model.description.output[0].name]);
                 return 'Dictionary Vectorizer';
             }
             case 'scaler': {
                 this.node(group, 'scaler', null, shortDescription,
                     model.scaler,
-                    [ model.description.input[0].name ],
-                    [ model.description.output[0].name ]);
+                    [model.description.input[0].name],
+                    [model.description.output[0].name]);
                 return 'Scaler';
             }
             case 'categoricalMapping': {
                 this.node(group, 'categoricalMapping', null, shortDescription,
                     model.categoricalMapping,
-                    [ model.description.input[0].name ],
-                    [ model.description.output[0].name ]);
+                    [model.description.input[0].name],
+                    [model.description.output[0].name]);
                 return 'Categorical Mapping';
             }
             case 'normalizer': {
                 this.node(group, 'normalizer', null, shortDescription,
                     model.normalizer,
-                    [ model.description.input[0].name ],
-                    [ model.description.output[0].name ]);
+                    [model.description.input[0].name],
+                    [model.description.output[0].name]);
                 return 'Normalizer';
             }
             case 'arrayFeatureExtractor': {
                 this.node(group, 'arrayFeatureExtractor', null, shortDescription,
                     { extractIndex: model.arrayFeatureExtractor.extractIndex },
-                    [ model.description.input[0].name ],
-                    [ model.description.output[0].name ]);
+                    [model.description.input[0].name],
+                    [model.description.output[0].name]);
                 return 'Array Feature Extractor';
             }
             case 'nonMaximumSuppression': {
@@ -1001,7 +1007,7 @@ coreml.Context = class {
             case 'wordTagger': {
                 this.node(group, 'wordTagger', null, shortDescription,
                     model.wordTagger,
-                    [ model.description.input[0].name ],
+                    [model.description.input[0].name],
                     [
                         model.wordTagger.tokensOutputFeatureName,
                         model.wordTagger.tokenTagsOutputFeatureName,
@@ -1013,8 +1019,8 @@ coreml.Context = class {
             case 'textClassifier': {
                 this.node(group, 'textClassifier', null, shortDescription,
                     model.textClassifier,
-                    [ model.description.input[0].name ],
-                    [ model.description.output[0].name ]);
+                    [model.description.input[0].name],
+                    [model.description.output[0].name]);
                 return 'Text Classifier';
             }
             case 'visionFeaturePrint': {
@@ -1023,22 +1029,22 @@ coreml.Context = class {
                 };
                 this.node(group, 'visionFeaturePrint', null, shortDescription,
                     visionFeaturePrintParams,
-                    [ model.description.input[0].name ],
-                    [ model.description.output[0].name ]);
+                    [model.description.input[0].name],
+                    [model.description.output[0].name]);
                 return 'Vision Feature Print';
             }
             case 'soundAnalysisPreprocessing': {
                 this.node(group, 'soundAnalysisPreprocessing', null, shortDescription,
                     model.soundAnalysisPreprocessing,
-                    [ model.description.input[0].name ],
-                    [ model.description.output[0].name ]);
+                    [model.description.input[0].name],
+                    [model.description.output[0].name]);
                 return 'Sound Analysis Preprocessing';
             }
             case 'kNearestNeighborsClassifier': {
                 this.node(group, 'kNearestNeighborsClassifier', null, shortDescription,
                     model.kNearestNeighborsClassifier,
-                    [ model.description.input[0].name ],
-                    [ model.description.output[0].name ]);
+                    [model.description.input[0].name],
+                    [model.description.output[0].name]);
                 this.updateClassifierOutput(group, model.kNearestNeighborsClassifier, description);
                 return 'Nearest Neighbors Classifier';
             }
@@ -1055,22 +1061,22 @@ coreml.Context = class {
             case 'audioFeaturePrint': {
                 this.node(group, 'audioFeaturePrint', null, shortDescription,
                     model.audioFeaturePrint,
-                    [ model.description.input[0].name ],
-                    [ model.description.output[0].name ]);
+                    [model.description.input[0].name],
+                    [model.description.output[0].name]);
                 return 'Audio Feature Print';
             }
             case 'linkedModel': {
                 this.node(group, 'linkedModel', null, shortDescription,
                     model.linkedModel.linkedModelFile,
-                    [ model.description.input[0].name ],
-                    [ model.description.output[0].name ]);
+                    [model.description.input[0].name],
+                    [model.description.output[0].name]);
                 return 'Linked Model';
             }
             case 'customModel': {
                 this.node(group, 'customModel', null, shortDescription,
                     { className: model.customModel.className, parameters: model.customModel.parameters },
-                    [ model.description.input[0].name ],
-                    [ model.description.output[0].name ]);
+                    [model.description.input[0].name],
+                    [model.description.output[0].name]);
                 return 'customModel';
             }
             case 'mlProgram': {
@@ -1086,7 +1092,7 @@ coreml.Context = class {
         let labelProbabilityLayerName = classifier.labelProbabilityLayerName;
         if (!labelProbabilityLayerName && this.nodes.length > 0) {
             const node = this.nodes.slice(-1).pop();
-            if (node && node.outputs.length == 1 && node.outputs[0].value.length == 1) {
+            if (node && node.outputs.length === 1 && node.outputs[0].value.length === 1) {
                 labelProbabilityLayerName = node.outputs[0].value[0].name;
             }
         }
@@ -1121,8 +1127,8 @@ coreml.Context = class {
                 { name: 'input', visible: true, value: Array.from(values) }
             ];
             node.outputs = [
-                { name: 'probabilities', visible: true, value: [ this.output(predictedProbabilitiesName) ] },
-                { name: 'feature', visible: true, value: [ this.output(predictedFeatureName) ] }
+                { name: 'probabilities', visible: true, value: [this.output(predictedProbabilitiesName)] },
+                { name: 'feature', visible: true, value: [this.output(predictedFeatureName)] }
             ];
             this.nodes.push(node);
         }
@@ -1144,7 +1150,7 @@ coreml.Context = class {
                 const input = preprocessing.featureName ? preprocessing.featureName : currentOutput;
                 currentOutput = `${preprocessingInput}:${preprocessorIndex}`;
                 const preprocessor = preprocessing.preprocessor;
-                const node = this.node(group, preprocessor, null, '', preprocessing[preprocessor], [ input ], [ currentOutput ]);
+                const node = this.node(group, preprocessor, null, '', preprocessing[preprocessor], [input], [currentOutput]);
                 /* eslint-disable prefer-destructuring */
                 preprocessorOutput = node.outputs[0].value[0];
                 /* eslint-enable prefer-destructuring */
@@ -1204,7 +1210,7 @@ coreml.Context = class {
                 case 'blobFileValue': {
                     const type = coreml.Utility.valueType(value.type);
                     const blob = value.blobFileValue;
-                    const offset = blob.offset.toNumber();
+                    const offset = Number(blob.offset);
                     const file = blob.fileName;
                     let data = null;
                     const stream = this.weights.get(file);
@@ -1213,10 +1219,11 @@ coreml.Context = class {
                         const buffer = stream.read(32);
                         const reader = new base.BinaryReader(buffer);
                         const signature = reader.uint32();
-                        if (signature == 0xdeadbeef) {
+                        if (signature === 0xdeadbeef) {
                             reader.uint32(); // dataType
-                            const size = reader.uint64();
-                            stream.seek(reader.uint64());
+                            const size = Number(reader.uint64());
+                            const offset = Number(reader.uint64());
+                            stream.seek(offset);
                             const length = (type.shape.dimensions || []).reduce((a, b) => a * b, 1);
                             switch (type.dataType) {
                                 case 'float32': {
@@ -1265,7 +1272,7 @@ coreml.Context = class {
                 const value = this.input(output.name);
                 value.type = coreml.Utility.valueType(output.type);
                 value.from.push(operation);
-                return { name: 'output', value: [ value ] };
+                return { name: 'output', value: [value] };
             });
             return operation;
         });
@@ -1345,7 +1352,7 @@ coreml.Context = class {
             op.type = `program:${op.type}`;
             const metadata = this.metadata.type(op.type);
             if (metadata && Array.isArray(metadata.inputs)) {
-                const map = new Map(metadata.inputs.map((input, index) => [ input.name, index + 1 ]));
+                const map = new Map(metadata.inputs.map((input, index) => [input.name, index + 1]));
                 op.inputs.sort((a, b) => (map.get(a.name) || map.size) - (map.get(b.name) || map.size));
             }
             this.nodes.push(op);
@@ -1365,7 +1372,7 @@ coreml.Utility = class {
         if (type) {
             coreml.Utility._enumKeyMap = coreml.Utility._enumKeyMap || new Map();
             if (!coreml.Utility._enumKeyMap.has(name)) {
-                const map = new Map(Object.entries(type).map(([key, value]) => [ value, key ]));
+                const map = new Map(Object.entries(type).map(([key, value]) => [value, key]));
                 coreml.Utility._enumKeyMap.set(name, map);
             }
             const map = coreml.Utility._enumKeyMap.get(name);
@@ -1383,7 +1390,7 @@ coreml.Utility = class {
                 case 'multiArrayType': {
                     let shape = new coreml.TensorShape([]);
                     if (type.multiArrayType.shape && type.multiArrayType.shape.length > 0) {
-                        shape = new coreml.TensorShape(type.multiArrayType.shape.map((dim) => dim.toNumber()));
+                        shape = new coreml.TensorShape(type.multiArrayType.shape.map((dim) => Number(dim)));
                     }
                     let dataType;
                     const ArrayDataType = coreml.proto.ArrayFeatureType.ArrayDataType;

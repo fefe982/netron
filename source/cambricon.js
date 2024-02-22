@@ -9,13 +9,12 @@ cambricon.ModelFactory = class {
             const buffer = stream.peek(Math.min(20, stream.length));
             const text = Array.from(buffer).map((c) => String.fromCharCode(c)).join('');
             if (text.startsWith('\x7fMEF') || text.startsWith('cambricon_offline')) {
-                return 'cambricon';
+                context.type = 'cambricon';
             }
         }
-        return '';
     }
 
-    async open(/* context, match */) {
+    async open(/* context */) {
         throw new cambricon.Error("File contains undocumented Cambricon data.");
     }
 };

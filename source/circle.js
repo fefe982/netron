@@ -8,27 +8,29 @@ const circle = {};
 circle.ModelFactory = class {
 
     match(context) {
-        const tags = context.tags('flatbuffers');
-        if (tags.get('file_identifier') === 'CIR0') {
-            return 'circle.flatbuffers';
+        const reader = context.peek('flatbuffers.binary');
+        if (reader && reader.identifier === 'CIR0') {
+            context.type = 'circle.flatbuffers';
+            context.target = reader;
+            return;
         }
         const obj = context.peek('json');
         if (obj && obj.subgraphs && obj.operator_codes) {
-            return 'circle.flatbuffers.json';
+            context.type = 'circle.flatbuffers.json';
+            context.target = obj;
+            return;
         }
-        return undefined;
     }
 
-    async open(context, target) {
-        await context.require('./circle-schema');
-        circle.schema = flatbuffers.get('circle').circle;
+    async open(context) {
+        circle.schema = await context.require('./circle-schema');
+        circle.schema = circle.schema.circle;
         let model = null;
         const attachments = new Map();
-        switch (target) {
+        switch (context.type) {
             case 'circle.flatbuffers.json': {
                 try {
-                    const obj = context.peek('json');
-                    const reader = new flatbuffers.TextReader(obj);
+                    const reader = context.read('flatbuffers.text');
                     model = circle.schema.Model.createText(reader);
                 } catch (error) {
                     const message = error && error.message ? error.message : error.toString();
@@ -37,15 +39,15 @@ circle.ModelFactory = class {
                 break;
             }
             case 'circle.flatbuffers': {
-                const stream = context.stream;
                 try {
-                    const reader = flatbuffers.BinaryReader.open(stream);
+                    const reader = context.target;
                     model = circle.schema.Model.create(reader);
                 } catch (error) {
                     const message = error && error.message ? error.message : error.toString();
                     throw new circle.Error(`File format is not circle.Model (${message.replace(/\.$/, '')}).`);
                 }
                 try {
+                    const stream = context.stream;
                     const archive = zip.Archive.open(stream);
                     if (archive) {
                         for (const [name, value] of archive.entries) {
@@ -58,7 +60,7 @@ circle.ModelFactory = class {
                 break;
             }
             default: {
-                throw new circle.Error(`Unsupported Circle format '${target}'.`);
+                throw new circle.Error(`Unsupported Circle format '${context.type}'.`);
             }
         }
         const metadata = await context.metadata('circle-metadata.json');
@@ -75,7 +77,7 @@ circle.Model = class {
         this._description = model.description || '';
         this._metadata = new Map();
         const builtinOperators = new Map();
-        const upperCase = new Set([ '2D', 'LSH', 'SVDF', 'RNN', 'L2', 'LSTM' ]);
+        const upperCase = new Set(['2D', 'LSH', 'SVDF', 'RNN', 'L2', 'LSTM']);
         for (const key of Object.keys(circle.schema.BuiltinOperator)) {
             const value = key === 'BATCH_MATMUL' ? 'BATCH_MAT_MUL' : key;
             const name = value.split('_').map((s) => (s.length < 1 || upperCase.has(s)) ? s : s[0] + s.substring(1).toLowerCase()).join('');
@@ -111,7 +113,7 @@ circle.Model = class {
                                 this._version = modelMetadata.version;
                             }
                             if (modelMetadata.description) {
-                                this._description = this._description ? [ this._description, modelMetadata.description].join(' ') : modelMetadata.description;
+                                this._description = this._description ? [this._description, modelMetadata.description].join(' ') : modelMetadata.description;
                             }
                             if (modelMetadata.author) {
                                 this._metadata.set('author', modelMetadata.author);
@@ -237,7 +239,7 @@ circle.Graph = class {
             if (subgraphMetadata && i < subgraphMetadata.input_tensor_metadata.length) {
                 applyTensorMetadata(value, subgraphMetadata.input_tensor_metadata[i]);
             }
-            this._inputs.push(new circle.Argument(value ? value.name : '?', true, value ? [ value ] : []));
+            this._inputs.push(new circle.Argument(value ? value.name : '?', true, value ? [value] : []));
         }
         const outputs = subgraph.outputs;
         for (let i = 0; i < outputs.length; i++) {
@@ -246,7 +248,7 @@ circle.Graph = class {
             if (subgraphMetadata && i < subgraphMetadata.output_tensor_metadata.length) {
                 applyTensorMetadata(value, subgraphMetadata.output_tensor_metadata[i]);
             }
-            this._outputs.push(new circle.Argument(value ? value.name : '?', true, value ? [ value ] : []));
+            this._outputs.push(new circle.Argument(value ? value.name : '?', true, value ? [value] : []));
         }
     }
 
@@ -289,7 +291,7 @@ circle.Node = class {
                 if (this._type && this._type.inputs && inputIndex < this._type.inputs.length) {
                     const input = this._type.inputs[inputIndex];
                     inputName = input.name;
-                    if (input.option == 'variadic') {
+                    if (input.option === 'variadic') {
                         count = inputs.length - inputIndex;
                     }
                     if (input && input.visible === false) {
@@ -361,7 +363,7 @@ circle.Node = class {
                             throw new circle.Error(`Unsupported activation funtion index '${JSON.stringify(value)}'.`);
                         }
                         const type = activationFunctionMap[value];
-                        this._chain = [ new circle.Node(metadata, null, { name: type }, null, []) ];
+                        this._chain = [new circle.Node(metadata, null, { name: type }, null, [])];
                     }
                     const schema = metadata.attribute(type.name, name);
                     this._attributes.push(new circle.Attribute(schema, name, value));
@@ -439,7 +441,7 @@ circle.Attribute = class {
     }
 
     get visible() {
-        return this._visible == false ? false : true;
+        return this._visible === false ? false : true;
     }
 };
 
@@ -478,7 +480,7 @@ circle.Value = class {
                 type: 'linear',
                 dimension: quantization.quantized_dimension,
                 scale: quantization.scale,
-                offset: quantization.zero_point.map((value) => value.toNumber()),
+                offset: quantization.zero_point,
                 min: quantization.min,
                 max: quantization.max
             };
@@ -584,7 +586,7 @@ circle.TensorShape = class {
     }
 
     toString() {
-        if (!this._dimensions || this._dimensions.length == 0) {
+        if (!this._dimensions || this._dimensions.length === 0) {
             return '';
         }
         return `[${this._dimensions.map((dimension) => dimension.toString()).join(',')}]`;
@@ -595,7 +597,7 @@ circle.Utility = class {
 
     static dataType(type) {
         if (!circle.Utility._tensorTypeMap) {
-            circle.Utility._tensorTypeMap = new Map(Object.entries(circle.schema.TensorType).map(([key, value]) => [ value, key.toLowerCase() ]));
+            circle.Utility._tensorTypeMap = new Map(Object.entries(circle.schema.TensorType).map(([key, value]) => [value, key.toLowerCase()]));
             circle.Utility._tensorTypeMap.set(6, 'boolean');
         }
         return circle.Utility._tensorTypeMap.has(type) ? circle.Utility._tensorTypeMap.get(type) : '?';
@@ -606,7 +608,7 @@ circle.Utility = class {
         if (type) {
             circle.Utility._enums = circle.Utility._enums || new Map();
             if (!circle.Utility._enums.has(name)) {
-                const entries = new Map(Object.entries(type).map(([key, value]) => [ value, key ]));
+                const entries = new Map(Object.entries(type).map(([key, value]) => [value, key]));
                 circle.Utility._enums.set(name, entries);
             }
             const map = circle.Utility._enums.get(name);

@@ -10,10 +10,15 @@ const svp = {};
 om.ModelFactory = class {
 
     match(context) {
-        return om.Container.open(context);
+        const container = om.Container.open(context);
+        if (container) {
+            context.type = 'om';
+            context.target = container;
+        }
     }
 
-    async open(context, target) {
+    async open(context) {
+        const target = context.target;
         await target.read();
         const metadata = await context.metadata('om-metadata.json');
         return new om.Model(metadata, target);
@@ -62,14 +67,14 @@ om.Graph = class {
                 let data = null;
                 if (op.attr.value.t.data.length !== 0) {
                     data = op.attr.value.t.data;
-                } else if (context.weights == null) {
+                } else if (context.weights === null) {
                     data = null;
                 } else if (desc.attr.merged_offset) {
-                    const offset = desc.attr.merged_offset.i;
-                    data = context.weights.slice(offset, offset + desc.weight_size);
+                    const offset = Number(desc.attr.merged_offset.i);
+                    data = context.weights.slice(offset, offset + Number(desc.weight_size));
                 } else {
-                    const offset = desc.data_offset;
-                    data = context.weights.slice(offset, offset + desc.weight_size);
+                    const offset = Number(desc.data_offset);
+                    data = context.weights.slice(offset, offset + Number(desc.weight_size));
                 }
                 const type = om.Utility.tensorType(desc);
                 const tensor = new om.Tensor('Constant', type, data);
@@ -135,7 +140,7 @@ om.Node = class {
                 const type = om.Utility.tensorType(op.output_desc[i]);
                 const name = this.type.outputs && i < this.type.outputs.length ? this.type.outputs[i].name : `output${i === 0 ? '' : i}`;
                 const value = values.map(identifier, type);
-                const argument = new om.Argument(name, [ value ]);
+                const argument = new om.Argument(name, [value]);
                 this.outputs.push(argument);
             }
         }
@@ -182,7 +187,7 @@ om.Attribute = class {
                 this.value = null;
                 if (value.bt.length !== 0) {
                     this.type = 'tensor';
-                    const shape = new om.TensorShape([ value.bt.length / 4 ]);
+                    const shape = new om.TensorShape([value.bt.length / 4]);
                     const type = new om.TensorType('float32', shape);
                     this.value = new om.Tensor('Constant', type, value.bt);
                 }
@@ -190,7 +195,7 @@ om.Attribute = class {
             }
             case 'dt': {
                 this.type = 'DataType';
-                this.value = om.Utility.dtype(value.dt.toNumber());
+                this.value = om.Utility.dtype(Number(value.dt));
                 break;
             }
             case 's': {
@@ -306,7 +311,7 @@ om.TensorType = class {
 om.TensorShape = class {
 
     constructor(dimensions) {
-        this.dimensions = dimensions.map((dim) => !Number.isInteger(dim) && dim && dim.toNumber ? dim.toNumber() : dim);
+        this.dimensions = dimensions.map((dim) => typeof dim === 'bigint' ? Number(dim) : dim);
     }
 
     equals(obj) {
@@ -376,8 +381,8 @@ om.Container = class {
                 header.model_num = header.version >= 0x20000000 ? reader.uint32() : 1;
                 header.platform_version = decoder.decode(reader.read(20));
                 header.platform_type = reader.byte();
-                header.padd = [ reader.byte(), reader.byte(), reader.byte() ];
-                header.model_length = reader.uint64();
+                header.padd = [reader.byte(), reader.byte(), reader.byte()];
+                header.model_length = Number(reader.uint64());
                 header.need_check_os_cpu_info = reader.byte();
                 header.is_unknow_model = reader.byte(); // 0:static model 1:dynamic model
                 header.reserved = reader.read(62);
@@ -389,9 +394,9 @@ om.Container = class {
                     reader.skip(align - 4);
                     size = 4 + (align - 4) + (count * 3 * align);
                     for (let i = 0; i < count; i++) {
-                        const type = align === 4 ? reader.uint32() : reader.uint64();
-                        const offset = align === 4 ? reader.uint32() : reader.uint64();
-                        const size = align === 4 ? reader.uint32() : reader.uint64();
+                        const type = align === 4 ? reader.uint32() : Number(reader.uint64());
+                        const offset = align === 4 ? reader.uint32() : Number(reader.uint64());
+                        const size = align === 4 ? reader.uint32() : Number(reader.uint64());
                         if (type >= 32 || partitions.has(type) || (offset + size) >= stream.length) {
                             partitions.clear();
                             break;
@@ -454,9 +459,9 @@ om.Container = class {
                         }
                     }
                 }
-                await this._context.require('./om-proto');
+                om.proto = await this._context.require('./om-proto');
+                om.proto = om.proto.ge.proto;
                 try {
-                    om.proto = protobuf.get('om').ge.proto;
                     const reader = protobuf.BinaryReader.open(this.model);
                     this.model = om.proto.ModelDef.decode(reader);
                 } catch (error) {
@@ -546,7 +551,7 @@ svp.ModelDef = class ModelDef {
                     for (const item of this.graph) {
                         if (op.attr && op.attr.seg_id && op.attr.seg_id.i === item.id) {
                             let out_num;
-                            if (typeof op.output_index == 'number') {
+                            if (typeof op.output_index === 'number') {
                                 out_num = op.output_index + 1;
                             } else {
                                 const input_num = op.input.map((element) => element.split(":")[1]);
@@ -583,7 +588,7 @@ svp.ModelDef = class ModelDef {
                                     break;
                                 }
                             }
-                            if (curr_op != null) {
+                            if (curr_op !== null) {
                                 curr_op.output_desc = curr_op.output_desc.concat(out_list);
                             } else {
                                 op.output_desc = op.output_desc.concat(out_list);

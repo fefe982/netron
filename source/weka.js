@@ -10,24 +10,23 @@ weka.ModelFactory = class {
         try {
             const stream = context.stream;
             if (stream.length >= 5) {
-                const signature = [ 0xac, 0xed ];
-                if (stream.peek(2).every((value, index) => value === signature[index])) {
+                const buffer = stream.peek(2);
+                if (buffer[0] === 0xAC && buffer[1] === 0xED) {
                     const reader = new java.io.InputObjectStream(stream);
                     const obj = reader.read();
                     if (obj && obj.$class && obj.$class.name) {
-                        return 'weka';
+                        context.type = 'weka';
+                        context.target = obj;
                     }
                 }
             }
         } catch (err) {
             // continue regardless of error
         }
-        return undefined;
     }
 
     async open(context) {
-        const reader = new java.io.InputObjectStream(context.stream);
-        const obj = reader.read();
+        const obj = context.target;
         throw new weka.Error(`Unsupported type '${obj.$class.name}'.`);
     }
 };
@@ -50,7 +49,7 @@ java.io.InputObjectStream = class {
         if (stream.length < 5) {
             throw new java.io.Error('Invalid stream size');
         }
-        const signature = [ 0xac, 0xed ];
+        const signature = [0xac, 0xed];
         if (!stream.peek(2).every((value, index) => value === signature[index])) {
             throw new java.io.Error('Invalid stream signature');
         }
@@ -231,11 +230,11 @@ java.io.InputObjectStream.BinaryReader = class {
     uint64() {
         const position = this._position;
         this.skip(8);
-        return this._view.getUint64(position, false);
+        return this._view.getBigUint64(position, false);
     }
 
     string(long) {
-        const size = long ? this.uint64().toNumber() : this.uint16();
+        const size = long ? Number(this.uint64()) : this.uint16();
         const position = this._position;
         this.skip(size);
         this._decoder = this._decoder || new TextDecoder('utf-8');

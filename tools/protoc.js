@@ -13,10 +13,12 @@ protoc.Object = class {
     }
 
     get fullName() {
-        const path = [ this.name ];
+        const path = [this.name];
         let context = this.parent;
         while (context) {
-            path.unshift(context.name);
+            if (context.name) {
+                path.unshift(context.name);
+            }
             context = context.parent;
         }
         return path.join('.');
@@ -884,7 +886,7 @@ protoc.Parser = class {
             } else {
                 const start = this._parseId(this._tokenizer.next());
                 const end = this._tokenizer.eat('to') ? this._parseId(this._tokenizer.next()) : start;
-                target.push([ start, end ]);
+                target.push([start, end]);
             }
         }
         while (this._tokenizer.eat(','));
@@ -1129,10 +1131,12 @@ protoc.Generator = class {
         this._root = root;
         this._text = text;
         this._builder = new protoc.Generator.StringBuilder();
-        this._builder.add("");
-        this._builder.add("import * as protobuf from './protobuf.js';");
-        this._builder.add("");
-        this._builder.add(`const $root = protobuf.get('${this._root.alias}');`);
+        const scopes = Array.from(this._root.children.values()).map((child) => child.fullName);
+        const exports = new Set(scopes.map((scope) => scope.split('.')[0]));
+        this._builder.add('');
+        for (const value of exports) {
+            this._builder.add(`export const ${value} = {};`);
+        }
         this._buildContent(this._root);
         this._content = this._builder.toString();
     }
@@ -1143,21 +1147,23 @@ protoc.Generator = class {
 
     _buildContent(namespace) {
         for (const child of namespace.children.values()) {
-            this._builder.add('');
             if (child instanceof protoc.Enum) {
+                this._builder.add('');
                 this._buildEnum(child);
             } else if (child instanceof protoc.Type) {
+                this._builder.add('');
                 this._buildType(child);
+            } else if (child instanceof protoc.Namespace) {
+                const name = child.fullName.split('.').map((name) => protoc.Generator._escapeName(name)).join('.');
+                if (name.indexOf('.') !== -1) {
+                    this._builder.add('');
+                    this._builder.add(`${name} = {};`);
+                }
+                this._buildContent(child);
             } else {
-                this._buildNamespace(child);
+                throw new protoc.Error('Unsupportd namespace child.');
             }
         }
-    }
-
-    _buildNamespace(namespace) {
-        const name = namespace.fullName.split('.').map((name) => protoc.Generator._escapeName(name)).join('.');
-        this._builder.add(`${name} = {};`);
-        this._buildContent(namespace);
     }
 
     _buildEnum(type) {
@@ -1190,8 +1196,8 @@ protoc.Generator = class {
             this._builder.add('');
             this._builder.add(`get ${oneof.name}() {`);
             this._builder.indent();
-                this._builder.add(`${name}.${oneof.name}Set = ${name}.${oneof.name}Set || new Set([ ${Array.from(oneof.oneof.keys()).map(JSON.stringify).join(', ')}]);`);
-                this._builder.add(`return Object.keys(this).find((key) => ${name}.${oneof.name}Set.has(key) && this[key] != null);`);
+                this._builder.add(`${name}.${oneof.name}Set = ${name}.${oneof.name}Set || new Set([${Array.from(oneof.oneof.keys()).map(JSON.stringify).join(', ')}]);`);
+                this._builder.add(`return Object.keys(this).find((key) => ${name}.${oneof.name}Set.has(key) && this[key] !== null);`);
             this._builder.outdent();
             this._builder.add('}');
             /* eslint-enable indent */
@@ -1219,9 +1225,9 @@ protoc.Generator = class {
             }
             if (field.type.long) {
                 if (field.type.name === 'uint64' || field.type.name === 'fixed64') {
-                    this._builder.add(`${name}.prototype${protoc.Generator._propertyReference(field.name)} = protobuf.Uint64.create(${field.defaultValue});`);
+                    this._builder.add(`${name}.prototype${protoc.Generator._propertyReference(field.name)} = ${field.defaultValue}n;`);
                 } else {
-                    this._builder.add(`${name}.prototype${protoc.Generator._propertyReference(field.name)} = protobuf.Int64.create(${field.defaultValue});`);
+                    this._builder.add(`${name}.prototype${protoc.Generator._propertyReference(field.name)} = ${field.defaultValue}n;`);
                 }
             } else if (field.type.name === 'bytes') {
                 this._builder.add(`${name}.prototype${protoc.Generator._propertyReference(field.name)} = new Uint8Array(${JSON.stringify(Array.prototype.slice.call(field.defaultValue))});`);
@@ -1251,10 +1257,10 @@ protoc.Generator = class {
 
     _buildDecodeFunction(type) {
         /* eslint-disable indent */
-        const fieldTypeName = (field) => `$root${field.type.fullName}`;
+        const fieldTypeName = (field) => `${field.type.fullName}`;
         this._builder.add('static decode(reader, length) {');
         this._builder.indent();
-            this._builder.add(`const message = new $root${type.fullName}();`);
+            this._builder.add(`const message = new ${type.fullName}();`);
             this._builder.add('const end = length !== undefined ? reader.position + length : reader.length;');
             this._builder.add("while (reader.position < end) {");
             this._builder.indent();
@@ -1329,10 +1335,10 @@ protoc.Generator = class {
 
     _buildDecodeTextFunction(type) {
         /* eslint-disable indent */
-        const typeName = (type) => `$root${type.fullName}`;
+        const typeName = (type) => `${type.fullName}`;
         this._builder.add('static decodeText(reader) {');
         this._builder.indent();
-            if (type.fullName === '.google.protobuf.Any') {
+            if (type.fullName === 'google.protobuf.Any') {
                 this._builder.add(`return reader.any(() => new ${typeName(type)}());`);
             } else {
                 this._builder.add(`const message = new ${typeName(type)}();`);
@@ -1357,7 +1363,7 @@ protoc.Generator = class {
                                         this._builder.add(`reader.array(${variable}, () => reader.enum(${typeName(field.type)}));`);
                                     } else if (field.type instanceof protoc.PrimitiveType) {
                                         this._builder.add(`reader.array(${variable}, () => reader.${field.type.name}());`);
-                                    } else if (field.type.fullName === '.google.protobuf.Any') {
+                                    } else if (field.type.fullName === 'google.protobuf.Any') {
                                         this._builder.add(`reader.anyarray(${variable}, () => new ${typeName(field.type)}());`);
                                     } else {
                                         this._builder.add(`${variable}.push(${typeName(field.type)}.decodeText(reader));`);
@@ -1402,7 +1408,7 @@ protoc.Generator = class {
     }
 
     static _escapeName(name) {
-        return !name ? '$root' : protoc.Generator._isKeyword(name) ? `${name}_` : name;
+        return protoc.Generator._isKeyword(name) ? `${name}_` : name;
     }
 
     static _propertyReference(name) {
@@ -1418,7 +1424,7 @@ protoc.Generator.StringBuilder = class {
 
     constructor() {
         this._indentation = '';
-        this._lines = [ '' ];
+        this._lines = [''];
         this._newline = true;
     }
 
@@ -1452,7 +1458,7 @@ protoc.Error = class extends Error {
 
     constructor(message) {
         super(message);
-        this.name = 'Protocol Buffer Compiler Error';
+        this.name = 'Protocol Buffers Compiler Error';
     }
 };
 

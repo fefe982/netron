@@ -5,11 +5,26 @@ const hailo = {};
 hailo.ModelFactory = class {
 
     match(context) {
-        return hailo.Container.open(context);
+        const container = hailo.Container.open(context);
+        if (container) {
+            context.type = container.type;
+            context.target = container;
+        }
     }
 
-    async open(context, target) {
+    filter(context, type) {
+        if (context.type === 'hailo.metadata' && (type === 'hailo.configuration' || type === 'npz' || type === 'onnx.proto')) {
+            return false;
+        }
+        if (context.type === 'hailo.configuration' && type === 'npz') {
+            return false;
+        }
+        return true;
+    }
+
+    async open(context) {
         const metadata = await context.metadata('hailo-metadata.json');
+        const target = context.target;
         await target.read();
         return new hailo.Model(metadata, target);
     }
@@ -19,7 +34,7 @@ hailo.Model = class {
 
     constructor(metadata, container) {
         const configuration = container.configuration;
-        this.graphs = [ new hailo.Graph(metadata, configuration, container.weights) ];
+        this.graphs = [new hailo.Graph(metadata, configuration, container.weights)];
         this.name = configuration && configuration.name || "";
         this.format = container.format + (container.metadata && container.metadata.sdk_version ? ` v${container.metadata.sdk_version}` : '');
         this.metadata = new Map();
@@ -49,7 +64,7 @@ hailo.Graph = class {
             }
             return values.get(name);
         };
-        const layers = Object.entries(configuration.layers || {}).map(([ name, value ]) => {
+        const layers = Object.entries(configuration.layers || {}).map(([name, value]) => {
             value.name = name;
             return value;
         });
@@ -59,7 +74,7 @@ hailo.Graph = class {
                 case 'const_input': {
                     const shape = Array.isArray(layer.output_shapes) && layer.output_shapes.length > 0 ? layer.output_shapes[0] : null;
                     const type = shape ? new hailo.TensorType('?', new hailo.TensorShape(shape)) : null;
-                    const argument = new hailo.Argument('input', [ values.map(layer.name, type) ]);
+                    const argument = new hailo.Argument('input', [values.map(layer.name, type)]);
                     this.inputs.push(argument);
                     break;
                 }
@@ -67,7 +82,7 @@ hailo.Graph = class {
                     for (let i = 0; i < layer.input.length; i++) {
                         const shape = Array.isArray(layer.input_shapes) && layer.input_shapes.length > 0 ? layer.input_shapes[i] : null;
                         const type = shape ? new hailo.TensorType('?', new hailo.TensorShape(shape)) : null;
-                        const argument = new hailo.Argument('output', [ values.map(layer.input[i], type) ]);
+                        const argument = new hailo.Argument('output', [values.map(layer.input[i], type)]);
                         this.outputs.push(argument);
                     }
                     break;
@@ -114,30 +129,30 @@ hailo.Node = class {
         this.inputs = layer.input.map((name, index) => {
             const shape = layer.input_shapes ? layer.input_shapes[index] : null;
             const type = shape ? new hailo.TensorType('?', new hailo.TensorShape(shape)) : null;
-            return new hailo.Argument("input", [ values.map(name, type) ]);
+            return new hailo.Argument("input", [values.map(name, type)]);
         });
         const layer_params = layer.params ? Object.entries(layer.params) : [];
-        const params_list = layer_params.reduce((acc, [ name, value ]) => {
+        const params_list = layer_params.reduce((acc, [name, value]) => {
             const schema = metadata.attribute(layer.type, name) || {};
             if (schema.visible) {
                 const label = schema.label ? schema.label : name;
                 if (!weights.has(label)) {
                     const array = weights.get(label);
                     const tensor = new hailo.Tensor(array, value);
-                    acc.push(new hailo.Argument(label, [ values.map('', tensor.type, tensor) ]));
+                    acc.push(new hailo.Argument(label, [values.map('', tensor.type, tensor)]));
                 }
             }
             return acc;
         }, []);
-        const params_from_npz = Array.from(weights).filter(([, value]) => value).map(([ name, value ]) => {
+        const params_from_npz = Array.from(weights).filter(([, value]) => value).map(([name, value]) => {
             const tensor = new hailo.Tensor(value);
-            return new hailo.Argument(name, [ values.map('', tensor.type, tensor) ]);
+            return new hailo.Argument(name, [values.map('', tensor.type, tensor)]);
         });
         this.inputs = this.inputs.concat(params_list).concat(params_from_npz);
         this.outputs = (layer.output || []).map((_, index) => {
             const shape = layer.output_shapes ? layer.output_shapes[index] : null;
             const type = shape ? new hailo.TensorType('?', new hailo.TensorShape(shape)) : null;
-            return new hailo.Argument("output", [ values.map(layer.name, type) ]);
+            return new hailo.Argument("output", [values.map(layer.name, type)]);
         });
         const attrs = Object.assign(layer.params || {}, { original_names: layer.original_names || [] });
         this.attributes = Object.entries(attrs).map(([name, value]) => new hailo.Attribute(metadata.attribute(layer.type, name), name, value));
@@ -178,8 +193,8 @@ hailo.Tensor = class {
         this.type = new hailo.TensorType(dataType, new hailo.TensorShape(shape));
         if (array) {
             this.stride = array.strides.map((stride) => stride / array.itemsize);
-            this.layout = this.type.dataType == 'string' || this.type.dataType == 'object' ? '|' : array.dtype.byteorder;
-            this.values = this.type.dataType == 'string' || this.type.dataType == 'object' ? array.tolist() : array.tobytes();
+            this.layout = this.type.dataType === 'string' || this.type.dataType === 'object' ? '|' : array.dtype.byteorder;
+            this.values = this.type.dataType === 'string' || this.type.dataType === 'object' ? array.tolist() : array.tobytes();
         }
     }
 };
@@ -253,15 +268,16 @@ hailo.Container = class {
     }
 
     constructor(context, basename, configuration, metadata) {
-        this._context = context;
-        this._basename = basename;
+        this.type = metadata ? 'hailo.metadata' : configuration ? 'hailo.configuration' : 'hailo';
+        this.context = context;
+        this.basename = basename;
         this.configuration = configuration;
         this.metadata = metadata;
     }
 
     async _request(name, type) {
         try {
-            const content = await this._context.fetch(name);
+            const content = await this.context.fetch(name);
             if (content) {
                 return content.read(type);
             }
@@ -275,7 +291,7 @@ hailo.Container = class {
         this.format = 'Hailo NN';
         this.weights = new Map();
         if (!this.metadata) {
-            this.metadata = await this._request(`${this._basename}.metadata.json`, 'json');
+            this.metadata = await this._request(`${this.basename}.metadata.json`, 'json');
         }
         if (this.metadata) {
             this.format = 'Hailo Archive';
@@ -290,11 +306,12 @@ hailo.Container = class {
                 case 'compiled_model': extension = '.q.npz'; break;
                 default: extension = '.npz'; break;
             }
-            const entries = await this._request(this._basename + extension, 'npz');
+            const entries = await this._request(this.basename + extension, 'npz');
             if (entries && entries.size > 0) {
                 const inputs = new Set([
                     'kernel', 'bias',
-                    'input_activation_bits', 'output_activation_bits', 'weight_bits', 'bias_decomposition'
+                    'input_activation_bits', 'output_activation_bits',
+                    'weight_bits', 'bias_decomposition'
                 ]);
                 for (const [name, value] of entries) {
                     const key = name.split('.').slice(0, -1).join('.');
@@ -313,6 +330,8 @@ hailo.Container = class {
                 }
             }
         }
+        delete this.context;
+        delete this.basename;
     }
 };
 

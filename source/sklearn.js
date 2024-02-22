@@ -23,40 +23,43 @@ sklearn.ModelFactory = class {
         ];
         for (const format of formats) {
             if (validate(obj, format.name)) {
-                return format.format;
+                context.type = format.format;
+                context.target = obj;
+                return;
             }
             if (Array.isArray(obj) && obj.length > 0 && obj.every((item) => validate(item, format.name))) {
-                return `${format.format}.list`;
+                context.type = `${format.format}.list`;
+                context.target = obj;
+                return;
             }
             if (Object(obj) === obj) {
                 const entries = Object.entries(obj);
                 if (entries.length > 0 && entries.every(([, value]) => validate(value, format.name))) {
-                    return `${format.format}.map`;
+                    context.type = `${format.format}.map`;
+                    context.target = obj;
                 }
             }
         }
-        return null;
     }
 
-    async open(context, target) {
+    async open(context) {
         const metadata = await context.metadata('sklearn-metadata.json');
-        const obj = context.peek('pkl');
-        return new sklearn.Model(metadata, target, obj);
+        return new sklearn.Model(metadata, context.type, context.target);
     }
 };
 
 sklearn.Model = class {
 
-    constructor(metadata, target, obj) {
+    constructor(metadata, type, obj) {
         const formats = new Map([
-            [ 'sklearn', 'scikit-learn' ],
-            [ 'scipy', 'SciPy' ],
-            [ 'hmmlearn', 'hmmlearn' ]
+            ['sklearn', 'scikit-learn'],
+            ['scipy', 'SciPy'],
+            ['hmmlearn', 'hmmlearn']
         ]);
-        this.format = formats.get(target.split('.').shift());
+        this.format = formats.get(type.split('.').shift());
         this.graphs = [];
         const version = [];
-        switch (target) {
+        switch (type) {
             case 'sklearn':
             case 'scipy':
             case 'hmmlearn': {
@@ -89,7 +92,7 @@ sklearn.Model = class {
                 break;
             }
             default: {
-                throw new sklearn.Error(`Unsupported scikit-learn format '${target}'.`);
+                throw new sklearn.Error(`Unsupported scikit-learn format '${type}'.`);
             }
         }
         if (version.length > 0 && version.every((value) => value === version[0])) {
@@ -134,10 +137,10 @@ sklearn.Graph = class {
                     name = name || 'union';
                     const output = concat(group, name);
                     const subgroup = concat(group, name);
-                    const node = new sklearn.Node(metadata, subgroup, output, obj, inputs, [ output ], values);
+                    const node = new sklearn.Node(metadata, subgroup, output, obj, inputs, [output], values);
                     this.nodes.push(node);
                     for (const transformer of obj.transformer_list) {
-                        outputs.push(...process(subgroup, transformer[0], transformer[1], [ output ]));
+                        outputs.push(...process(subgroup, transformer[0], transformer[1], [output]));
                     }
                     return outputs;
                 }
@@ -147,20 +150,20 @@ sklearn.Graph = class {
                     const output = concat(group, name);
                     const subgroup = concat(group, name);
                     const outputs = [];
-                    const node = new sklearn.Node(metadata, subgroup, output, obj, inputs, [ output ], values);
+                    const node = new sklearn.Node(metadata, subgroup, output, obj, inputs, [output], values);
                     this.nodes.push(node);
                     for (const transformer of obj.transformers) {
                         if (transformer[1] !== 'passthrough') {
-                            outputs.push(...process(subgroup, transformer[0], transformer[1], [ output ]));
+                            outputs.push(...process(subgroup, transformer[0], transformer[1], [output]));
                         }
                     }
                     return outputs;
                 }
                 default: {
                     const output = concat(group, name);
-                    const node = new sklearn.Node(metadata, group, output, obj, inputs, output === '' ? [] : [ output ], values);
+                    const node = new sklearn.Node(metadata, group, output, obj, inputs, output === '' ? [] : [output], values);
                     this.nodes.push(node);
-                    return [ output ];
+                    return [output];
                 }
             }
         };
@@ -202,8 +205,8 @@ sklearn.Node = class {
         this.name = name || '';
         const type = obj.__class__ ? `${obj.__class__.__module__}.${obj.__class__.__name__}` : 'builtins.dict';
         this.type = metadata.type(type) || { name: type };
-        this.inputs = inputs.map((input) => new sklearn.Argument(input, [ values.map(input) ]));
-        this.outputs = outputs.map((output) => new sklearn.Argument(output, [ values.map(output) ]));
+        this.inputs = inputs.map((input) => new sklearn.Argument(input, [values.map(input)]));
+        this.outputs = outputs.map((output) => new sklearn.Argument(output, [values.map(output)]));
         this.attributes = [];
         const isArray = (obj) => {
             return obj && obj.__class__ &&
@@ -268,14 +271,14 @@ sklearn.Node = class {
                         if (schema.type) {
                             type = schema.type;
                         }
-                        if (schema.visible === false || (schema.optional && value == null)) {
+                        if (schema.visible === false || (schema.optional && value === null)) {
                             visible = false;
                         } else if (schema.default !== undefined) {
                             if (Array.isArray(value)) {
                                 if (Array.isArray(schema.default)) {
-                                    visible = value.length !== schema.default || !value.every((item, index) => item == metadata.default[index]);
+                                    visible = value.length !== schema.default || !value.every((item, index) => item === metadata.default[index]);
                                 } else {
-                                    visible = !value.every((item) => item == schema.default);
+                                    visible = !value.every((item) => item === schema.default);
                                 }
                             } else {
                                 visible = value !== schema.default;
@@ -312,8 +315,8 @@ sklearn.Tensor = class {
     constructor(array) {
         this.type = new sklearn.TensorType(array.dtype.__name__, new sklearn.TensorShape(array.shape));
         this.stride = array.strides.map((stride) => stride / array.itemsize);
-        this.encoding = this.type.dataType == 'string' || this.type.dataType == 'object' ? '|' : array.dtype.byteorder;
-        this.values = this.type.dataType == 'string' || this.type.dataType == 'object' ? array.tolist() : array.tobytes();
+        this.encoding = this.type.dataType === 'string' || this.type.dataType === 'object' ? '|' : array.dtype.byteorder;
+        this.values = this.type.dataType === 'string' || this.type.dataType === 'object' ? array.tolist() : array.tobytes();
     }
 };
 
