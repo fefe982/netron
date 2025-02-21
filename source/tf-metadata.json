@@ -2364,7 +2364,7 @@
   {
     "name": "AsString",
     "summary": "Converts each entry in the given tensor to strings.",
-    "description": "Supports many numeric types and boolean.\n\nFor Unicode, see the\n[https://www.tensorflow.org/tutorials/representation/unicode](Working with Unicode text)\ntutorial.\n\nExamples:\n\n>>> tf.strings.as_string([3, 2])\n<tf.Tensor: shape=(2,), dtype=string, numpy=array([b'3', b'2'], dtype=object)>\n>>> tf.strings.as_string([3.1415926, 2.71828], precision=2).numpy()\narray([b'3.14', b'2.72'], dtype=object)",
+    "description": "Supports many numeric types and boolean.\n\nFor Unicode, see the\n[https://www.tensorflow.org/text/guide/unicode](Working with Unicode text)\ntutorial.\n\nExamples:\n\n>>> tf.strings.as_string([3, 2])\n<tf.Tensor: shape=(2,), dtype=string, numpy=array([b'3', b'2'], dtype=object)>\n>>> tf.strings.as_string([3.1415926, 2.71828], precision=2).numpy()\narray([b'3.14', b'2.72'], dtype=object)",
     "attributes": [
       {
         "name": "T",
@@ -2823,11 +2823,12 @@
     "inputs": [
       {
         "name": "resource",
-        "description": "Resource variable for concatenated input tensors across all dimensions.\n  }\n  in_arg {\n    name: \"inputs\"\n    description: <<END\nInput tensor slices in row-major order to merge across all dimensions. All\ninputs must have the same shape.\n  }\n  out_arg {\n    name: \"output\"\n    description: <<END\nOutput tensor formed from merging input slices based on num_concats defined.",
+        "description": "Resource variable for concatenated input tensors across all dimensions.",
         "type": 20
       },
       {
         "name": "inputs",
+        "description": "Input tensor slices in row-major order to merge across all dimensions. All\ninputs must have the same shape.",
         "numberAttr": "N",
         "typeAttr": "T"
       }
@@ -3838,6 +3839,18 @@
         "default": 0
       },
       {
+        "name": "mixed_priority_policy",
+        "type": "string",
+        "description": "Must be one of the following: `low_priority_padding_with_max_batch_size`, `low_priority_padding_with_next_allowed_batch_size`, `priority_isolation`, `priority_merge`.",
+        "default": "low_priority_padding_with_max_batch_size"
+      },
+      {
+        "name": "batch_padding_policy",
+        "type": "string",
+        "description": "Must be one of the following: `PAD_UP`, `BATCH_DOWN`, `MINIMIZE_TPU_COST_PER_REQUEST`.",
+        "default": "PAD_UP"
+      },
+      {
         "name": "Tin",
         "type": "type[]",
         "description": "the types of tensors to be batched.",
@@ -4191,6 +4204,7 @@
   },
   {
     "name": "BatchMatrixInverse",
+    "description": "DEPRECATED: This operation is deprecated and will be removed in a future version.\nUse tf.linalg.inv instead.\n\nComputes the inverse of one or more square invertible matrices or their\nadjoints (conjugate transposes).",
     "attributes": [
       {
         "name": "adjoint",
@@ -7891,6 +7905,29 @@
     ]
   },
   {
+    "name": "CheckPinned",
+    "summary": "Checks whether a tensor is located in host memory pinned for GPU.",
+    "description": "When run:\n- Reports an `InvalidArgument` error if `tensor` is not in pinned memory.\n- Reports a `FailedPrecondition` error if not built with CUDA.",
+    "attributes": [
+      {
+        "name": "T",
+        "type": "type"
+      }
+    ],
+    "inputs": [
+      {
+        "name": "tensor",
+        "typeAttr": "T"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "output",
+        "typeAttr": "T"
+      }
+    ]
+  },
+  {
     "name": "Cholesky",
     "summary": "Computes the Cholesky decomposition of one or more square matrices.",
     "description": "The input is a tensor of shape `[..., M, M]` whose inner-most 2 dimensions\nform square matrices.\n\nThe input has to be symmetric and positive definite. Only the lower-triangular\npart of the input will be used for this operation. The upper-triangular part\nwill not be read.\n\nThe output is a tensor of the same shape as the input\ncontaining the Cholesky decompositions for all input submatrices `[..., :, :]`.\n\n**Note**: The gradient computation on GPU is faster for large matrices but\nnot for large batch dimensions when the submatrices are small. In this\ncase it might be faster to use the CPU.",
@@ -9193,6 +9230,40 @@
     ]
   },
   {
+    "name": "ComputeDedupDataSizeV2",
+    "summary": "An op computes the size of the deduplication data from embedding core and returns the updated config.",
+    "description": "This op is to compute size of the deduplication data so to provide this\ninformation to the op that computes the tuple mask of deduplication data can\nhave static output shape.",
+    "attributes": [
+      {
+        "name": "config",
+        "type": "string",
+        "description": "Serialized TPUEmbeddingConfiguration proto."
+      },
+      {
+        "name": "embedding_partitions",
+        "type": "string",
+        "description": "Serialized EmbeddingPartitionsProto proto."
+      },
+      {
+        "name": "hbm_buffers_config",
+        "type": "string",
+        "description": "Serialized HbmBuffersConfig proto."
+      },
+      {
+        "name": "tpu_topology",
+        "type": "string",
+        "description": "Serialized TpuTopologyArgsProto proto."
+      }
+    ],
+    "outputs": [
+      {
+        "name": "num_elements",
+        "description": "The size of the deduplicated data from infeed.",
+        "type": 3
+      }
+    ]
+  },
+  {
     "name": "ComputeDedupDataTupleMask",
     "summary": "An op computes tuple mask of deduplication data from embedding core.",
     "description": "The deduplication data receiving from embedding core is a Tensor with\ntype=DT_VARIANT. The tensor itself is an XLA nested tuple, whose elements are\nrank 1 tensors. This op is to represents types and length of these elements.",
@@ -9201,6 +9272,40 @@
         "name": "config",
         "type": "string",
         "description": "Serialized TPUEmbeddingConfiguration proto."
+      }
+    ],
+    "outputs": [
+      {
+        "name": "output_shape",
+        "description": "A 2-D int tensor represent mask of deduplication data tuple generated by\n`XlaRecvTPUEmbeddingDeduplicationData`. The tuple has several integer and float\ntype 1-D tensor tuple elements. The first dimenion of this output_shape 2-D\ntensor is tensor type of tuple elements, `0` represents integer tensor, `1`\nrepresents float tensor. The second dimension of `output_shape` gives length of\neach tuple element.",
+        "type": 3
+      }
+    ]
+  },
+  {
+    "name": "ComputeDedupDataTupleMaskV2",
+    "summary": "An op computes tuple mask of deduplication data from embedding core.",
+    "description": "The deduplication data receiving from embedding core is a Tensor with\ntype=DT_VARIANT. The tensor itself is an XLA nested tuple, whose elements are\nrank 1 tensors. This op is to represents types and length of these elements.",
+    "attributes": [
+      {
+        "name": "config",
+        "type": "string",
+        "description": "Serialized TPUEmbeddingConfiguration proto."
+      },
+      {
+        "name": "embedding_partitions",
+        "type": "string",
+        "description": "Serialized EmbeddingPartitionsProto proto."
+      },
+      {
+        "name": "hbm_buffers_config",
+        "type": "string",
+        "description": "Serialized HbmBuffersConfig proto."
+      },
+      {
+        "name": "tpu_topology",
+        "type": "string",
+        "description": "Serialized TpuTopologyArgsProto proto."
       }
     ],
     "outputs": [
@@ -9250,7 +9355,7 @@
   {
     "name": "ConcatOffset",
     "summary": "Computes offsets of concat inputs within its output.",
-    "description": "For example:\n\n>>> x = [2, 2, 7]\n>>> y = [2, 3, 7]\n>>> z = [2, 9, 7]\n>>> offsets = concat_offset(1, [x, y, z])\n>>> [list(off.numpy()) for off in offsets]\n[[0, 0, 0], [0, 2, 0], [0, 5, 0]]\n\nThis is typically used by gradient computations for a concat operation.",
+    "description": "For example:\n\n>>> x = [2, 2, 7]\n>>> y = [2, 3, 7]\n>>> z = [2, 9, 7]\n>>> offsets = concat_offset(1, [x, y, z])\n>>> [[a.item() for a in list(off.numpy())] for off in offsets]\n[[0, 0, 0], [0, 2, 0], [0, 5, 0]]\n\nThis is typically used by gradient computations for a concat operation.",
     "attributes": [
       {
         "name": "N",
@@ -10438,6 +10543,185 @@
       {
         "name": "gains",
         "type": 1
+      }
+    ]
+  },
+  {
+    "name": "ConvertToListOfSparseCoreCooTensors",
+    "attributes": [
+      {
+        "name": "sample_count",
+        "type": "int64",
+        "minimum": 1
+      },
+      {
+        "name": "num_sc_per_chip",
+        "type": "int64",
+        "minimum": 1
+      },
+      {
+        "name": "row_offset",
+        "type": "int64",
+        "minimum": 0
+      },
+      {
+        "name": "col_offset",
+        "type": "int64",
+        "minimum": 0
+      },
+      {
+        "name": "col_shift",
+        "type": "int64",
+        "minimum": 0
+      },
+      {
+        "name": "num_sc_shards",
+        "type": "int64",
+        "minimum": 1
+      },
+      {
+        "name": "stacked_table_sample_count",
+        "type": "int64",
+        "minimum": 1
+      },
+      {
+        "name": "combiner",
+        "type": "string"
+      }
+    ],
+    "inputs": [
+      {
+        "name": "indices_or_row_splits",
+        "type": 3
+      },
+      {
+        "name": "values",
+        "type": 3
+      },
+      {
+        "name": "weights",
+        "type": 1
+      }
+    ],
+    "outputs": [
+      {
+        "name": "row_ids_list",
+        "numberAttr": "num_sc_per_chip",
+        "type": 3
+      },
+      {
+        "name": "col_ids_list",
+        "numberAttr": "num_sc_per_chip",
+        "type": 3
+      },
+      {
+        "name": "gains_list",
+        "numberAttr": "num_sc_per_chip",
+        "type": 1
+      }
+    ]
+  },
+  {
+    "name": "ConvertToSparseCoreCsrWrappedCooTensor",
+    "attributes": [
+      {
+        "name": "sample_count_per_sc",
+        "type": "int64",
+        "minimum": 1
+      },
+      {
+        "name": "num_replica",
+        "type": "int64",
+        "minimum": 1
+      },
+      {
+        "name": "max_minibatches_per_sc",
+        "type": "int64",
+        "minimum": 1
+      },
+      {
+        "name": "max_ids_per_chip_per_sample",
+        "type": "int64",
+        "minimum": 1
+      },
+      {
+        "name": "table_vocab_size",
+        "type": "int64",
+        "minimum": 1
+      },
+      {
+        "name": "feature_width",
+        "type": "int64",
+        "minimum": 1
+      },
+      {
+        "name": "num_sc_per_chip",
+        "type": "int64",
+        "minimum": 1
+      },
+      {
+        "name": "table_name",
+        "type": "string"
+      },
+      {
+        "name": "allow_id_dropping",
+        "type": "boolean"
+      }
+    ],
+    "inputs": [
+      {
+        "name": "sorted_row_ids_list",
+        "numberAttr": "num_sc_per_chip",
+        "type": 3
+      },
+      {
+        "name": "sorted_col_ids_list",
+        "numberAttr": "num_sc_per_chip",
+        "type": 3
+      },
+      {
+        "name": "sorted_gains_list",
+        "numberAttr": "num_sc_per_chip",
+        "type": 1
+      },
+      {
+        "name": "id_counts_list",
+        "numberAttr": "num_sc_per_chip",
+        "type": 3
+      },
+      {
+        "name": "splits",
+        "type": 9
+      }
+    ],
+    "outputs": [
+      {
+        "name": "row_pointers",
+        "type": 3
+      },
+      {
+        "name": "sorted_sample_ids",
+        "type": 3
+      },
+      {
+        "name": "sorted_token_ids",
+        "type": 3
+      },
+      {
+        "name": "sorted_gains",
+        "type": 1
+      },
+      {
+        "name": "row_pointers_unpadded_size",
+        "type": 3
+      },
+      {
+        "name": "ids_unpadded_size",
+        "type": 3
+      },
+      {
+        "name": "num_minibatches_per_sc",
+        "type": 3
       }
     ]
   },
@@ -14321,7 +14605,7 @@
   },
   {
     "name": "Dequantize",
-    "category": "Tensor",
+    "category": "Quantization",
     "summary": "Dequantize the 'input' tensor into a float or bfloat16 Tensor.",
     "description": "[min_range, max_range] are scalar floats that specify the range for\nthe output. The 'mode' attribute controls exactly which calculations are\nused to convert the float values to their quantized equivalents.\n\nIn 'MIN_COMBINED' mode, each value of the tensor will undergo the following:\n\n```\nif T == qint8: in[i] += (range(T) + 1)/ 2.0\nout[i] = min_range + (in[i]* (max_range - min_range) / range(T))\n```\nhere `range(T) = numeric_limits<T>::max() - numeric_limits<T>::min()`\n\n*MIN_COMBINED Mode Example*\n\nIf the input comes from a QuantizedRelu6, the output type is\nquint8 (range of 0-255) but the possible range of QuantizedRelu6 is\n0-6.  The min_range and max_range values are therefore 0.0 and 6.0.\nDequantize on quint8 will take each value, cast to float, and multiply\nby 6 / 255.\nNote that if quantizedtype is qint8, the operation will additionally add\neach value by 128 prior to casting.\n\nIf the mode is 'MIN_FIRST', then this approach is used:\n\n```c++\nnum_discrete_values = 1 << (# of bits in T)\nrange_adjust = num_discrete_values / (num_discrete_values - 1)\nrange = (range_max - range_min) * range_adjust\nrange_scale = range / num_discrete_values\nconst double offset_input = static_cast<double>(input) - lowest_quantized;\nresult = range_min + ((input - numeric_limits<T>::min()) * range_scale)\n```\n\nIf the mode is `SCALED`, dequantization is performed by multiplying each\ninput value by a scaling_factor. (Thus an input of 0 always maps to 0.0).\n\nThe scaling_factor is determined from `min_range`, `max_range`, and\n`narrow_range` in a way that is compatible with `QuantizeAndDequantize{V2|V3}`\nand `QuantizeV2`, using the following algorithm:\n\n```c++\n\n  const int min_expected_T = std::numeric_limits<T>::min() +\n    (narrow_range ? 1 : 0);\n  const int max_expected_T = std::numeric_limits<T>::max();\n  const float max_expected_T = std::numeric_limits<float>::max();\n\n  const float scale_factor =\n    (std::numeric_limits<T>::min() == 0) ? (max_range / max_expected_T)\n                                         : std::max(min_range / min_expected_T,\n                                                    max_range / max_expected_T);\n```",
     "attributes": [
@@ -17174,6 +17458,11 @@
         "name": "preserve_cardinality",
         "type": "boolean",
         "default": false
+      },
+      {
+        "name": "force_synchronous",
+        "type": "boolean",
+        "default": false
       }
     ],
     "inputs": [
@@ -18536,7 +18825,7 @@
     "outputs": [
       {
         "name": "backprops",
-        "description": "Backpropagated gradients below the FakeQuantWithMinMaxArgs operation:\n`gradients * (inputs >= min && inputs <= max)`.",
+        "description": "Backpropagated gradients below the FakeQuantWithMinMaxArgs operation:\n`gradients * (inputs >= min && inputs <= max)`.\n\n```\nimport tensorflow as tf\n\n# Define some sample data\ngradients = tf.random.uniform((2, 3), minval=-5.0, maxval=5.0, dtype=tf.float32)\ninputs = tf.random.uniform((2, 3), minval=-10.0, maxval=10.0, dtype=tf.float32)\n\n# Define quantization parameters (adjust as needed)\nmin_val = -2.0\nmax_val = 8.0\nnum_bits = 4  # Number of bits for quantization\n\n# Calculate gradients for fake quantization with specified parameters\noutput_gradients = tf.quantization.fake_quant_with_min_max_args_gradient(\n    gradients=gradients, inputs=inputs, min=min_val, max=max_val, num_bits=num_bits, narrow_range = False, name=None\n)\n\n# Print the original gradients and the gradients after the fake-quant operation\nprint(\"Original Gradients:\")\nprint(gradients)\nprint(\"\\nGradients after Fake-Quantization:\")\nprint(output_gradients)\n\n```\n#Original Gradients:\n#tf.Tensor(\n#[[ 1.242547    3.217492    3.568469  ]\n#[-0.55371046  0.23130894  2.608243  ]], shape=(2, 3), dtype=float32)\n\n#Gradients after Fake-Quantization:\n#tf.Tensor(\n#[[ 0.          3.217492    3.568469  ]\n# [-0.55371046  0.23130894  2.608243  ]], shape=(2, 3), dtype=float32)\n",
         "type": 1
       }
     ]
@@ -18544,7 +18833,7 @@
   {
     "name": "FakeQuantWithMinMaxVars",
     "summary": "Fake-quantize the 'inputs' tensor of type float via global float scalars",
-    "description": "Fake-quantize the `inputs` tensor of type float via global float scalars\n`min` and `max` to `outputs` tensor of same shape as `inputs`.\n\nAttributes\n\n*   `[min; max]` define the clamping range for the `inputs` data.\n*   `inputs` values are quantized into the quantization range (\n`[0; 2^num_bits - 1]` when `narrow_range` is false and `[1; 2^num_bits - 1]`\nwhen it is true) and then de-quantized and output as floats in `[min; max]`\ninterval.\n*   `num_bits` is the bitwidth of the quantization; between 2 and 16, inclusive.\n\nBefore quantization, `min` and `max` values are adjusted with the following\nlogic.\nIt is suggested to have `min <= 0 <= max`. If `0` is not in the range of values,\nthe behavior can be unexpected:\n\n*   If `0 < min < max`: `min_adj = 0` and `max_adj = max - min`.\n*   If `min < max < 0`: `min_adj = min - max` and `max_adj = 0`.\n*   If `min <= 0 <= max`: `scale = (max - min) / (2^num_bits - 1) `,\n`min_adj = scale * round(min / scale)` and `max_adj = max + min_adj - min`.\n\nThis operation has a gradient and thus allows for training `min` and `max`\nvalues.",
+    "description": "Fake-quantize the `inputs` tensor of type float via global float scalars\n`min` and `max` to `outputs` tensor of same shape as `inputs`.\n\nAttributes\n\n*   `[min; max]` define the clamping range for the `inputs` data.\n*   `inputs` values are quantized into the quantization range (\n`[0; 2^num_bits - 1]` when `narrow_range` is false and `[1; 2^num_bits - 1]`\nwhen it is true) and then de-quantized and output as floats in `[min; max]`\ninterval.\n*   `num_bits` is the bitwidth of the quantization; between 2 and 16, inclusive.\n\nBefore quantization, `min` and `max` values are adjusted with the following\nlogic.\nIt is suggested to have `min <= 0 <= max`. If `0` is not in the range of values,\nthe behavior can be unexpected:\n\n*   If `0 < min < max`: `min_adj = 0` and `max_adj = max - min`.\n*   If `min < max < 0`: `min_adj = min - max` and `max_adj = 0`.\n*   If `min <= 0 <= max`: `scale = (max - min) / (2^num_bits - 1) `,\n`min_adj = scale * round(min / scale)` and `max_adj = max + min_adj - min`.\n\nThis operation has a gradient and thus allows for training `min` and `max`\nvalues.\n\n>>> constant_input = tf.constant([[1.2, -0.3, 0.7], [2.1, 0.5, -1.0]], dtype=tf.float32)\n>>>\n>>> min_val = -0.5\n>>> max_val = 0.8\n>>> num_bits = 8\n>>> narrow_range = False #False:for the quantization range [0; 2^num_bits - 1]\n>>>\n>>> quantized_data = tf.quantization.fake_quant_with_min_max_vars(\n...   inputs=constant_input, min=min_val, max=max_val, num_bits=num_bits, narrow_range=narrow_range\n... )\n>>>\n>>> print(\"Input:\\n\", constant_input.numpy())\nInput:\n[[ 1.2 -0.3  0.7]\n[ 2.1  0.5 -1. ]]\n>>> print(\"Output:\\n\", quantized_data.numpy())\nOutput:\n[[ 0.8003921 -0.3007843  0.6984313]\n[ 0.8003921  0.4996078 -0.4996078]]\n",
     "attributes": [
       {
         "name": "num_bits",
@@ -18924,6 +19213,34 @@
       {
         "name": "memory_config",
         "description": "A string-encoded memory config proto containing metadata about\nthe memory allocations reserved for TPUEmbedding.",
+        "type": 7
+      }
+    ]
+  },
+  {
+    "name": "FinalizeTPUEmbeddingV2",
+    "summary": "An op that finalizes the TPUEmbedding configuration.",
+    "inputs": [
+      {
+        "name": "common_config",
+        "description": "A string-encoded common configuration proto containing metadata\nabout the TPUEmbedding partitioner output and the HBM size (in bytes) required\nfor operation.",
+        "type": 7
+      },
+      {
+        "name": "memory_config",
+        "description": "A string-encoded memory config proto containing metadata about\nthe memory allocations reserved for TPUEmbedding.",
+        "type": 7
+      }
+    ],
+    "outputs": [
+      {
+        "name": "embedding_partitions",
+        "description": "A string-encoded embedding partitions proto describing how embedding tables are\npartitioned along their feature and ID.",
+        "type": 7
+      },
+      {
+        "name": "hbm_buffers_config",
+        "description": "A string-encoded HBM buffers config proto specifies where HBM buffers are\nlocated.",
         "type": 7
       }
     ]
@@ -20553,7 +20870,7 @@
   {
     "name": "GatherNd",
     "summary": "Gather slices from `params` into a Tensor with shape specified by `indices`.",
-    "description": "`indices` is a K-dimensional integer tensor, best thought of as a\n(K-1)-dimensional tensor of indices into `params`, where each element defines a\nslice of `params`:\n\n    output[\\\\(i_0, ..., i_{K-2}\\\\)] = params[indices[\\\\(i_0, ..., i_{K-2}\\\\)]]\n\nWhereas in `tf.gather` `indices` defines slices into the `axis`\ndimension of `params`, in `tf.gather_nd`, `indices` defines slices into the\nfirst `N` dimensions of `params`, where `N = indices.shape[-1]`.\n\nThe last dimension of `indices` can be at most the rank of\n`params`:\n\n    indices.shape[-1] <= params.rank\n\nThe last dimension of `indices` corresponds to elements\n(if `indices.shape[-1] == params.rank`) or slices\n(if `indices.shape[-1] < params.rank`) along dimension `indices.shape[-1]`\nof `params`.  The output tensor has shape\n\n    indices.shape[:-1] + params.shape[indices.shape[-1]:]\n\nNote that on CPU, if an out of bound index is found, an error is returned.\nOn GPU, if an out of bound index is found, a 0 is stored in the\ncorresponding output value.\n\nSome examples below.\n\nSimple indexing into a matrix:\n\n```python\n    indices = [[0, 0], [1, 1]]\n    params = [['a', 'b'], ['c', 'd']]\n    output = ['a', 'd']\n```\n\nSlice indexing into a matrix:\n\n```python\n    indices = [[1], [0]]\n    params = [['a', 'b'], ['c', 'd']]\n    output = [['c', 'd'], ['a', 'b']]\n```\n\nIndexing into a 3-tensor:\n\n```python\n    indices = [[1]]\n    params = [[['a0', 'b0'], ['c0', 'd0']],\n              [['a1', 'b1'], ['c1', 'd1']]]\n    output = [[['a1', 'b1'], ['c1', 'd1']]]\n\n\n    indices = [[0, 1], [1, 0]]\n    params = [[['a0', 'b0'], ['c0', 'd0']],\n              [['a1', 'b1'], ['c1', 'd1']]]\n    output = [['c0', 'd0'], ['a1', 'b1']]\n\n\n    indices = [[0, 0, 1], [1, 0, 1]]\n    params = [[['a0', 'b0'], ['c0', 'd0']],\n              [['a1', 'b1'], ['c1', 'd1']]]\n    output = ['b0', 'b1']\n```\n\nBatched indexing into a matrix:\n\n```python\n    indices = [[[0, 0]], [[0, 1]]]\n    params = [['a', 'b'], ['c', 'd']]\n    output = [['a'], ['b']]\n```\n\nBatched slice indexing into a matrix:\n\n```python\n    indices = [[[1]], [[0]]]\n    params = [['a', 'b'], ['c', 'd']]\n    output = [[['c', 'd']], [['a', 'b']]]\n```\n\nBatched indexing into a 3-tensor:\n\n```python\n    indices = [[[1]], [[0]]]\n    params = [[['a0', 'b0'], ['c0', 'd0']],\n              [['a1', 'b1'], ['c1', 'd1']]]\n    output = [[[['a1', 'b1'], ['c1', 'd1']]],\n              [[['a0', 'b0'], ['c0', 'd0']]]]\n\n    indices = [[[0, 1], [1, 0]], [[0, 0], [1, 1]]]\n    params = [[['a0', 'b0'], ['c0', 'd0']],\n              [['a1', 'b1'], ['c1', 'd1']]]\n    output = [[['c0', 'd0'], ['a1', 'b1']],\n              [['a0', 'b0'], ['c1', 'd1']]]\n\n\n    indices = [[[0, 0, 1], [1, 0, 1]], [[0, 1, 1], [1, 1, 0]]]\n    params = [[['a0', 'b0'], ['c0', 'd0']],\n              [['a1', 'b1'], ['c1', 'd1']]]\n    output = [['b0', 'b1'], ['d0', 'c1']]\n```\n\nSee also `tf.gather` and `tf.batch_gather`.",
+    "description": "`indices` is a K-dimensional integer tensor, best thought of as a\n(K-1)-dimensional tensor of indices into `params`, where each element defines a\nslice of `params`:\n\n    output[\\\\(i_0, ..., i_{K-2}\\\\)] = params[indices[\\\\(i_0, ..., i_{K-2}\\\\)]]\n\nWhereas in `tf.gather` `indices` defines slices into the `axis`\ndimension of `params`, in `tf.gather_nd`, `indices` defines slices into the\nfirst `N` dimensions of `params`, where `N = indices.shape[-1]`.\n\nThe last dimension of `indices` can be at most the rank of\n`params`:\n\n    indices.shape[-1] <= params.rank\n\nThe last dimension of `indices` corresponds to elements\n(if `indices.shape[-1] == params.rank`) or slices\n(if `indices.shape[-1] < params.rank`) along dimension `indices.shape[-1]`\nof `params`.  The output tensor has shape\n\n    indices.shape[:-1] + params.shape[indices.shape[-1]:]\n\nIf `indices` contains any out-of-bound indices, depending on\n`bad_indices_policy`, the op will either return an error or ignore the\nout-of-bound indices. `bad_indices_policy` can be one of the following values:\n1. \"\" or \"DEFAULT\": raises on CPU and ignore on GPU. This is because\n   historically on CPU and GPU we handle errors in different ways, and for\n   backward compatibility we keep the default behavior.\n2. \"ERROR\": raises error; GPU does not support this value.\n3. \"IGNORE\": ignore error and set the corresponding output to 0;\n   supported on both CPU and GPU.\n\nSome examples below.\n\nSimple indexing into a matrix:\n\n```python\n    indices = [[0, 0], [1, 1]]\n    params = [['a', 'b'], ['c', 'd']]\n    output = ['a', 'd']\n```\n\nSlice indexing into a matrix:\n\n```python\n    indices = [[1], [0]]\n    params = [['a', 'b'], ['c', 'd']]\n    output = [['c', 'd'], ['a', 'b']]\n```\n\nIndexing into a 3-tensor:\n\n```python\n    indices = [[1]]\n    params = [[['a0', 'b0'], ['c0', 'd0']],\n              [['a1', 'b1'], ['c1', 'd1']]]\n    output = [[['a1', 'b1'], ['c1', 'd1']]]\n\n\n    indices = [[0, 1], [1, 0]]\n    params = [[['a0', 'b0'], ['c0', 'd0']],\n              [['a1', 'b1'], ['c1', 'd1']]]\n    output = [['c0', 'd0'], ['a1', 'b1']]\n\n\n    indices = [[0, 0, 1], [1, 0, 1]]\n    params = [[['a0', 'b0'], ['c0', 'd0']],\n              [['a1', 'b1'], ['c1', 'd1']]]\n    output = ['b0', 'b1']\n```\n\nBatched indexing into a matrix:\n\n```python\n    indices = [[[0, 0]], [[0, 1]]]\n    params = [['a', 'b'], ['c', 'd']]\n    output = [['a'], ['b']]\n```\n\nBatched slice indexing into a matrix:\n\n```python\n    indices = [[[1]], [[0]]]\n    params = [['a', 'b'], ['c', 'd']]\n    output = [[['c', 'd']], [['a', 'b']]]\n```\n\nBatched indexing into a 3-tensor:\n\n```python\n    indices = [[[1]], [[0]]]\n    params = [[['a0', 'b0'], ['c0', 'd0']],\n              [['a1', 'b1'], ['c1', 'd1']]]\n    output = [[[['a1', 'b1'], ['c1', 'd1']]],\n              [[['a0', 'b0'], ['c0', 'd0']]]]\n\n    indices = [[[0, 1], [1, 0]], [[0, 0], [1, 1]]]\n    params = [[['a0', 'b0'], ['c0', 'd0']],\n              [['a1', 'b1'], ['c1', 'd1']]]\n    output = [[['c0', 'd0'], ['a1', 'b1']],\n              [['a0', 'b0'], ['c1', 'd1']]]\n\n\n    indices = [[[0, 0, 1], [1, 0, 1]], [[0, 1, 1], [1, 1, 0]]]\n    params = [[['a0', 'b0'], ['c0', 'd0']],\n              [['a1', 'b1'], ['c1', 'd1']]]\n    output = [['b0', 'b1'], ['d0', 'c1']]\n```\n\nSee also `tf.gather` and `tf.batch_gather`.",
     "attributes": [
       {
         "name": "Tparams",
@@ -20563,6 +20880,11 @@
         "name": "Tindices",
         "type": "type",
         "description": "Must be one of the following: `int16`, `int32`, `int64`."
+      },
+      {
+        "name": "bad_indices_policy",
+        "type": "string",
+        "default": ""
       }
     ],
     "inputs": [
@@ -20588,7 +20910,7 @@
   {
     "name": "GatherV2",
     "summary": "Gather slices from `params` axis `axis` according to `indices`.",
-    "description": "`indices` must be an integer tensor of any dimension (usually 0-D or 1-D).\nProduces an output tensor with shape `params.shape[:axis] +\nindices.shape[batch_dims:] + params.shape[axis + 1:]` where:\n\n```python\n    # Scalar indices (output is rank(params) - 1).\n    output[a_0, ..., a_n, b_0, ..., b_n] =\n      params[a_0, ..., a_n, indices, b_0, ..., b_n]\n\n    # Vector indices (output is rank(params)).\n    output[a_0, ..., a_n, i, b_0, ..., b_n] =\n      params[a_0, ..., a_n, indices[i], b_0, ..., b_n]\n\n    # Higher rank indices (output is rank(params) + rank(indices) - 1).\n    output[a_0, ..., a_n, i, ..., j, b_0, ... b_n] =\n      params[a_0, ..., a_n, indices[i, ..., j], b_0, ..., b_n]\n```\n\n<div style=\"width:70%; margin:auto; margin-bottom:10px; margin-top:20px;\">\n<img style=\"width:100%\" src=\"https://www.tensorflow.org/images/Gather.png\" alt>\n</div>\n\nNote that on CPU, if an out of bound index is found, an error is returned.\nOn GPU, if an out of bound index is found, a 0 is stored in the\ncorresponding output value.\n\nSee also `tf.batch_gather` and `tf.gather_nd`.",
+    "description": "`indices` must be an integer tensor of any dimension (usually 0-D or 1-D).\nProduces an output tensor with shape `params.shape[:axis] +\nindices.shape[batch_dims:] + params.shape[axis + 1:]` where:\n\n```python\n    # Scalar indices (output is rank(params) - 1).\n    output[a_0, ..., a_n, b_0, ..., b_n] =\n      params[a_0, ..., a_n, indices, b_0, ..., b_n]\n\n    # Vector indices (output is rank(params)).\n    output[a_0, ..., a_n, i, b_0, ..., b_n] =\n      params[a_0, ..., a_n, indices[i], b_0, ..., b_n]\n\n    # Higher rank indices (output is rank(params) + rank(indices) - 1).\n    output[a_0, ..., a_n, i, ..., j, b_0, ... b_n] =\n      params[a_0, ..., a_n, indices[i, ..., j], b_0, ..., b_n]\n```\n\n<div style=\"width:70%; margin:auto; margin-bottom:10px; margin-top:20px;\">\n<img style=\"width:100%\" src=\"https://www.tensorflow.org/images/Gather.png\" alt>\n</div>\n\nNote that on CPU, if an out of bound index is found, an error is returned.\nOn GPU, if an out of bound index is found, a 0 is stored in the\ncorresponding output value.\n\nNote that on TPU, if any dimension of `params` is of size 0 then the output will\nbe the expected shape filled with zeros. On CPU and GPU an error will be\nreturned.\n\nSee also `tf.batch_gather` and `tf.gather_nd`.",
     "attributes": [
       {
         "name": "batch_dims",
@@ -21124,6 +21446,87 @@
         "name": "value",
         "description": "The tensor for the given handle.",
         "typeAttr": "dtype"
+      }
+    ]
+  },
+  {
+    "name": "GetStatsFromListOfSparseCoreCooTensors",
+    "attributes": [
+      {
+        "name": "sample_count_list",
+        "type": "int64[]"
+      },
+      {
+        "name": "col_offset_list",
+        "type": "int64[]"
+      },
+      {
+        "name": "num_replica",
+        "type": "int64",
+        "minimum": 1
+      },
+      {
+        "name": "table_vocab_size",
+        "type": "int64",
+        "minimum": 1
+      },
+      {
+        "name": "feature_width",
+        "type": "int64",
+        "minimum": 1
+      },
+      {
+        "name": "num_sc_per_chip",
+        "type": "int64",
+        "minimum": 1
+      },
+      {
+        "name": "table_name",
+        "type": "string"
+      },
+      {
+        "name": "N",
+        "type": "int64",
+        "minimum": 1
+      }
+    ],
+    "inputs": [
+      {
+        "name": "row_ids_list",
+        "numberAttr": "N",
+        "type": 3
+      },
+      {
+        "name": "col_ids_list",
+        "numberAttr": "N",
+        "type": 3
+      },
+      {
+        "name": "gains_list",
+        "numberAttr": "N",
+        "type": 1
+      }
+    ],
+    "outputs": [
+      {
+        "name": "max_ids_per_sparse_core",
+        "type": 3
+      },
+      {
+        "name": "max_unique_ids_per_sparse_core",
+        "type": 3
+      }
+    ]
+  },
+  {
+    "name": "GetTpuTaskId",
+    "summary": "An op returns the TPU task ID from TPU topology.",
+    "description": "This op is to return the TPU task ID from TPU topology.",
+    "outputs": [
+      {
+        "name": "tpu_task_id",
+        "description": "The TPU task ID from TPU topology.",
+        "type": 3
       }
     ]
   },
@@ -22536,6 +22939,68 @@
     ]
   },
   {
+    "name": "IndexFlatMapDataset",
+    "attributes": [
+      {
+        "name": "map_func",
+        "type": "function"
+      },
+      {
+        "name": "index_map_func",
+        "type": "function"
+      },
+      {
+        "name": "Tmap_func_args",
+        "type": "type[]",
+        "minimum": 0
+      },
+      {
+        "name": "Tindex_map_func_args",
+        "type": "type[]",
+        "minimum": 0
+      },
+      {
+        "name": "output_types",
+        "type": "type[]",
+        "minimum": 1
+      },
+      {
+        "name": "output_shapes",
+        "type": "shape[]",
+        "minimum": 1
+      },
+      {
+        "name": "metadata",
+        "type": "string",
+        "default": ""
+      }
+    ],
+    "inputs": [
+      {
+        "name": "input_dataset",
+        "type": 21
+      },
+      {
+        "name": "map_func_other_args",
+        "typeListAttr": "Tmap_func_args"
+      },
+      {
+        "name": "index_map_func_other_args",
+        "typeListAttr": "Tindex_map_func_args"
+      },
+      {
+        "name": "output_cardinality",
+        "type": 9
+      }
+    ],
+    "outputs": [
+      {
+        "name": "handle",
+        "type": 21
+      }
+    ]
+  },
+  {
     "name": "InfeedDequeue",
     "summary": "A placeholder op for a value that will be fed into the computation.",
     "attributes": [
@@ -23414,6 +23879,25 @@
     "outputs": [
       {
         "name": "device",
+        "type": 7
+      }
+    ]
+  },
+  {
+    "name": "IteratorGetModelProto",
+    "summary": "Returns the serialized model proto of an iterator resource.",
+    "description": "Returns the serialized model proto of an iterator resource.",
+    "inputs": [
+      {
+        "name": "iterator",
+        "description": "An resource from an dataset iterator.",
+        "type": 20
+      }
+    ],
+    "outputs": [
+      {
+        "name": "model_proto",
+        "description": "A serialized model proto.",
         "type": 7
       }
     ]
@@ -26162,6 +26646,11 @@
       },
       {
         "name": "preserve_cardinality",
+        "type": "boolean",
+        "default": false
+      },
+      {
+        "name": "force_synchronous",
         "type": "boolean",
         "default": false
       },
@@ -31667,6 +32156,11 @@
         "default": false
       },
       {
+        "name": "use_unbounded_threadpool",
+        "type": "boolean",
+        "default": false
+      },
+      {
         "name": "metadata",
         "type": "string",
         "default": ""
@@ -33488,6 +33982,7 @@
   },
   {
     "name": "QuantizeAndDequantize",
+    "category": "Quantization",
     "summary": "Use QuantizeAndDequantizeV2 instead.",
     "attributes": [
       {
@@ -33536,6 +34031,7 @@
   },
   {
     "name": "QuantizeAndDequantizeV2",
+    "category": "Quantization",
     "summary": "Quantizes then dequantizes a tensor.",
     "description": "This op simulates the precision loss from the quantized forward pass by:\n\n1. Quantizing the tensor to fixed point numbers, which should match the target\n   quantization method when it is used in inference.\n2. Dequantizing it back to floating point numbers for the following ops, most\n   likely matmul.\n\nThere are different ways to quantize. This version uses only scaling, so 0.0\nmaps to 0.\n\nFrom the specified 'num_bits' in the quantized output type, it determines\nminimum and maximum representable quantized values.\n\ne.g.\n\n*   [-128, 127] for signed, num_bits = 8, or\n*   [0, 255] for unsigned, num_bits = 8.\n\nIf range_given == False, the initial input_min, input_max will be determined\nautomatically as the minimum and maximum values in the input tensor, otherwise\nthe specified values of input_min, input_max are used.\n\nNote: If the input_min, input_max are specified, they do not need to equal the\nactual minimum and maximum values in the tensor. e.g. in some cases it may be\nbeneficial to specify these values such that the low probability extremes of the\ninput distribution are clipped.\n\nThis op determines the maximum scale_factor that would map the initial\n[input_min, input_max] range to a range that lies within the representable\nquantized range.\n\nIt determines the scale from one of input_min and input_max, then updates the\nother one to maximize the representable range.\n\ne.g.\n\n*   if the output is signed, num_bits = 8, [input_min, input_max] = [-10.0,\n    5.0]: it would use a scale_factor of -128 / -10.0 = 12.8 In this case, it\n    would update input_max to be 127 / 12.8 = 9.921875\n*   if the output is signed, num_bits = 8, [input_min, input_max] = [-10.0,\n    10.0]: it would use a scale_factor of 127 / 10.0 = 12.7 In this case, it\n    would update input_min to be 128.0 / 12.7 = -10.07874\n*   if the output is unsigned, input_min is forced to be 0, and only the\n    specified input_max is used.\n\nAfter determining the scale_factor and updating the input range, it applies the\nfollowing to each value in the 'input' tensor.\n\noutput = round(clamp(value, input_min, input_max) * scale_factor) / scale_factor.\n\nThe above round function rounds the value based on the given round_mode.\n",
     "attributes": [
@@ -33607,6 +34103,7 @@
   },
   {
     "name": "QuantizeAndDequantizeV3",
+    "category": "Quantization",
     "summary": "Quantizes then dequantizes a tensor.",
     "description": "This is almost identical to QuantizeAndDequantizeV2, except that num_bits is a\ntensor, so its value can change during training.",
     "attributes": [
@@ -33663,6 +34160,7 @@
   },
   {
     "name": "QuantizeAndDequantizeV4",
+    "category": "Quantization",
     "summary": "Quantizes then dequantizes a tensor.",
     "description": "This is almost identical to QuantizeAndDequantizeV2, except that it returns a\ngradient of 1 for inputs that are within the quantization range, or 0 otherwise.",
     "attributes": [
@@ -33734,6 +34232,7 @@
   },
   {
     "name": "QuantizeAndDequantizeV4Grad",
+    "category": "Quantization",
     "summary": "Returns the gradient of `QuantizeAndDequantizeV4`.",
     "description": "Returns a gradient of 1 for inputs that are within the quantization range,\nor 0 otherwise.",
     "attributes": [
@@ -33783,6 +34282,7 @@
   },
   {
     "name": "QuantizeDownAndShrinkRange",
+    "category": "Quantization",
     "summary": "Convert the quantized 'input' tensor into a lower-precision 'output', using the",
     "description": "actual distribution of the values to maximize the usage of the lower bit depth\nand adjusting the output min and max ranges accordingly.\n\n[input_min, input_max] are scalar floats that specify the range for the float\ninterpretation of the 'input' data. For example, if input_min is -1.0f and\ninput_max is 1.0f, and we are dealing with quint16 quantized data, then a 0\nvalue in the 16-bit data should be interpreted as -1.0f, and a 65535 means 1.0f.\n\nThis operator tries to squeeze as much precision as possible into an output with\na lower bit depth by calculating the actual min and max values found in the\ndata. For example, maybe that quint16 input has no values lower than 16,384 and\nnone higher than 49,152. That means only half the range is actually needed, all\nthe float interpretations are between -0.5f and 0.5f, so if we want to compress\nthe data into a quint8 output, we can use that range rather than the theoretical\n-1.0f to 1.0f that is suggested by the input min and max.\n\nIn practice, this is most useful for taking output from operations like\nQuantizedMatMul that can produce higher bit-depth outputs than their inputs and\nmay have large potential output ranges, but in practice have a distribution of\ninput values that only uses a small fraction of the possible range. By feeding\nthat output into this operator, we can reduce it from 32 bits down to 8 with\nminimal loss of accuracy.",
     "attributes": [
@@ -33832,6 +34332,7 @@
   },
   {
     "name": "QuantizeV2",
+    "category": "Quantization",
     "summary": "Quantize the 'input' tensor of type float to 'output' tensor of type 'T'.",
     "description": "[min_range, max_range] are scalar floats that specify the range for\nthe 'input' data. The 'mode' attribute controls exactly which calculations are\nused to convert the float values to their quantized equivalents.  The\n'round_mode' attribute controls which rounding tie-breaking algorithm is used\nwhen rounding float values to their quantized equivalents.\n\nIn 'MIN_COMBINED' mode, each value of the tensor will undergo the following:\n\n```\nout[i] = (in[i] - min_range) * range(T) / (max_range - min_range)\nif T == qint8: out[i] -= (range(T) + 1) / 2.0\n```\n\nhere `range(T) = numeric_limits<T>::max() - numeric_limits<T>::min()`\n\n*MIN_COMBINED Mode Example*\n\nAssume the input is type float and has a possible range of [0.0, 6.0] and the\noutput type is quint8 ([0, 255]). The min_range and max_range values should be\nspecified as 0.0 and 6.0. Quantizing from float to quint8 will multiply each\nvalue of the input by 255/6 and cast to quint8.\n\nIf the output type was qint8 ([-128, 127]), the operation will additionally\nsubtract each value by 128 prior to casting, so that the range of values aligns\nwith the range of qint8.\n\nIf the mode is 'MIN_FIRST', then this approach is used:\n\n```\nnum_discrete_values = 1 << (# of bits in T)\nrange_adjust = num_discrete_values / (num_discrete_values - 1)\nrange = (range_max - range_min) * range_adjust\nrange_scale = num_discrete_values / range\nquantized = round(input * range_scale) - round(range_min * range_scale) +\n  numeric_limits<T>::min()\nquantized = max(quantized, numeric_limits<T>::min())\nquantized = min(quantized, numeric_limits<T>::max())\n```\n\nThe biggest difference between this and MIN_COMBINED is that the minimum range\nis rounded first, before it's subtracted from the rounded value. With\nMIN_COMBINED, a small bias is introduced where repeated iterations of quantizing\nand dequantizing will introduce a larger and larger error.\n\n*SCALED mode Example*\n\n`SCALED` mode matches the quantization approach used in\n`QuantizeAndDequantize{V2|V3}`.\n\nIf the mode is `SCALED`, the quantization is performed by multiplying each\ninput value by a scaling_factor.\nThe scaling_factor is determined from `min_range` and `max_range` to be as large\nas possible such that the range from `min_range` to `max_range` is representable\nwithin values of type T.\n\n```c++\n\n  const int min_T = std::numeric_limits<T>::min();\n  const int max_T = std::numeric_limits<T>::max();\n  const float max_float = std::numeric_limits<float>::max();\n\n  const float scale_factor_from_min_side =\n      (min_T * min_range > 0) ? min_T / min_range : max_float;\n  const float scale_factor_from_max_side =\n      (max_T * max_range > 0) ? max_T / max_range : max_float;\n\n  const float scale_factor = std::min(scale_factor_from_min_side,\n                                      scale_factor_from_max_side);\n```\n\nWe next use the scale_factor to adjust min_range and max_range as follows:\n\n```c++\n      min_range = min_T / scale_factor;\n      max_range = max_T / scale_factor;\n```\n\n\ne.g. if T = qint8, and initially min_range = -10, and max_range = 9, we would\ncompare -128/-10.0 = 12.8 to 127/9.0 = 14.11, and set scaling_factor = 12.8\nIn this case, min_range would remain -10, but max_range would be adjusted to\n127 / 12.8 = 9.921875\n\nSo we will quantize input values in the range (-10, 9.921875) to (-128, 127).\n\nThe input tensor can now be quantized by clipping values to the range\n`min_range` to `max_range`, then multiplying by scale_factor as follows:\n\n```c++\nresult = round(min(max_range, max(min_range, input)) * scale_factor)\n```\n\nThe adjusted `min_range` and `max_range` are returned as outputs 2 and 3 of\nthis operation. These outputs should be used as the range for any further\ncalculations.\n\n\n*narrow_range (bool) attribute*\n\nIf true, we do not use the minimum quantized value.\ni.e. for int8 the quantized output, it would be restricted to the range\n-127..127 instead of the full -128..127 range.\nThis is provided for compatibility with certain inference backends.\n(Only applies to SCALED mode)\n\n\n*axis (int) attribute*\n\nAn optional `axis` attribute can specify a dimension index of the input tensor,\nsuch that quantization ranges will be calculated and applied separately for each\nslice of the tensor along that dimension. This is useful for per-channel\nquantization.\n\nIf axis is specified, min_range and max_range\n\nif `axis`=None, per-tensor quantization is performed as normal.\n\n\n*ensure_minimum_range (float) attribute*\n\nEnsures the minimum quantization range is at least this value.\nThe legacy default value for this is 0.01, but it is strongly suggested to\nset it to 0 for new uses.\n",
     "attributes": [
@@ -39169,13 +39670,14 @@
     "inputs": [
       {
         "name": "resource",
-        "description": "Resource variable of input tensor to split across all dimensions.\n  }\n  out_arg {\n    name: \"outputs\"\n    description: <<END\nOutput slices based on input and num_splits defined, in row-major order.",
+        "description": "Resource variable of input tensor to split across all dimensions.",
         "type": 20
       }
     ],
     "outputs": [
       {
         "name": "outputs",
+        "description": "Output slices based on input and num_splits defined, in row-major order.",
         "numberAttr": "N",
         "typeAttr": "T"
       }
@@ -42512,6 +43014,11 @@
         "type": "boolean",
         "description": "An optional bool. Defaults to True. If True, the assignment will\nbe protected by a lock; otherwise the behavior is undefined,\nbut may exhibit less contention.",
         "default": true
+      },
+      {
+        "name": "bad_indices_policy",
+        "type": "string",
+        "default": ""
       }
     ],
     "inputs": [
@@ -42549,6 +43056,11 @@
         "type": "boolean",
         "description": "An optional bool. Defaults to True. If True, the assignment will\nbe protected by a lock; otherwise the behavior is undefined,\nbut may exhibit less contention.",
         "default": true
+      },
+      {
+        "name": "bad_indices_policy",
+        "type": "string",
+        "default": ""
       }
     ],
     "inputs": [
@@ -42586,6 +43098,11 @@
         "type": "boolean",
         "description": "An optional bool. Defaults to True. If True, the assignment will\nbe protected by a lock; otherwise the behavior is undefined,\nbut may exhibit less contention.",
         "default": true
+      },
+      {
+        "name": "bad_indices_policy",
+        "type": "string",
+        "default": ""
       }
     ],
     "inputs": [
@@ -42625,6 +43142,11 @@
         "type": "boolean",
         "description": "An optional bool. Defaults to True. If True, the assignment will\nbe protected by a lock; otherwise the behavior is undefined,\nbut may exhibit less contention.",
         "default": true
+      },
+      {
+        "name": "bad_indices_policy",
+        "type": "string",
+        "default": ""
       }
     ],
     "inputs": [
@@ -42664,6 +43186,11 @@
         "type": "boolean",
         "description": "An optional bool. Defaults to True. If True, the assignment will\nbe protected by a lock; otherwise the behavior is undefined,\nbut may exhibit less contention.",
         "default": true
+      },
+      {
+        "name": "bad_indices_policy",
+        "type": "string",
+        "default": ""
       }
     ],
     "inputs": [
@@ -47052,7 +47579,7 @@
   {
     "name": "ScatterNd",
     "summary": "Scatters `updates` into a tensor of shape `shape` according to `indices`.",
-    "description": "Scatter sparse `updates` according to individual values at the specified\n`indices`. This op returns an output tensor with the `shape` you specify. This\nop is the inverse of the `tf.gather_nd` operator which extracts values or slices\nfrom a given tensor.\n\nThis operation is similar to `tf.tensor_scatter_nd_add`, except that the tensor\nis zero-initialized. Calling `tf.scatter_nd(indices, updates, shape)`\nis identical to calling\n`tf.tensor_scatter_nd_add(tf.zeros(shape, updates.dtype), indices, updates)`\n\nIf `indices` contains duplicates, the associated `updates` are accumulated\n(summed) into the output tensor.\n\n**WARNING**: For floating-point data types, the output may be nondeterministic.\nThis is because the order in which the updates are applied is nondeterministic\nand when floating-point numbers are added in different orders the resulting\nnumerical approximation error can be slightly different. However, the output\nwill be deterministic if op determinism is enabled via\n`tf.config.experimental.enable_op_determinism`.\n\n`indices` is an integer tensor containing indices into the output tensor. The\nlast dimension of `indices` can be at most the rank of `shape`:\n\n    indices.shape[-1] <= shape.rank\n\nThe last dimension of `indices` corresponds to indices of elements\n(if `indices.shape[-1] = shape.rank`) or slices\n(if `indices.shape[-1] < shape.rank`) along dimension `indices.shape[-1]` of\n`shape`.\n\n`updates` is a tensor with shape:\n\n    indices.shape[:-1] + shape[indices.shape[-1]:]\n\nThe simplest form of the scatter op is to insert individual elements in\na tensor by index. Consider an example where you want to insert 4 scattered\nelements in a rank-1 tensor with 8 elements.\n\n<div style=\"width:70%; margin:auto; margin-bottom:10px; margin-top:20px;\">\n<img style=\"width:100%\" src=\"https://www.tensorflow.org/images/ScatterNd1.png\" alt>\n</div>\n\nIn Python, this scatter operation would look like this:\n\n```python\n    indices = tf.constant([[4], [3], [1], [7]])\n    updates = tf.constant([9, 10, 11, 12])\n    shape = tf.constant([8])\n    scatter = tf.scatter_nd(indices, updates, shape)\n    print(scatter)\n```\n\nThe resulting tensor would look like this:\n\n    [0, 11, 0, 10, 9, 0, 0, 12]\n\nYou can also insert entire slices of a higher rank tensor all at once. For\nexample, you can insert two slices in the first dimension of a rank-3 tensor\nwith two matrices of new values.\n\n<div style=\"width:70%; margin:auto; margin-bottom:10px; margin-top:20px;\">\n<img style=\"width:100%\" src=\"https://www.tensorflow.org/images/ScatterNd2.png\" alt>\n</div>\n\nIn Python, this scatter operation would look like this:\n\n```python\n    indices = tf.constant([[1], [3]])\n    updates = tf.constant([[[5, 5, 5, 5], [6, 6, 6, 6],\n                            [7, 7, 7, 7], [8, 8, 8, 8]],\n                           [[5, 5, 5, 5], [6, 6, 6, 6],\n                            [7, 7, 7, 7], [8, 8, 8, 8]]])\n    shape = tf.constant([4, 4, 4])\n    scatter = tf.scatter_nd(indices, updates, shape)\n    print(scatter)\n```\n\nThe resulting tensor would look like this:\n\n    [[[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]],\n     [[5, 5, 5, 5], [6, 6, 6, 6], [7, 7, 7, 7], [8, 8, 8, 8]],\n     [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]],\n     [[5, 5, 5, 5], [6, 6, 6, 6], [7, 7, 7, 7], [8, 8, 8, 8]]]\n\nNote that on CPU, if an out of bound index is found, an error is returned.\nOn GPU, if an out of bound index is found, the index is ignored.",
+    "description": "Scatter sparse `updates` according to individual values at the specified\n`indices`. This op returns an output tensor with the `shape` you specify. This\nop is the inverse of the `tf.gather_nd` operator which extracts values or slices\nfrom a given tensor.\n\nThis operation is similar to `tf.tensor_scatter_nd_add`, except that the tensor\nis zero-initialized. Calling `tf.scatter_nd(indices, updates, shape)`\nis identical to calling\n`tf.tensor_scatter_nd_add(tf.zeros(shape, updates.dtype), indices, updates)`\n\nIf `indices` contains duplicates, the associated `updates` are accumulated\n(summed) into the output tensor.\n\n**WARNING**: For floating-point data types, the output may be nondeterministic.\nThis is because the order in which the updates are applied is nondeterministic\nand when floating-point numbers are added in different orders the resulting\nnumerical approximation error can be slightly different. However, the output\nwill be deterministic if op determinism is enabled via\n`tf.config.experimental.enable_op_determinism`.\n\n`indices` is an integer tensor containing indices into the output tensor. The\nlast dimension of `indices` can be at most the rank of `shape`:\n\n    indices.shape[-1] <= shape.rank\n\nThe last dimension of `indices` corresponds to indices of elements\n(if `indices.shape[-1] = shape.rank`) or slices\n(if `indices.shape[-1] < shape.rank`) along dimension `indices.shape[-1]` of\n`shape`.\n\n`updates` is a tensor with shape:\n\n    indices.shape[:-1] + shape[indices.shape[-1]:]\n\nThe simplest form of the scatter op is to insert individual elements in\na tensor by index. Consider an example where you want to insert 4 scattered\nelements in a rank-1 tensor with 8 elements.\n\n<div style=\"width:70%; margin:auto; margin-bottom:10px; margin-top:20px;\">\n<img style=\"width:100%\" src=\"https://www.tensorflow.org/images/ScatterNd1.png\" alt>\n</div>\n\nIn Python, this scatter operation would look like this:\n\n```python\n    indices = tf.constant([[4], [3], [1], [7]])\n    updates = tf.constant([9, 10, 11, 12])\n    shape = tf.constant([8])\n    scatter = tf.scatter_nd(indices, updates, shape)\n    print(scatter)\n```\n\nThe resulting tensor would look like this:\n\n    [0, 11, 0, 10, 9, 0, 0, 12]\n\nYou can also insert entire slices of a higher rank tensor all at once. For\nexample, you can insert two slices in the first dimension of a rank-3 tensor\nwith two matrices of new values.\n\n<div style=\"width:70%; margin:auto; margin-bottom:10px; margin-top:20px;\">\n<img style=\"width:100%\" src=\"https://www.tensorflow.org/images/ScatterNd2.png\" alt>\n</div>\n\nIn Python, this scatter operation would look like this:\n\n```python\n    indices = tf.constant([[1], [3]])\n    updates = tf.constant([[[5, 5, 5, 5], [6, 6, 6, 6],\n                            [7, 7, 7, 7], [8, 8, 8, 8]],\n                           [[5, 5, 5, 5], [6, 6, 6, 6],\n                            [7, 7, 7, 7], [8, 8, 8, 8]]])\n    shape = tf.constant([4, 4, 4])\n    scatter = tf.scatter_nd(indices, updates, shape)\n    print(scatter)\n```\n\nThe resulting tensor would look like this:\n\n    [[[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]],\n     [[5, 5, 5, 5], [6, 6, 6, 6], [7, 7, 7, 7], [8, 8, 8, 8]],\n     [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]],\n     [[5, 5, 5, 5], [6, 6, 6, 6], [7, 7, 7, 7], [8, 8, 8, 8]]]\n\nIf `indices` contains any out-of-bound indices, depending on\n`bad_indices_policy`, the op will either return an error or ignore the\nout-of-bound indices. `bad_indices_policy` can be one of the following values:\n1. \"\" or \"DEFAULT\": raises on CPU and ignore on GPU. This is because\n   historically on CPU and GPU we handle errors in different ways, and for\n   backward compatibility we keep the default behavior.\n2. \"ERROR\": raises error; GPU does not support this value.\n3. \"IGNORE\": ignore the bad indices; supported on both CPU and GPU.",
     "attributes": [
       {
         "name": "T",
@@ -47062,6 +47589,11 @@
         "name": "Tindices",
         "type": "type",
         "description": "Must be one of the following: `int16`, `int32`, `int64`."
+      },
+      {
+        "name": "bad_indices_policy",
+        "type": "string",
+        "default": ""
       }
     ],
     "inputs": [
@@ -47109,6 +47641,11 @@
         "type": "boolean",
         "description": "An optional bool. Defaults to True. If True, the assignment will\nbe protected by a lock; otherwise the behavior is undefined,\nbut may exhibit less contention.",
         "default": false
+      },
+      {
+        "name": "bad_indices_policy",
+        "type": "string",
+        "default": ""
       }
     ],
     "inputs": [
@@ -47157,6 +47694,11 @@
         "type": "boolean",
         "description": "An optional bool. Defaults to True. If True, the assignment will\nbe protected by a lock; otherwise the behavior is undefined,\nbut may exhibit less contention.",
         "default": false
+      },
+      {
+        "name": "bad_indices_policy",
+        "type": "string",
+        "default": ""
       }
     ],
     "inputs": [
@@ -47205,6 +47747,11 @@
         "type": "boolean",
         "description": "An optional bool. Defaults to True. If True, the assignment will\nbe protected by a lock; otherwise the behavior is undefined,\nbut may exhibit less contention.",
         "default": false
+      },
+      {
+        "name": "bad_indices_policy",
+        "type": "string",
+        "default": ""
       }
     ],
     "inputs": [
@@ -47248,6 +47795,11 @@
         "name": "Tindices",
         "type": "type",
         "description": "Must be one of the following: `int32`, `int64`."
+      },
+      {
+        "name": "bad_indices_policy",
+        "type": "string",
+        "default": ""
       }
     ],
     "inputs": [
@@ -47295,6 +47847,11 @@
         "type": "boolean",
         "description": "An optional bool. Defaults to True. If True, the assignment will\nbe protected by a lock; otherwise the behavior is undefined,\nbut may exhibit less contention.",
         "default": false
+      },
+      {
+        "name": "bad_indices_policy",
+        "type": "string",
+        "default": ""
       }
     ],
     "inputs": [
@@ -47343,6 +47900,11 @@
         "type": "boolean",
         "description": "An optional bool. Defaults to True. If True, the assignment will\nbe protected by a lock; otherwise the behavior is undefined,\nbut may exhibit less contention.",
         "default": true
+      },
+      {
+        "name": "bad_indices_policy",
+        "type": "string",
+        "default": ""
       }
     ],
     "inputs": [
@@ -49989,6 +50551,93 @@
         "name": "backprops",
         "description": "The gradients: `gradients / (1 + abs(features)) ** 2`.",
         "typeAttr": "T"
+      }
+    ]
+  },
+  {
+    "name": "SortListOfSparseCoreCooTensors",
+    "attributes": [
+      {
+        "name": "sample_count_list",
+        "type": "int64[]"
+      },
+      {
+        "name": "col_offset_list",
+        "type": "int64[]"
+      },
+      {
+        "name": "num_replica",
+        "type": "int64",
+        "minimum": 1
+      },
+      {
+        "name": "table_vocab_size",
+        "type": "int64",
+        "minimum": 1
+      },
+      {
+        "name": "feature_width",
+        "type": "int64",
+        "minimum": 1
+      },
+      {
+        "name": "num_sc_per_chip",
+        "type": "int64",
+        "minimum": 1
+      },
+      {
+        "name": "max_ids_per_sparse_core",
+        "type": "int64",
+        "minimum": 1
+      },
+      {
+        "name": "max_unique_ids_per_sparse_core",
+        "type": "int64",
+        "minimum": 1
+      },
+      {
+        "name": "table_name",
+        "type": "string"
+      },
+      {
+        "name": "N",
+        "type": "int64",
+        "minimum": 1
+      }
+    ],
+    "inputs": [
+      {
+        "name": "row_ids_list",
+        "numberAttr": "N",
+        "type": 3
+      },
+      {
+        "name": "col_ids_list",
+        "numberAttr": "N",
+        "type": 3
+      },
+      {
+        "name": "gains_list",
+        "numberAttr": "N",
+        "type": 1
+      }
+    ],
+    "outputs": [
+      {
+        "name": "sorted_row_ids",
+        "type": 3
+      },
+      {
+        "name": "sorted_col_ids",
+        "type": 3
+      },
+      {
+        "name": "sorted_gains",
+        "type": 1
+      },
+      {
+        "name": "id_counts",
+        "type": 3
       }
     ]
   },
@@ -57133,7 +57782,7 @@
       {
         "name": "out_type",
         "type": "type",
-        "description": "The numeric type to interpret each string in `string_tensor` as. Must be one of the following: `float32`, `float64`, `int32`, `int64`.",
+        "description": "The numeric type to interpret each string in `string_tensor` as. Must be one of the following: `float32`, `float64`, `int32`, `int64`, `uint32`, `uint64`.",
         "default": {
           "type": "type",
           "value": 1
@@ -60335,7 +60984,7 @@
   {
     "name": "TensorScatterAdd",
     "summary": "Adds sparse `updates` to an existing tensor according to `indices`.",
-    "description": "This operation creates a new tensor by adding sparse `updates` to the passed\nin `tensor`.\nThis operation is very similar to `tf.compat.v1.scatter_nd_add`, except that the\nupdates are added onto an existing tensor (as opposed to a variable). If the\nmemory for the existing tensor cannot be re-used, a copy is made and updated.\n\n`indices` is an integer tensor containing indices into a new tensor of shape\n`tensor.shape`.  The last dimension of `indices` can be at most the rank of\n`tensor.shape`:\n\n```\nindices.shape[-1] <= tensor.shape.rank\n```\n\nThe last dimension of `indices` corresponds to indices into elements\n(if `indices.shape[-1] = tensor.shape.rank`) or slices\n(if `indices.shape[-1] < tensor.shape.rank`) along dimension\n`indices.shape[-1]` of `tensor.shape`.  `updates` is a tensor with shape\n\n```\nindices.shape[:-1] + tensor.shape[indices.shape[-1]:]\n```\n\nThe simplest form of `tensor_scatter_nd_add` is to add individual elements to a\ntensor by index. For example, say we want to add 4 elements in a rank-1\ntensor with 8 elements.\n\nIn Python, this scatter add operation would look like this:\n\n>>> indices = tf.constant([[4], [3], [1], [7]])\n>>> updates = tf.constant([9, 10, 11, 12])\n>>> tensor = tf.ones([8], dtype=tf.int32)\n>>> updated = tf.tensor_scatter_nd_add(tensor, indices, updates)\n>>> updated\n<tf.Tensor: shape=(8,), dtype=int32,\nnumpy=array([ 1, 12,  1, 11, 10,  1,  1, 13], dtype=int32)>\n\nWe can also, insert entire slices of a higher rank tensor all at once. For\nexample, if we wanted to insert two slices in the first dimension of a\nrank-3 tensor with two matrices of new values.\n\nIn Python, this scatter add operation would look like this:\n\n>>> indices = tf.constant([[0], [2]])\n>>> updates = tf.constant([[[5, 5, 5, 5], [6, 6, 6, 6],\n...                         [7, 7, 7, 7], [8, 8, 8, 8]],\n...                        [[5, 5, 5, 5], [6, 6, 6, 6],\n...                         [7, 7, 7, 7], [8, 8, 8, 8]]])\n>>> tensor = tf.ones([4, 4, 4],dtype=tf.int32)\n>>> updated = tf.tensor_scatter_nd_add(tensor, indices, updates)\n>>> updated\n<tf.Tensor: shape=(4, 4, 4), dtype=int32,\nnumpy=array([[[6, 6, 6, 6], [7, 7, 7, 7], [8, 8, 8, 8], [9, 9, 9, 9]],\n             [[1, 1, 1, 1], [1, 1, 1, 1], [1, 1, 1, 1], [1, 1, 1, 1]],\n             [[6, 6, 6, 6], [7, 7, 7, 7], [8, 8, 8, 8], [9, 9, 9, 9]],\n             [[1, 1, 1, 1], [1, 1, 1, 1], [1, 1, 1, 1], [1, 1, 1, 1]]], dtype=int32)>\n\nNote: on CPU, if an out of bound index is found, an error is returned.\nOn GPU, if an out of bound index is found, the index is ignored.",
+    "description": "This operation creates a new tensor by adding sparse `updates` to the passed\nin `tensor`.\nThis operation is very similar to `tf.compat.v1.scatter_nd_add`, except that the\nupdates are added onto an existing tensor (as opposed to a variable). If the\nmemory for the existing tensor cannot be re-used, a copy is made and updated.\n\n`indices` is an integer tensor containing indices into a new tensor of shape\n`tensor.shape`.  The last dimension of `indices` can be at most the rank of\n`tensor.shape`:\n\n```\nindices.shape[-1] <= tensor.shape.rank\n```\n\nThe last dimension of `indices` corresponds to indices into elements\n(if `indices.shape[-1] = tensor.shape.rank`) or slices\n(if `indices.shape[-1] < tensor.shape.rank`) along dimension\n`indices.shape[-1]` of `tensor.shape`.  `updates` is a tensor with shape\n\n```\nindices.shape[:-1] + tensor.shape[indices.shape[-1]:]\n```\n\nThe simplest form of `tensor_scatter_nd_add` is to add individual elements to a\ntensor by index. For example, say we want to add 4 elements in a rank-1\ntensor with 8 elements.\n\nIn Python, this scatter add operation would look like this:\n\n>>> indices = tf.constant([[4], [3], [1], [7]])\n>>> updates = tf.constant([9, 10, 11, 12])\n>>> tensor = tf.ones([8], dtype=tf.int32)\n>>> updated = tf.tensor_scatter_nd_add(tensor, indices, updates)\n>>> updated\n<tf.Tensor: shape=(8,), dtype=int32,\nnumpy=array([ 1, 12,  1, 11, 10,  1,  1, 13], dtype=int32)>\n\nWe can also, insert entire slices of a higher rank tensor all at once. For\nexample, if we wanted to insert two slices in the first dimension of a\nrank-3 tensor with two matrices of new values.\n\nIn Python, this scatter add operation would look like this:\n\n>>> indices = tf.constant([[0], [2]])\n>>> updates = tf.constant([[[5, 5, 5, 5], [6, 6, 6, 6],\n...                         [7, 7, 7, 7], [8, 8, 8, 8]],\n...                        [[5, 5, 5, 5], [6, 6, 6, 6],\n...                         [7, 7, 7, 7], [8, 8, 8, 8]]])\n>>> tensor = tf.ones([4, 4, 4],dtype=tf.int32)\n>>> updated = tf.tensor_scatter_nd_add(tensor, indices, updates)\n>>> updated\n<tf.Tensor: shape=(4, 4, 4), dtype=int32,\nnumpy=array([[[6, 6, 6, 6], [7, 7, 7, 7], [8, 8, 8, 8], [9, 9, 9, 9]],\n             [[1, 1, 1, 1], [1, 1, 1, 1], [1, 1, 1, 1], [1, 1, 1, 1]],\n             [[6, 6, 6, 6], [7, 7, 7, 7], [8, 8, 8, 8], [9, 9, 9, 9]],\n             [[1, 1, 1, 1], [1, 1, 1, 1], [1, 1, 1, 1], [1, 1, 1, 1]]], dtype=int32)>\n\n\nIf `indices` contains any out-of-bound indices, depending on\n`bad_indices_policy`, the op will either return an error or ignore the\nout-of-bound indices. `bad_indices_policy` can be one of the following values:\n1. \"\" or \"DEFAULT\": raises on CPU and ignore on GPU. This is because\n   historically on CPU and GPU we handle errors in different ways, and for\n   backward compatibility we keep the default behavior.\n2. \"ERROR\": raises error; GPU does not support this value.\n3. \"IGNORE\": ignore the bad indices; supported on both CPU and GPU.\n",
     "attributes": [
       {
         "name": "T",
@@ -60345,6 +60994,11 @@
         "name": "Tindices",
         "type": "type",
         "description": "Must be one of the following: `int32`, `int64`."
+      },
+      {
+        "name": "bad_indices_policy",
+        "type": "string",
+        "default": ""
       }
     ],
     "inputs": [
@@ -60385,6 +61039,11 @@
         "name": "Tindices",
         "type": "type",
         "description": "Must be one of the following: `int32`, `int64`."
+      },
+      {
+        "name": "bad_indices_policy",
+        "type": "string",
+        "default": ""
       }
     ],
     "inputs": [
@@ -60423,6 +61082,11 @@
         "name": "Tindices",
         "type": "type",
         "description": "Must be one of the following: `int32`, `int64`."
+      },
+      {
+        "name": "bad_indices_policy",
+        "type": "string",
+        "default": ""
       }
     ],
     "inputs": [
@@ -60463,6 +61127,11 @@
         "name": "Tindices",
         "type": "type",
         "description": "Must be one of the following: `int32`, `int64`."
+      },
+      {
+        "name": "bad_indices_policy",
+        "type": "string",
+        "default": ""
       }
     ],
     "inputs": [
@@ -60493,7 +61162,7 @@
   {
     "name": "TensorScatterUpdate",
     "summary": "Scatter `updates` into an existing tensor according to `indices`.",
-    "description": "This operation creates a new tensor by applying sparse `updates` to the passed\nin `tensor`.\nThis operation is very similar to `tf.scatter_nd`, except that the updates are\nscattered onto an existing tensor (as opposed to a zero-tensor). If the memory\nfor the existing tensor cannot be re-used, a copy is made and updated.\n\nIf `indices` contains duplicates, then we pick the last update for the index.\n\nIf an out of bound index is found on CPU, an error is returned.\n\n**WARNING**: There are some GPU specific semantics for this operation.\n- If an out of bound index is found, the index is ignored.\n- The order in which updates are applied is nondeterministic, so the output\nwill be nondeterministic if `indices` contains duplicates.\n\n`indices` is an integer tensor containing indices into a new tensor of shape\n`shape`.\n\n* `indices` must have at least 2 axes: `(num_updates, index_depth)`.\n* The last axis of `indices` is how deep to index into `tensor` so  this index\n  depth must be less than the rank of `tensor`: `indices.shape[-1] <= tensor.ndim`\n\nif `indices.shape[-1] = tensor.rank` this Op indexes and updates scalar elements.\nif `indices.shape[-1] < tensor.rank` it indexes and updates slices of the input\n`tensor`.\n\nEach `update` has a rank of `tensor.rank - indices.shape[-1]`.\nThe overall shape of `updates` is:\n\n```\nindices.shape[:-1] + tensor.shape[indices.shape[-1]:]\n```\n\nFor usage examples see the python [tf.tensor_scatter_nd_update](\nhttps://www.tensorflow.org/api_docs/python/tf/tensor_scatter_nd_update) function\n",
+    "description": "This operation creates a new tensor by applying sparse `updates` to the passed\nin `tensor`.\nThis operation is very similar to `tf.scatter_nd`, except that the updates are\nscattered onto an existing tensor (as opposed to a zero-tensor). If the memory\nfor the existing tensor cannot be re-used, a copy is made and updated.\n\nIf `indices` contains duplicates, then we pick the last update for the index.\n\n**WARNING**: There are some GPU specific semantics for this operation.\n- If an out of bound index is found, the index is ignored.\n- The order in which updates are applied is nondeterministic, so the output\nwill be nondeterministic if `indices` contains duplicates.\n\n`indices` is an integer tensor containing indices into a new tensor of shape\n`shape`.\n\n* `indices` must have at least 2 axes: `(num_updates, index_depth)`.\n* The last axis of `indices` is how deep to index into `tensor` so  this index\n  depth must be less than the rank of `tensor`: `indices.shape[-1] <= tensor.ndim`\n\nif `indices.shape[-1] = tensor.rank` this Op indexes and updates scalar elements.\nif `indices.shape[-1] < tensor.rank` it indexes and updates slices of the input\n`tensor`.\n\nEach `update` has a rank of `tensor.rank - indices.shape[-1]`.\nThe overall shape of `updates` is:\n\n```\nindices.shape[:-1] + tensor.shape[indices.shape[-1]:]\n```\n\nIf `indices` contains any out-of-bound indices, depending on\n`bad_indices_policy`, the op will either return an error or ignore the\nout-of-bound indices. `bad_indices_policy` can be one of the following values:\n1. \"\" or \"DEFAULT\": raises on CPU and ignore on GPU. This is because\n   historically on CPU and GPU we handle errors in different ways, and for\n   backward compatibility we keep the default behavior.\n2. \"ERROR\": raises error; GPU does not support this value.\n3. \"IGNORE\": ignore the bad indices; supported on both CPU and GPU.\n\nFor usage examples see the python [tf.tensor_scatter_nd_update](\nhttps://www.tensorflow.org/api_docs/python/tf/tensor_scatter_nd_update) function\n",
     "attributes": [
       {
         "name": "T",
@@ -60503,6 +61172,11 @@
         "name": "Tindices",
         "type": "type",
         "description": "Must be one of the following: `int16`, `int32`, `int64`, `uint16`."
+      },
+      {
+        "name": "bad_indices_policy",
+        "type": "string",
+        "default": ""
       }
     ],
     "inputs": [
@@ -61227,6 +61901,7 @@
   },
   {
     "name": "Transpose",
+    "category": "Transform",
     "summary": "Shuffle dimensions of x according to a permutation.",
     "description": "The output `y` has the same rank as `x`. The shapes of `x` and `y` satisfy:\n  `y.shape[i] == x.shape[perm[i]] for i in [0, 1, ..., rank(x) - 1]`",
     "attributes": [
@@ -63316,6 +63991,27 @@
     ]
   },
   {
+    "name": "UpdateTaskIdAndGlobalCoreArray",
+    "summary": "An op to update the task ID and global core array.",
+    "description": "This op is to update the task ID and global core array.",
+    "attributes": [
+      {
+        "name": "task_count",
+        "type": "int64",
+        "description": "The number of tasks.",
+        "minimum": 1
+      }
+    ],
+    "inputs": [
+      {
+        "name": "tpu_task_id_to_shard_id",
+        "description": "An array of int32 that maps TPU task ID to shard ID.",
+        "numberAttr": "task_count",
+        "type": 3
+      }
+    ]
+  },
+  {
     "name": "UpperBound",
     "summary": "Applies upper_bound(sorted_search_values, values) along each row.",
     "description": "Each set of rows with the same index in (sorted_inputs, values) is treated\nindependently.  The resulting row is the equivalent of calling\n`np.searchsorted(sorted_inputs, values, side='right')`.\n\nThe result is not a global index to the entire\n`Tensor`, but rather just the index in the last dimension.\n\nA 2-D example:\n  sorted_sequence = [[0, 3, 9, 9, 10],\n                     [1, 2, 3, 4, 5]]\n  values = [[2, 4, 9],\n            [0, 2, 6]]\n\n  result = UpperBound(sorted_sequence, values)\n\n  result == [[1, 2, 4],\n             [0, 2, 5]]",
@@ -63513,6 +64209,54 @@
         "description": "A reference to the variable tensor.",
         "typeAttr": "dtype",
         "isRef": true
+      }
+    ]
+  },
+  {
+    "name": "WeightedFlatMapDataset",
+    "attributes": [
+      {
+        "name": "N",
+        "type": "int64",
+        "minimum": 2
+      },
+      {
+        "name": "M",
+        "type": "int64",
+        "minimum": 2
+      },
+      {
+        "name": "output_types",
+        "type": "type[]",
+        "minimum": 1
+      },
+      {
+        "name": "output_shapes",
+        "type": "shape[]",
+        "minimum": 1
+      },
+      {
+        "name": "metadata",
+        "type": "string",
+        "default": ""
+      }
+    ],
+    "inputs": [
+      {
+        "name": "input_datasets",
+        "numberAttr": "N",
+        "type": 21
+      },
+      {
+        "name": "weights",
+        "numberAttr": "M",
+        "type": 2
+      }
+    ],
+    "outputs": [
+      {
+        "name": "handle",
+        "type": 21
       }
     ]
   },
@@ -64049,7 +64793,7 @@
     "inputs": [
       {
         "name": "inputs",
-        "description": "Input tensor slices in row-major order to merge across all dimensions. All\ninputs must have the same shape.\n  }\n  out_arg {\n    name: \"output\"\n    description: <<END\nOutput tensor formed from merging input slices based on num_concats defined.",
+        "description": "Input tensor slices in row-major order to merge across all dimensions. All\ninputs must have the same shape.",
         "numberAttr": "N",
         "typeAttr": "T"
       }
@@ -64057,6 +64801,7 @@
     "outputs": [
       {
         "name": "output",
+        "description": "Output tensor formed from merging input slices based on num_concats defined.",
         "typeAttr": "T"
       }
     ]
@@ -64196,6 +64941,54 @@
     ]
   },
   {
+    "name": "XlaRecvTPUEmbeddingActivationsV2",
+    "summary": "An op that receives embedding activations on the TPU.",
+    "description": "The TPU system performs the embedding lookups and aggregations. The results of\nthese aggregations are visible to the Tensorflow Graph as the outputs of a\nXlaRecvTPUEmbeddingActivations Op. This op returns a list containing one\nTensor of activations per table specified in the model.",
+    "attributes": [
+      {
+        "name": "num_tables",
+        "type": "int64",
+        "description": "The number of output activation tensors. If feature descriptor is\npresent in the tpu embedding config, it is equal to the number of features\notherwise equal to number of embedding tables in the model.",
+        "minimum": 1
+      },
+      {
+        "name": "config",
+        "type": "string",
+        "description": "Serialized TPUEmbeddingConfiguration proto."
+      },
+      {
+        "name": "embedding_partitions",
+        "type": "string",
+        "description": "Serialized EmbeddingPartitionsProto proto."
+      },
+      {
+        "name": "hbm_buffers_config",
+        "type": "string",
+        "description": "Serialized HbmBuffersConfig proto."
+      },
+      {
+        "name": "tpu_topology",
+        "type": "string",
+        "description": "Serialized TpuTopologyArgsProto proto."
+      }
+    ],
+    "inputs": [
+      {
+        "name": "deduplication_data",
+        "description": "A Tensor with type=DT_VARIANT containing the deduplication\ndata. The tensor is an XLA nested tuple containing N elements (where N is\nthe ratio of the number of embedding to tensor cores per TPU chip). Each\nelement of the nested tuple is a tuple of rank 1 tensors. Each tensor either\ncontains indices (DT_UINT32) for embedding lookup on the TensorCore or\nweights (DT_FLOAT) to apply to the output of the embedding lookup operation.",
+        "type": 21
+      }
+    ],
+    "outputs": [
+      {
+        "name": "outputs",
+        "description": "A TensorList of embedding activations containing one Tensor per\nembedding table in the model.",
+        "numberAttr": "num_tables",
+        "type": 1
+      }
+    ]
+  },
+  {
     "name": "XlaRecvTPUEmbeddingDeduplicationData",
     "summary": "Receives deduplication data (indices and weights) from the embedding core.",
     "description": "The deduplication data is a Tensor with type=DT_VARIANT. The tensor itself is an\nXLA nested tuple containing N elements (where N is the ratio of the number of\nembedding to tensor cores per TPU chip). Each element of the nested tuple is a\ntuple of rank 1 tensors. Each tensor either contains indices (DT_UINT32) for\nembedding lookup on the TensorCore or weights (DT_FLOAT) to apply to the output\nof the embedding lookup operation.",
@@ -64204,6 +64997,39 @@
         "name": "config",
         "type": "string",
         "description": "Serialized TPUEmbeddingConfiguration proto."
+      }
+    ],
+    "outputs": [
+      {
+        "name": "output",
+        "type": 21
+      }
+    ]
+  },
+  {
+    "name": "XlaRecvTPUEmbeddingDeduplicationDataV2",
+    "summary": "Receives deduplication data (indices and weights) from the embedding core.",
+    "description": "The deduplication data is a Tensor with type=DT_VARIANT. The tensor itself is an\nXLA nested tuple containing N elements (where N is the ratio of the number of\nembedding to tensor cores per TPU chip). Each element of the nested tuple is a\ntuple of rank 1 tensors. Each tensor either contains indices (DT_UINT32) for\nembedding lookup on the TensorCore or weights (DT_FLOAT) to apply to the output\nof the embedding lookup operation.",
+    "attributes": [
+      {
+        "name": "config",
+        "type": "string",
+        "description": "Serialized TPUEmbeddingConfiguration proto."
+      },
+      {
+        "name": "embedding_partitions",
+        "type": "string",
+        "description": "Serialized EmbeddingPartitionsProto proto."
+      },
+      {
+        "name": "hbm_buffers_config",
+        "type": "string",
+        "description": "Serialized HbmBuffersConfig proto."
+      },
+      {
+        "name": "tpu_topology",
+        "type": "string",
+        "description": "Serialized TpuTopologyArgsProto proto."
       }
     ],
     "outputs": [
@@ -64235,6 +65061,65 @@
         "name": "config",
         "type": "string",
         "description": "Serialized TPUEmbeddingConfiguration proto."
+      }
+    ],
+    "inputs": [
+      {
+        "name": "gradients",
+        "description": "A TensorList of gradients with which to update embedding tables.",
+        "numberAttr": "NumTables",
+        "type": 1
+      },
+      {
+        "name": "learning_rates",
+        "description": "A TensorList of learning rates used for updating the embedding\ntables via the optimizer. The length of the TensorList must be equal to the\nnumber of dynamic learning rate tags specified in the\nTPUEmbeddingConfiguration proto.",
+        "numberAttr": "NumLearningRateTags",
+        "type": 1
+      },
+      {
+        "name": "deduplication_data",
+        "description": "A Tensor with type=DT_VARIANT containing the deduplication\ndata. The tensor is an XLA nested tuple containing N elements (where N is\nthe ratio of the number of embedding to tensor cores per TPU chip). Each\nelement of the nested tuple is a tuple of rank 1 tensors. Each tensor either\ncontains indices (DT_UINT32) for embedding lookup on the TensorCore or\nweights (DT_FLOAT) to apply to the output of the embedding lookup operation.",
+        "type": 21
+      }
+    ]
+  },
+  {
+    "name": "XlaSendTPUEmbeddingGradientsV2",
+    "summary": "An op that performs gradient updates of embedding tables.",
+    "description": "The gradients argument is a TensorList having the same length and shapes as the\nreturn value of XlaRecvTPUEmbeddingActivations, but contains gradients of the\nmodel's loss with respect to the embedding activations. The embedding tables are\nupdated from these gradients via the optimizer specified in the\nTPUEmbeddingConfiguration proto given to tpu.initialize_system.",
+    "attributes": [
+      {
+        "name": "NumTables",
+        "type": "int64",
+        "description": "number of tables",
+        "minimum": 1
+      },
+      {
+        "name": "NumLearningRateTags",
+        "type": "int64",
+        "description": "number of learning rate tags",
+        "minimum": 0,
+        "default": 0
+      },
+      {
+        "name": "config",
+        "type": "string",
+        "description": "Serialized TPUEmbeddingConfiguration proto."
+      },
+      {
+        "name": "embedding_partitions",
+        "type": "string",
+        "description": "Serialized EmbeddingPartitionsProto proto."
+      },
+      {
+        "name": "hbm_buffers_config",
+        "type": "string",
+        "description": "Serialized HbmBuffersConfig proto."
+      },
+      {
+        "name": "tpu_topology",
+        "type": "string",
+        "description": "Serialized TpuTopologyArgsProto proto."
       }
     ],
     "inputs": [
@@ -64687,6 +65572,83 @@
     ]
   },
   {
+    "name": "XlaSparseDenseMatmulGradWithAdagradAndStaticBufferSize",
+    "attributes": [
+      {
+        "name": "clip_weight_min",
+        "type": "float32",
+        "default": "-NaN"
+      },
+      {
+        "name": "clip_weight_max",
+        "type": "float32",
+        "default": "NaN"
+      },
+      {
+        "name": "max_ids_per_sparse_core",
+        "type": "int64",
+        "minimum": 1
+      },
+      {
+        "name": "max_unique_ids_per_sparse_core",
+        "type": "int64",
+        "minimum": 1
+      },
+      {
+        "name": "table_name",
+        "type": "string"
+      }
+    ],
+    "inputs": [
+      {
+        "name": "row_pointers",
+        "type": 3
+      },
+      {
+        "name": "sorted_sample_ids",
+        "type": 3
+      },
+      {
+        "name": "sorted_token_ids",
+        "type": 3
+      },
+      {
+        "name": "sorted_gains",
+        "type": 1
+      },
+      {
+        "name": "activation_gradients",
+        "type": 1
+      },
+      {
+        "name": "learning_rate",
+        "type": 1
+      },
+      {
+        "name": "embedding_table",
+        "type": 1
+      },
+      {
+        "name": "accumulator",
+        "type": 1
+      },
+      {
+        "name": "num_minibatches_per_physical_sparse_core",
+        "type": 3
+      }
+    ],
+    "outputs": [
+      {
+        "name": "updated_embedding_table",
+        "type": 1
+      },
+      {
+        "name": "updated_accumulator",
+        "type": 1
+      }
+    ]
+  },
+  {
     "name": "XlaSparseDenseMatmulGradWithAdagradMomentumAndCsrInput",
     "attributes": [
       {
@@ -64718,6 +65680,111 @@
         "name": "clip_weight_max",
         "type": "float32",
         "default": "NaN"
+      },
+      {
+        "name": "table_name",
+        "type": "string"
+      }
+    ],
+    "inputs": [
+      {
+        "name": "row_pointers",
+        "type": 3
+      },
+      {
+        "name": "sorted_sample_ids",
+        "type": 3
+      },
+      {
+        "name": "sorted_token_ids",
+        "type": 3
+      },
+      {
+        "name": "sorted_gains",
+        "type": 1
+      },
+      {
+        "name": "activation_gradients",
+        "type": 1
+      },
+      {
+        "name": "learning_rate",
+        "type": 1
+      },
+      {
+        "name": "embedding_table",
+        "type": 1
+      },
+      {
+        "name": "accumulator",
+        "type": 1
+      },
+      {
+        "name": "momenta",
+        "type": 1
+      },
+      {
+        "name": "num_minibatches_per_physical_sparse_core",
+        "type": 3
+      }
+    ],
+    "outputs": [
+      {
+        "name": "updated_embedding_table",
+        "type": 1
+      },
+      {
+        "name": "updated_accumulator",
+        "type": 1
+      },
+      {
+        "name": "updated_momenta",
+        "type": 1
+      }
+    ]
+  },
+  {
+    "name": "XlaSparseDenseMatmulGradWithAdagradMomentumAndStaticBufferSize",
+    "attributes": [
+      {
+        "name": "use_nesterov",
+        "type": "boolean"
+      },
+      {
+        "name": "exponent",
+        "type": "float32"
+      },
+      {
+        "name": "beta1",
+        "type": "float32"
+      },
+      {
+        "name": "beta2",
+        "type": "float32"
+      },
+      {
+        "name": "epsilon",
+        "type": "float32"
+      },
+      {
+        "name": "clip_weight_min",
+        "type": "float32",
+        "default": "-NaN"
+      },
+      {
+        "name": "clip_weight_max",
+        "type": "float32",
+        "default": "NaN"
+      },
+      {
+        "name": "max_ids_per_sparse_core",
+        "type": "int64",
+        "minimum": 1
+      },
+      {
+        "name": "max_unique_ids_per_sparse_core",
+        "type": "int64",
+        "minimum": 1
       },
       {
         "name": "table_name",
@@ -64873,6 +65940,173 @@
     ]
   },
   {
+    "name": "XlaSparseDenseMatmulGradWithAdamAndStaticBufferSize",
+    "attributes": [
+      {
+        "name": "use_sum_inside_sqrt",
+        "type": "boolean"
+      },
+      {
+        "name": "beta1",
+        "type": "float32"
+      },
+      {
+        "name": "beta2",
+        "type": "float32"
+      },
+      {
+        "name": "epsilon",
+        "type": "float32"
+      },
+      {
+        "name": "clip_weight_min",
+        "type": "float32",
+        "default": "-NaN"
+      },
+      {
+        "name": "clip_weight_max",
+        "type": "float32",
+        "default": "NaN"
+      },
+      {
+        "name": "max_ids_per_sparse_core",
+        "type": "int64",
+        "minimum": 1
+      },
+      {
+        "name": "max_unique_ids_per_sparse_core",
+        "type": "int64",
+        "minimum": 1
+      },
+      {
+        "name": "table_name",
+        "type": "string"
+      }
+    ],
+    "inputs": [
+      {
+        "name": "row_pointers",
+        "type": 3
+      },
+      {
+        "name": "sorted_sample_ids",
+        "type": 3
+      },
+      {
+        "name": "sorted_token_ids",
+        "type": 3
+      },
+      {
+        "name": "sorted_gains",
+        "type": 1
+      },
+      {
+        "name": "activation_gradients",
+        "type": 1
+      },
+      {
+        "name": "learning_rate",
+        "type": 1
+      },
+      {
+        "name": "embedding_table",
+        "type": 1
+      },
+      {
+        "name": "momenta",
+        "type": 1
+      },
+      {
+        "name": "velocity",
+        "type": 1
+      },
+      {
+        "name": "num_minibatches_per_physical_sparse_core",
+        "type": 3
+      }
+    ],
+    "outputs": [
+      {
+        "name": "updated_embedding_table",
+        "type": 1
+      },
+      {
+        "name": "updated_momenta",
+        "type": 1
+      },
+      {
+        "name": "updated_velocity",
+        "type": 1
+      }
+    ]
+  },
+  {
+    "name": "XlaSparseDenseMatmulGradWithCsrInput",
+    "attributes": [
+      {
+        "name": "N",
+        "type": "int64",
+        "minimum": 1
+      },
+      {
+        "name": "M",
+        "type": "int64",
+        "minimum": 1
+      },
+      {
+        "name": "custom_computation",
+        "type": "function"
+      },
+      {
+        "name": "table_name",
+        "type": "string"
+      }
+    ],
+    "inputs": [
+      {
+        "name": "row_pointers",
+        "type": 3
+      },
+      {
+        "name": "sorted_sample_ids",
+        "type": 3
+      },
+      {
+        "name": "sorted_token_ids",
+        "type": 3
+      },
+      {
+        "name": "sorted_gains",
+        "type": 1
+      },
+      {
+        "name": "activation_gradients",
+        "type": 1
+      },
+      {
+        "name": "tables",
+        "numberAttr": "N",
+        "type": 1
+      },
+      {
+        "name": "hyperparameters",
+        "numberAttr": "M",
+        "type": 1
+      },
+      {
+        "name": "num_minibatches_per_physical_sparse_core",
+        "type": 3
+      }
+    ],
+    "outputs": [
+      {
+        "name": "updated_tables",
+        "numberAttr": "N",
+        "type": 1
+      }
+    ]
+  },
+  {
     "name": "XlaSparseDenseMatmulGradWithFtrlAndCsrInput",
     "attributes": [
       {
@@ -64904,6 +66138,111 @@
         "name": "clip_weight_max",
         "type": "float32",
         "default": "NaN"
+      },
+      {
+        "name": "table_name",
+        "type": "string"
+      }
+    ],
+    "inputs": [
+      {
+        "name": "row_pointers",
+        "type": 3
+      },
+      {
+        "name": "sorted_sample_ids",
+        "type": 3
+      },
+      {
+        "name": "sorted_token_ids",
+        "type": 3
+      },
+      {
+        "name": "sorted_gains",
+        "type": 1
+      },
+      {
+        "name": "activation_gradients",
+        "type": 1
+      },
+      {
+        "name": "learning_rate",
+        "type": 1
+      },
+      {
+        "name": "embedding_table",
+        "type": 1
+      },
+      {
+        "name": "accumulator",
+        "type": 1
+      },
+      {
+        "name": "linear",
+        "type": 1
+      },
+      {
+        "name": "num_minibatches_per_physical_sparse_core",
+        "type": 3
+      }
+    ],
+    "outputs": [
+      {
+        "name": "updated_embedding_table",
+        "type": 1
+      },
+      {
+        "name": "updated_accumulator",
+        "type": 1
+      },
+      {
+        "name": "updated_linear",
+        "type": 1
+      }
+    ]
+  },
+  {
+    "name": "XlaSparseDenseMatmulGradWithFtrlAndStaticBufferSize",
+    "attributes": [
+      {
+        "name": "multiply_linear_by_learning_rate",
+        "type": "boolean"
+      },
+      {
+        "name": "beta",
+        "type": "float32"
+      },
+      {
+        "name": "learning_rate_power",
+        "type": "float32"
+      },
+      {
+        "name": "l1_regularization_strength",
+        "type": "float32"
+      },
+      {
+        "name": "l2_regularization_strength",
+        "type": "float32"
+      },
+      {
+        "name": "clip_weight_min",
+        "type": "float32",
+        "default": "-NaN"
+      },
+      {
+        "name": "clip_weight_max",
+        "type": "float32",
+        "default": "NaN"
+      },
+      {
+        "name": "max_ids_per_sparse_core",
+        "type": "int64",
+        "minimum": 1
+      },
+      {
+        "name": "max_unique_ids_per_sparse_core",
+        "type": "int64",
+        "minimum": 1
       },
       {
         "name": "table_name",
@@ -65027,6 +66366,75 @@
     ]
   },
   {
+    "name": "XlaSparseDenseMatmulGradWithSgdAndStaticBufferSize",
+    "attributes": [
+      {
+        "name": "clip_weight_min",
+        "type": "float32",
+        "default": "-NaN"
+      },
+      {
+        "name": "clip_weight_max",
+        "type": "float32",
+        "default": "NaN"
+      },
+      {
+        "name": "max_ids_per_sparse_core",
+        "type": "int64",
+        "minimum": 1
+      },
+      {
+        "name": "max_unique_ids_per_sparse_core",
+        "type": "int64",
+        "minimum": 1
+      },
+      {
+        "name": "table_name",
+        "type": "string"
+      }
+    ],
+    "inputs": [
+      {
+        "name": "row_pointers",
+        "type": 3
+      },
+      {
+        "name": "sorted_sample_ids",
+        "type": 3
+      },
+      {
+        "name": "sorted_token_ids",
+        "type": 3
+      },
+      {
+        "name": "sorted_gains",
+        "type": 1
+      },
+      {
+        "name": "activation_gradients",
+        "type": 1
+      },
+      {
+        "name": "learning_rate",
+        "type": 1
+      },
+      {
+        "name": "embedding_table",
+        "type": 1
+      },
+      {
+        "name": "num_minibatches_per_physical_sparse_core",
+        "type": 3
+      }
+    ],
+    "outputs": [
+      {
+        "name": "updated_embedding_table",
+        "type": 1
+      }
+    ]
+  },
+  {
     "name": "XlaSparseDenseMatmulWithCsrInput",
     "attributes": [
       {
@@ -65046,6 +66454,75 @@
         "name": "quantization_config_num_buckets",
         "type": "int64",
         "minimum": 0
+      },
+      {
+        "name": "table_name",
+        "type": "string"
+      }
+    ],
+    "inputs": [
+      {
+        "name": "row_pointers",
+        "type": 3
+      },
+      {
+        "name": "sorted_sample_ids",
+        "type": 3
+      },
+      {
+        "name": "sorted_token_ids",
+        "type": 3
+      },
+      {
+        "name": "sorted_gains",
+        "type": 1
+      },
+      {
+        "name": "embedding_table",
+        "type": 1
+      },
+      {
+        "name": "num_minibatches_per_physical_sparse_core",
+        "type": 3
+      }
+    ],
+    "outputs": [
+      {
+        "name": "activations",
+        "type": 1
+      }
+    ]
+  },
+  {
+    "name": "XlaSparseDenseMatmulWithStaticBufferSize",
+    "attributes": [
+      {
+        "name": "input_size",
+        "type": "int64",
+        "minimum": 0
+      },
+      {
+        "name": "quantization_config_low",
+        "type": "float32"
+      },
+      {
+        "name": "quantization_config_high",
+        "type": "float32"
+      },
+      {
+        "name": "quantization_config_num_buckets",
+        "type": "int64",
+        "minimum": 0
+      },
+      {
+        "name": "max_ids_per_sparse_core",
+        "type": "int64",
+        "minimum": 1
+      },
+      {
+        "name": "max_unique_ids_per_sparse_core",
+        "type": "int64",
+        "minimum": 1
       },
       {
         "name": "table_name",
@@ -65114,13 +66591,14 @@
     "inputs": [
       {
         "name": "input",
-        "description": "Input tensor to split across all dimensions.\n  }\n  out_arg {\n    name: \"outputs\"\n    description: <<END\nOutput slices based on input and num_splits defined, in row-major order.",
+        "description": "Input tensor to split across all dimensions.",
         "typeAttr": "T"
       }
     ],
     "outputs": [
       {
         "name": "outputs",
+        "description": "Output slices based on input and num_splits defined, in row-major order.",
         "numberAttr": "N",
         "typeAttr": "T"
       }

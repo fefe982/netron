@@ -49,7 +49,7 @@ const access = async (path) => {
     try {
         await fs.access(path);
         return true;
-    } catch (error) {
+    } catch {
         return false;
     }
 };
@@ -94,9 +94,9 @@ const unlink = async (dir, filter) => {
 const exec = async (command, encoding, cwd) => {
     cwd = cwd || dirname();
     if (encoding) {
-        return child_process.execSync(command, { cwd: cwd, encoding: encoding });
+        return child_process.execSync(command, { cwd, encoding });
     }
-    child_process.execSync(command, { cwd: cwd, stdio: [0,1,2] });
+    child_process.execSync(command, { cwd, stdio: [0,1,2] });
     return '';
     /*
     return new Promise((resolve, reject) => {
@@ -181,31 +181,31 @@ const fork = async (organization, repository) => {
     writeLine(`github delete ${repository}`);
     await request(`https://api.github.com/repos/${process.env.GITHUB_USER}/${repository}`, {
         method: 'DELETE',
-        headers: headers
+        headers
     }, false);
     await sleep(4000);
     writeLine(`github fork ${repository}`);
     await request(`https://api.github.com/repos/${organization}/${repository}/forks`, {
         method: 'POST',
-        headers: headers,
+        headers,
         body: ''
     });
     await sleep(4000);
     await rm('dist', repository);
     writeLine(`github clone ${repository}`);
-    await exec(`git clone --depth=2 https://x-access-token:${process.env.GITHUB_TOKEN}@github.com/${process.env.GITHUB_USER}/${repository}.git ` + `dist/${repository}`);
+    await exec(`git clone --depth=2 https://x-access-token:${process.env.GITHUB_TOKEN}@github.com/${process.env.GITHUB_USER}/${repository}.git dist/${repository}`);
 };
 
 const pullrequest = async (organization, repository, body) => {
     writeLine(`github push ${repository}`);
     await exec(`git -C dist/${repository} push`);
-    writeLine('github pullrequest homebrew-cask');
+    writeLine(`github pullrequest ${repository}`);
     const headers = {
         Authorization: `Bearer ${process.env.GITHUB_TOKEN}`
     };
     await request(`https://api.github.com/repos/${organization}/${repository}/pulls`, {
         method: 'POST',
-        headers: headers,
+        headers,
         body: JSON.stringify(body)
     });
 };
@@ -221,7 +221,7 @@ const install = async () => {
     const node_modules = dirname('node_modules');
     let exists = await access(node_modules);
     if (exists) {
-        const dependencies = Object.assign({}, configuration.dependencies, configuration.devDependencies);
+        const dependencies = { ...configuration.dependencies, ...configuration.devDependencies };
         const matches = await Promise.all(Object.entries(dependencies).map(async ([name, version]) => {
             const file = path.join('node_modules', name, 'package.json');
             const exists = await access(file);
@@ -240,6 +240,12 @@ const install = async () => {
     exists = await access(node_modules);
     if (!exists) {
         await exec('npm install');
+    }
+    try {
+        await exec('python --version', 'utf-8');
+        await exec('python -m pip install --upgrade --quiet setuptools pylint');
+    } catch {
+        // continue regardless of error
     }
 };
 
@@ -293,7 +299,7 @@ const build = async (target) => {
             writeLine('build python');
             await exec('python package.py build version');
             await exec('python -m pip install --user build wheel --quiet');
-            await exec('python -m build --no-isolation --wheel --outdir dist/pypi dist/pypi');
+            await exec('python -m build --wheel --outdir dist/pypi dist/pypi');
             if (read('install')) {
                 await exec('python -m pip install --force-reinstall dist/pypi/*.whl');
             }
@@ -402,24 +408,25 @@ const publish = async (target) => {
             const copyright = `Copyright (c) ${publisher}`;
             const repository = `https://github.com/${configuration.repository}`;
             const url = `${repository}/releases/download/v${version}/${product}-Setup-${version}.exe`;
-            const extensions = configuration.build.fileAssociations.map((entry) => `- ${entry.ext}`).sort().join('\n');
-            writeLine(`download ${url}`);
+            const content = await fs.readFile(configuration.build.extends, 'utf-8');
+            const builder = JSON.parse(content);
+            const extensions = builder.fileAssociations.map((entry) => `- ${entry.ext}`).sort().join('\n');
             const sha256 = await hash(url, 'sha256');
             const paths = ['dist', 'winget-pkgs', 'manifests', publisher[0].toLowerCase(), publisher.replace(' ', ''), product, version];
             await mkdir(...paths);
             writeLine('update manifest');
             const manifestFile = dirname(...paths, identifier);
             await fs.writeFile(`${manifestFile}.yaml`, [
-                '# yaml-language-server: $schema=https://aka.ms/winget-manifest.version.1.2.0.schema.json',
+                '# yaml-language-server: $schema=https://aka.ms/winget-manifest.version.1.6.0.schema.json',
                 `PackageIdentifier: ${identifier}`,
                 `PackageVersion: ${version}`,
                 'DefaultLocale: en-US',
                 'ManifestType: version',
-                'ManifestVersion: 1.2.0',
+                'ManifestVersion: 1.6.0',
                 ''
             ].join('\n'));
             await fs.writeFile(`${manifestFile}.installer.yaml`, [
-                '# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.2.0.schema.json',
+                '# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json',
                 `PackageIdentifier: ${identifier}`,
                 `PackageVersion: ${version}`,
                 'Platform:',
@@ -449,11 +456,11 @@ const publish = async (target) => {
                 'FileExtensions:',
                 extensions,
                 'ManifestType: installer',
-                'ManifestVersion: 1.2.0',
+                'ManifestVersion: 1.6.0',
                 ''
             ].join('\n'));
             await fs.writeFile(`${manifestFile}.locale.en-US.yaml`, [
-                '# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.2.0.schema.json',
+                '# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json',
                 `PackageIdentifier: ${identifier}`,
                 `PackageVersion: ${version}`,
                 `PackageName: ${product}`,
@@ -474,7 +481,7 @@ const publish = async (target) => {
                 '- deep-learning',
                 '- neural-network',
                 'ManifestType: defaultLocale',
-                'ManifestVersion: 1.2.0',
+                'ManifestVersion: 1.6.0',
                 ''
             ].join('\n'));
             writeLine('git push winget-pkgs');
@@ -506,41 +513,40 @@ const publish = async (target) => {
 const lint = async () => {
     await install();
     writeLine('eslint');
-    await exec('npx eslint *.*js source/*.*js test/*.*js publish/*.*js tools/*.js');
+    await exec('npx eslint --config publish/eslint.config.js *.*js source/*.*js test/*.*js publish/*.*js tools/*.js');
     writeLine('pylint');
-    await exec('python -m pip install --upgrade --quiet pylint');
     await exec('python -m pylint -sn --recursive=y source test publish tools *.py');
 };
 
 const validate = async() => {
-    await lint();
     writeLine('test');
     await exec('node test/models.js tag:validation');
+    await lint();
 };
 
 const update = async () => {
+    const dependencies = { ...configuration.dependencies, ...configuration.devDependencies };
+    for (const name of Object.keys(dependencies)) {
+        writeLine(name);
+        /* eslint-disable no-await-in-loop */
+        await exec(`npm install --quiet --no-progress --silent --save-exact ${name}@latest`);
+        /* eslint-enable no-await-in-loop */
+    }
+    await install();
     const targets = process.argv.length > 3 ? process.argv.slice(3) : [
         'armnn',
         'bigdl',
-        'caffe',
-        'circle',
-        'cntk',
-        'coreml',
-        'dlc',
-        'dnn',
+        'caffe', 'circle', 'cntk', 'coreml',
+        'dlc', 'dnn',
+        'executorch',
         'gguf',
-        'keras',
-        'mnn',
-        'mslite',
-        'megengine',
+        'kann', 'keras',
+        'mnn', 'mslite', 'megengine',
         'nnabla',
-        'onnx',
-        'om',
-        'paddle',
-        'pytorch',
+        'onnx', 'om',
+        'paddle', 'pytorch',
         'rknn',
-        'sentencepiece',
-        'sklearn',
+        'sentencepiece', 'sklearn',
         'tf',
         'uff',
         'xmodel'
@@ -556,7 +562,7 @@ const pull = async () => {
     await exec('git fetch --prune origin "refs/tags/*:refs/tags/*"');
     const before = await exec('git rev-parse HEAD', 'utf-8');
     try {
-        await exec('git pull --prune --rebase');
+        await exec('git pull --prune --rebase --autostash');
     } catch (error) {
         writeLine(error.message);
     }
@@ -584,14 +590,17 @@ const forge = async() => {
     const command = read();
     switch (command) {
         case 'install': {
-            await exec('npm install @electron-forge/cli@7.2.0');
-            await exec('npm install @electron-forge/core@7.2.0');
-            await exec('npm install @electron-forge/maker-snap@7.2.0');
-            await exec('npm install @electron-forge/maker-dmg@7.2.0');
-            await exec('npm install @electron-forge/maker-zip@7.2.0');
+            const packages = [
+                '@electron-forge/cli',
+                '@electron-forge/core',
+                '@electron-forge/maker-snap',
+                '@electron-forge/maker-dmg',
+                '@electron-forge/maker-zip'
+            ];
+            await exec(`npm install ${packages.join(' ')} --no-save`);
             break;
         }
-        case 'build': {
+        case 'update': {
             const cwd = path.join(dirname(), '..', 'forge');
             const node_modules = path.join(cwd, 'node_modules');
             const links = path.join(cwd, '.links');
@@ -602,6 +611,10 @@ const forge = async() => {
             await exec('yarn build', null, cwd);
             await exec('yarn link:prepare', null, cwd);
             await exec(`yarn link @electron-forge/core --link-folder=${links}`);
+            break;
+        }
+        case 'build': {
+            await exec('npx electron-forge make');
             break;
         }
         default: {
@@ -644,7 +657,8 @@ const version = async () => {
     await exec('git push --tags');
 };
 
-const next = async () => {
+const main = async () => {
+    await load();
     try {
         const task = read();
         switch (task) {
@@ -664,12 +678,12 @@ const next = async () => {
             case 'forge': await forge(); break;
             default: throw new Error(`Unsupported task '${task}'.`);
         }
-    } catch (err) {
+    } catch (error) {
         if (process.stdout.write) {
-            process.stdout.write(err.message + os.EOL);
+            process.stdout.write(error.message + os.EOL);
         }
         process.exit(1);
     }
 };
 
-load().then(() => next());
+await main();

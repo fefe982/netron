@@ -1,8 +1,19 @@
 
-import * as path from 'path';
-import * as fs from 'fs/promises';
-import * as url from 'url';
 import * as flatc from './flatc.js';
+import * as fs from 'fs/promises';
+import * as path from 'path';
+import * as url from 'url';
+
+/* eslint-disable no-extend-native */
+
+BigInt.prototype.toNumber = function() {
+    if (this > Number.MAX_SAFE_INTEGER || this < Number.MIN_SAFE_INTEGER) {
+        throw new Error('64-bit value exceeds safe integer.');
+    }
+    return Number(this);
+};
+
+/* eslint-enable no-extend-native */
 
 const main = async () => {
     const dirname = path.dirname(url.fileURLToPath(import.meta.url));
@@ -51,6 +62,9 @@ const main = async () => {
                 const attribute = attributes.get(attr_key);
                 const type = field.type;
                 let defaultValue = field.defaultValue;
+                if (typeof defaultValue === 'bigint') {
+                    defaultValue = defaultValue.toNumber();
+                }
                 if (type instanceof flatc.Enum) {
                     if (!type.keys.has(defaultValue)) {
                         throw new Error(`Invalid '${type.name}' default value '${defaultValue}'.`);
@@ -70,4 +84,4 @@ const main = async () => {
     await fs.writeFile(file, output, 'utf-8');
 };
 
-main();
+await main();

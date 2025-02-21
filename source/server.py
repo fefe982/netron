@@ -22,9 +22,10 @@ class _ContentProvider: # pylint: disable=too-few-public-methods
     base_dir = ''
     base = ''
     identifier = ''
-    def __init__(self, data, path, file):
+    def __init__(self, data, path, file, name):
         self.data = data if data else bytearray()
         self.identifier = os.path.basename(file) if file else ''
+        self.name = name
         if path:
             self.dir = os.path.dirname(path) if os.path.dirname(path) else '.'
             self.base = os.path.basename(path)
@@ -95,6 +96,9 @@ class _HTTPRequestHandler(http.server.BaseHTTPRequestHandler):
                     base = self.content.base
                     if base:
                         meta.append('<meta name="file" content="/data/' + base + '">')
+                    name = self.content.name
+                    if name:
+                        meta.append('<meta name="name" content="' + name + '">')
                     identifier = self.content.identifier
                     if identifier:
                         meta.append('<meta name="identifier" content="' + identifier + '">')
@@ -263,7 +267,7 @@ def wait():
         _log(True, '\n')
         stop()
 
-def serve(file, data, address=None, browse=False, verbosity=1):
+def serve(file, data=None, address=None, browse=False, verbosity=1):
     '''Start serving model from file or data buffer at address and open in web browser.
 
     Args:
@@ -281,14 +285,14 @@ def serve(file, data, address=None, browse=False, verbosity=1):
     if not data and file and not os.path.exists(file):
         raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), file)
 
-    content = _ContentProvider(data, file, file)
+    content = _ContentProvider(data, file, file, file)
 
     if data and not isinstance(data, bytearray) and isinstance(data.__class__, type):
         _log(verbosity > 1, 'Experimental\n')
         model = _open(data)
         if model:
-            text = json.dumps(model.to_json(), indent=4, ensure_ascii=False)
-            content = _ContentProvider(text.encode('utf-8'), 'model.netron', file)
+            text = json.dumps(model.to_json(), indent=2, ensure_ascii=False)
+            content = _ContentProvider(text.encode('utf-8'), 'model.netron', None, file)
 
     address = _make_address(address)
     if isinstance(address[1], int) and address[1] != 0:
@@ -320,3 +324,18 @@ def start(file=None, address=None, browse=True, verbosity=1):
         A (host, port) address tuple.
     '''
     return serve(file, None, browse=browse, address=address, verbosity=verbosity)
+
+def widget(address, height=800):
+    ''' Open address as Jupyter Notebook IFrame.
+
+    Args:
+        address (tuple, optional): A (host, port) tuple, or a port number.
+        height (int, optional): Height of the IFrame, Default: 800
+
+    Returns:
+        A Jupyter Notebook IFrame.
+    '''
+    address = _make_address(address)
+    url = f"http://{address[0]}:{address[1]}"
+    IPython = __import__('IPython') # pylint: disable=invalid-name
+    return IPython.display.IFrame(url, width="100%", height=height)

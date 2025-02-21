@@ -3,14 +3,24 @@
 import json
 import logging
 import os
+import re
+import sys
 import google.protobuf # pylint: disable=import-error
 
 logging.getLogger('tensorflow').setLevel(logging.ERROR)
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
+dup_stderr = os.dup(sys.stderr.fileno())
+null = os.open(os.devnull, os.O_WRONLY)
+os.dup2(null, sys.stderr.fileno())
+os.close(null)
+
 from tensorflow.core.framework import api_def_pb2 # pylint: disable=import-error,no-name-in-module,wrong-import-position
 from tensorflow.core.framework import op_def_pb2 # pylint: disable=import-error,no-name-in-module,wrong-import-position
 from tensorflow.core.framework import types_pb2 # pylint: disable=import-error,no-name-in-module,wrong-import-position
+
+os.dup2(dup_stderr, sys.stderr.fileno())
+os.close(dup_stderr)
 
 def _read(path):
     with open(path, 'r', encoding='utf-8') as file:
@@ -87,6 +97,7 @@ def _pbtxt_from_multiline(multiline_pbtxt):
 def _read_op_list(file):
     op_list = op_def_pb2.OpList() # pylint: disable=no-member
     content = _read(file)
+    content = re.sub(r'^go/[a-z]+\s*', '', content)
     google.protobuf.text_format.Merge(content, op_list)
     return op_list
 
@@ -342,7 +353,7 @@ categories = {
     'Const': 'Constant',
     'Conv2D': 'Layer',
     'DepthwiseConv2dNative': 'Layer',
-    'Dequantize': 'Tensor',
+    'Dequantize': 'Quantization',
     'Elu': 'Activation',
     'FusedBatchNorm': 'Normalization',
     'FusedBatchNormV2': 'Normalization',
@@ -356,6 +367,13 @@ categories = {
     'MaxPoolV2': 'Pool',
     'MaxPoolWithArgmax': 'Pool',
     'Pad': 'Tensor',
+    'QuantizeAndDequantize': 'Quantization',
+    'QuantizeAndDequantizeV2': 'Quantization',
+    'QuantizeAndDequantizeV3': 'Quantization',
+    'QuantizeAndDequantizeV4': 'Quantization',
+    'QuantizeAndDequantizeV4Grad': 'Quantization',
+    'QuantizeDownAndShrinkRange': 'Quantization',
+    'QuantizeV2': 'Quantization',
     'Relu': 'Activation',
     'Relu6': 'Activation',
     'Reshape': 'Shape',
@@ -366,6 +384,7 @@ categories = {
     'Squeeze': 'Transform',
     'StridedSlice': 'Tensor',
     'swish_f32': 'Activation',
+    'Transpose': 'Transform',
     'Variable': 'Control',
     'VariableV2': 'Control',
 }

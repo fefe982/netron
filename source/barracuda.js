@@ -1,25 +1,25 @@
 
 // Experimental
 
-import * as base from './base.js';
-
 const barracuda = {};
 
 barracuda.ModelFactory = class {
 
-    match(context) {
+    async match(context) {
         const stream = context.stream;
         if (stream && stream.length > 12) {
             const buffer = stream.peek(12);
             if (buffer[0] <= 0x20 && buffer.subarray(1, 8).every((value) => value === 0x00)) {
-                context.type = 'barracuda';
+                return context.set('barracuda');
             }
         }
+        return null;
     }
 
     async open(context) {
         const metadata = barracuda.Metadata.open();
-        const model = new barracuda.NNModel(context.stream.peek());
+        const reader = await context.read('binary');
+        const model = new barracuda.NNModel(reader);
         return new barracuda.Model(metadata, model);
     }
 };
@@ -79,9 +79,10 @@ barracuda.Graph = class {
 
 barracuda.Argument = class {
 
-    constructor(name, value) {
+    constructor(name, value, type) {
         this.name = name;
         this.value = value;
+        this.type = type || null;
     }
 };
 
@@ -135,37 +136,25 @@ barracuda.Node = class {
             const node = new barracuda.Node(metadata, {}, { name: type, category: 'Activation' }, values);
             this.chain = [node];
         }
-        const attribute = (name, type, value, defaultValue) => {
-            if (value === undefined) {
-                return;
+        const attributes = [
+            ['strides', 'int32[]', []],
+            ['pads', 'int32[]', (value) => Array.isArray(value) && (value.every((v) => v === 0) || value.every((v) => v === -1))],
+            ['pool_size', 'int32[]', []],
+            ['alpha', 'float32', 1],
+            ['beta', 'float32', 0],
+            ['axis', 'int32', -1]
+        ];
+        for (const [name, type, defaultValue] of attributes) {
+            const value = layer[name];
+            if ((value === undefined) ||
+                (Array.isArray(defaultValue) && Array.isArray(value) && value.length === defaultValue.length && value.every((v, i) => v === defaultValue[i])) ||
+                (typeof defaultValue === 'function' && defaultValue(value)) ||
+                (defaultValue === value)) {
+                continue;
             }
-            if (Array.isArray(defaultValue) && Array.isArray(value) && value.length === defaultValue.length && value.every((v, i) => v === defaultValue[i])) {
-                return;
-            }
-            if (typeof defaultValue === 'function' && defaultValue(value)) {
-                return;
-            }
-            if (defaultValue === value) {
-                return;
-            }
-            const attribute = new barracuda.Attribute(name, type, value);
+            const attribute = new barracuda.Argument(name, value, type);
             this.attributes.push(attribute);
-        };
-        attribute('strides', 'int32[]', layer.strides, []);
-        attribute('pads', 'int32[]', layer.pads, (value) => Array.isArray(value) && (value.every((v) => v === 0) || value.every((v) => v === -1)));
-        attribute('size', 'int32[]', layer.pool_size, []);
-        attribute('alpha', 'float32', layer.alpha, 1);
-        attribute('beta', 'float32', layer.beta, 0);
-        attribute('axis', 'int32', layer.axis, -1);
-    }
-};
-
-barracuda.Attribute = class {
-
-    constructor(name, type, value) {
-        this.name = name;
-        this.type = type;
-        this.value = value;
+        }
     }
 };
 
@@ -205,9 +194,9 @@ barracuda.TensorShape = class {
 
 barracuda.NNModel = class {
 
-    constructor(buffer) {
+    constructor(reader) {
         // https://github.com/Unity-Technologies/barracuda-release/blob/release/1.3.2/Barracuda/Runtime/Core/Model.cs
-        const reader = new barracuda.BinaryReader(buffer);
+        reader = new barracuda.BinaryReader(reader);
         this.version = reader.int32();
         reader.int32();
         this.inputs = new Array(reader.int32());
@@ -248,7 +237,7 @@ barracuda.NNModel = class {
                 layer.tensors.push({
                     name: reader.string(),
                     shape: reader.shape(),
-                    offset: Number(reader.int64()),
+                    offset: reader.int64().toNumber(),
                     itemsize: reader.int32(),
                     length: reader.int32()
                 });
@@ -258,7 +247,7 @@ barracuda.NNModel = class {
         const position = reader.position;
         for (const layer of this.layers) {
             for (const tensor of layer.tensors) {
-                const offset = Number(tensor.offset);
+                const offset = tensor.offset;
                 reader.seek(position + (offset * tensor.itemsize));
                 tensor.data = reader.read(tensor.length * tensor.itemsize);
             }
@@ -275,7 +264,35 @@ barracuda.Activation = {
     200: "Acos", 201: "Acosh", 202: "Asin", 203: "Asinh", 204: "Atan", 205: "Atanh", 206: "Cos", 207: "Cosh", 208: "Sin", 209: "Sinh", 210: "Tan"
 };
 
-barracuda.BinaryReader = class extends base.BinaryReader {
+barracuda.BinaryReader = class {
+
+    constructor(reader) {
+        this._reader = reader;
+    }
+
+    get position() {
+        return this._reader.position;
+    }
+
+    seek(position) {
+        this._reader.seek(position);
+    }
+
+    skip(offset) {
+        this._reader.skip(offset);
+    }
+
+    read(length) {
+        return this._reader.read(length);
+    }
+
+    byte() {
+        return this._reader.byte();
+    }
+
+    int32() {
+        return this._reader.int32();
+    }
 
     int32s() {
         const values = new Array(this.int32());
@@ -285,13 +302,20 @@ barracuda.BinaryReader = class extends base.BinaryReader {
         return values;
     }
 
+    int64() {
+        return this._reader.int64();
+    }
+
+    float32() {
+        return this._reader.float32();
+    }
+
     string() {
         let content = '';
         const size = this.int32();
-        let position = this._position;
-        this.skip(size);
         for (let i = 0; i < size; i++) {
-            content += String.fromCharCode(this._buffer[position++]);
+            const c = this.byte();
+            content += String.fromCharCode(c);
         }
         return content;
     }
@@ -320,7 +344,7 @@ barracuda.Metadata = class {
     constructor() {
         this._types = new Map();
         const register = (id, name, category, inputs) => {
-            this._types.set(id, { name: name, category: category, inputs: (inputs || []).map((input) => {
+            this._types.set(id, { name, category, inputs: (inputs || []).map((input) => {
                 return { name: input };
             }) });
         };

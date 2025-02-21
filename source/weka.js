@@ -6,7 +6,7 @@ const java = {};
 
 weka.ModelFactory = class {
 
-    match(context) {
+    async match(context) {
         try {
             const stream = context.stream;
             if (stream.length >= 5) {
@@ -15,18 +15,18 @@ weka.ModelFactory = class {
                     const reader = new java.io.InputObjectStream(stream);
                     const obj = reader.read();
                     if (obj && obj.$class && obj.$class.name) {
-                        context.type = 'weka';
-                        context.target = obj;
+                        return context.set('weka', obj);
                     }
                 }
             }
-        } catch (err) {
+        } catch {
             // continue regardless of error
         }
+        return null;
     }
 
     async open(context) {
-        const obj = context.target;
+        const obj = context.value;
         throw new weka.Error(`Unsupported type '${obj.$class.name}'.`);
     }
 };
@@ -234,7 +234,7 @@ java.io.InputObjectStream.BinaryReader = class {
     }
 
     string(long) {
-        const size = long ? Number(this.uint64()) : this.uint16();
+        const size = long ? this.uint64().toNumber() : this.uint16();
         const position = this._position;
         this.skip(size);
         this._decoder = this._decoder || new TextDecoder('utf-8');

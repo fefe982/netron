@@ -5,11 +5,12 @@ const mediapipe = {};
 
 mediapipe.ModelFactory = class {
 
-    match(context) {
-        const tags = context.tags('pbtxt');
+    async match(context) {
+        const tags = await context.tags('pbtxt');
         if (tags.has('node') && ['input_stream', 'output_stream', 'input_side_packet', 'output_side_packet'].some((key) => tags.has(key) || tags.has(`node.${key}`))) {
-            context.type = 'mediapipe.pbtxt';
+            return context.set('mediapipe.pbtxt');
         }
+        return null;
     }
 
     async open(context) {
@@ -17,7 +18,7 @@ mediapipe.ModelFactory = class {
         mediapipe.proto = {};
         let config = null;
         try {
-            const reader = context.read('protobuf.text');
+            const reader = await context.read('protobuf.text');
             // const config = mediapipe.proto.mediapipe.CalculatorGraphConfig.decodeText(reader);
             config = new mediapipe.Object(reader);
         } catch (error) {
@@ -45,7 +46,9 @@ mediapipe.Graph = class {
         this.nodes = [];
         const types = new Map();
         const type = (list) => {
-            list = list ? Array.isArray(list) ? list : [list] : [];
+            if (!Array.isArray(list)) {
+                list = list ? [list] : [];
+            }
             return list.map((item) => {
                 const parts = item.split(':');
                 const name = parts.pop();
@@ -66,7 +69,9 @@ mediapipe.Graph = class {
         config.output_stream = type(config.output_stream);
         config.input_side_packet = type(config.input_side_packet);
         config.output_side_packet = type(config.output_side_packet);
-        config.node = config.node ? Array.isArray(config.node) ? config.node : [config.node] : [];
+        if (!Array.isArray(config.node)) {
+            config.node = config.node ? [config.node] : [];
+        }
         for (const node of config.node) {
             node.input_stream = type(node.input_stream);
             node.output_stream = type(node.output_stream);
@@ -138,7 +143,10 @@ mediapipe.Node = class {
                 options.set(key, node.options[key]);
             }
         }
-        const node_options = node.node_options ? Array.isArray(node.node_options) ? node.node_options : [node.node_options] : [];
+        let node_options = node.node_options;
+        if (!Array.isArray(node_options)) {
+            node_options = node_options ? [node_options] : [];
+        }
         if (mediapipe.proto.google && node_options.every((options) => options instanceof mediapipe.proto.google.protobuf.Any)) {
             for (const entry of node_options) {
                 const value = new RegExp(/^\{(.*)\}\s*$/, 's').exec(entry.value);
@@ -243,11 +251,11 @@ mediapipe.Object = class {
                         obj.push(parseFloat(data));
                     }
                 }
-            } else if (!isNaN(next)) {
-                obj = parseFloat(next);
+            } else if (isNaN(next)) {
+                obj = next;
                 reader.next();
             } else {
-                obj = next;
+                obj = parseFloat(next);
                 reader.next();
             }
             if (this[tag] && (!Array.isArray(this[tag]) || arrayTags.has(tag))) {

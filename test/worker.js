@@ -1,21 +1,20 @@
 
+import * as base from '../source/base.js';
 import * as fs from 'fs/promises';
-import * as http from 'http';
-import * as https from 'https';
 import * as path from 'path';
 import * as process from 'process';
-import * as url from 'url';
-import * as worker_threads from 'worker_threads';
-import * as base from '../source/base.js';
-import * as zip from '../source/zip.js';
+import * as python from '../source/python.js';
 import * as tar from '../source/tar.js';
+import * as url from 'url';
 import * as view from '../source/view.js';
+import * as worker_threads from 'worker_threads';
+import * as zip from '../source/zip.js';
 
 const access = async (path) => {
     try {
         await fs.access(path);
         return true;
-    } catch (error) {
+    } catch {
         return false;
     }
 };
@@ -46,10 +45,10 @@ const host = {};
 
 host.TestHost = class {
 
-    constructor(window) {
-        this.errors = [];
-        this.window = window;
-        this.document = window.document;
+    constructor(window, environment) {
+        this._window = window;
+        this._environment = environment;
+        this._errors = [];
         host.TestHost.source = host.TestHost.source || dirname('..', 'source');
     }
 
@@ -59,11 +58,20 @@ host.TestHost = class {
     async start() {
     }
 
+    get window() {
+        return this._window;
+    }
+
+    get document() {
+        return this._window.document;
+    }
+
+    get errors() {
+        return this._errors;
+    }
+
     environment(name) {
-        if (name === 'zoom') {
-            return 'none';
-        }
-        return null;
+        return this._environment[name];
     }
 
     screen(/* name */) {
@@ -74,6 +82,15 @@ host.TestHost = class {
         return await import(`file://${file}`);
     }
 
+    worker(id) {
+        const file = path.join(host.TestHost.source, `${id}.js`);
+        const worker = new worker_threads.Worker(file);
+        worker.addEventListener = (type, listener) => {
+            worker.on(type, (message) => listener({ data: message }));
+        };
+        return worker;
+    }
+
     async request(file, encoding, basename) {
         const pathname = path.join(basename || host.TestHost.source, file);
         const exists = await access(pathname);
@@ -81,8 +98,7 @@ host.TestHost = class {
             throw new Error(`The file '${file}' does not exist.`);
         }
         if (encoding) {
-            const buffer = await fs.readFile(pathname, encoding);
-            return buffer;
+            return await fs.readFile(pathname, encoding);
         }
         const buffer = await fs.readFile(pathname, null);
         return new base.BinaryStream(buffer);
@@ -92,7 +108,10 @@ host.TestHost = class {
     }
 
     exception(error /*, fatal */) {
-        this.errors.push(error);
+        this._errors.push(error);
+    }
+
+    message() {
     }
 };
 
@@ -118,15 +137,15 @@ host.TestHost.Context = class {
         return this._entries;
     }
 
-    request(file, encoding, base) {
+    async request(file, encoding, base) {
         return this._host.request(file, encoding, base === undefined ? this._folder : base);
     }
 
-    require(id) {
+    async require(id) {
         return this._host.require(id);
     }
 
-    exception(error, fatal) {
+    error(error, fatal) {
         this._host.exception(error, fatal);
     }
 };
@@ -148,7 +167,22 @@ class CSSStyleDeclaration {
 
 class DOMTokenList {
 
-    add(/* token */) {
+    constructor(element) {
+        this._element = element;
+    }
+
+    add(...tokens) {
+        const value = this._element.getAttribute('class') || '';
+        tokens = new Set(value.split(' ').concat(tokens));
+        this._element.setAttribute('class', Array.from(tokens).join(' '));
+    }
+
+    contains(token) {
+        const value = this._element.getAttribute('class');
+        if (value === null || value.indexOf(token) === -1) {
+            return false;
+        }
+        return value.split(' ').some((s) => s === token);
     }
 }
 
@@ -165,6 +199,14 @@ class HTMLElement {
 
     }
 
+    get childNodes() {
+        return this._childNodes;
+    }
+
+    get firstChild() {
+        return this._childNodes.length > 0 ? this._childNodes[0] : null;
+    }
+
     get lastChild() {
         const index = this._childNodes.length - 1;
         if (index >= 0) {
@@ -175,6 +217,13 @@ class HTMLElement {
 
     appendChild(node) {
         this._childNodes.push(node);
+    }
+
+    insertBefore(newNode, referenceNode) {
+        const index = this._childNodes.indexOf(referenceNode);
+        if (index !== -1) {
+            this._childNodes.splice(index, 0, newNode);
+        }
     }
 
     removeChild(node) {
@@ -193,7 +242,7 @@ class HTMLElement {
     }
 
     getAttribute(name) {
-        return this._attributes.get(name);
+        return this._attributes.has(name) ? this._attributes.get(name) : null;
     }
 
     getElementsByClassName(name) {
@@ -201,8 +250,7 @@ class HTMLElement {
         for (const node of this._childNodes) {
             if (node instanceof HTMLElement) {
                 elements.push(...node.getElementsByClassName(name));
-                if (node.hasAttribute('class') &&
-                    node.getAttribute('class').split(' ').find((text) => text === name)) {
+                if (node.classList.contains(name)) {
                     elements.push(node);
                 }
             }
@@ -217,7 +265,8 @@ class HTMLElement {
     }
 
     get classList() {
-        return new DOMTokenList();
+        this._classList = this._classList || new DOMTokenList(this);
+        return this._classList;
     }
 
     getBBox() {
@@ -303,7 +352,7 @@ export class Target {
         this.events = {};
         this.tags = new Set(this.tags);
         this.folder = item.type ? path.normalize(dirname('..', 'third_party' , 'test', item.type)) : process.cwd();
-        this.measures = new Map([['name', this.name]]);
+        this.assert = !this.assert || Array.isArray(this.assert) ? this.assert : [this.assert];
     }
 
     on(event, callback) {
@@ -324,9 +373,19 @@ export class Target {
     }
 
     async execute() {
+        if (this.measures) {
+            this.measures.set('name', this.name);
+        }
         await zip.Archive.import();
         this.window = this.window || new Window();
-        this.host = await new host.TestHost(this.window);
+        const environment = {
+            zoom: 'none',
+            measure: this.measures ? true : false
+        };
+        this.host = await new host.TestHost(this.window, environment);
+        this.view = new view.View(this.host);
+        this.view.options.attributes = true;
+        this.view.options.initializers = true;
         const time = async (method) => {
             const start = process.hrtime.bigint();
             let err = null;
@@ -336,7 +395,9 @@ export class Target {
                 err = error;
             }
             const duration = Number(process.hrtime.bigint() - start) / 1e9;
-            this.measures.set(method.name, duration);
+            if (this.measures) {
+                this.measures.set(method.name, duration);
+            }
             if (err) {
                 throw err;
             }
@@ -362,55 +423,53 @@ export class Target {
         }
     }
 
-    async request(location) {
-        const request = new Promise((resolve, reject) => {
-            const url = new URL(location);
-            const request = url.protocol === 'https:' ? https.request(location) : http.request(location);
-            request.on('response', (response) => resolve(response));
-            request.on('error', (error) => reject(error));
-            request.end();
-        });
-        const response = await request;
-        const url = new URL(location);
-        switch (response.statusCode) {
-            case 200: {
-                return new Promise((resolve, reject) => {
-                    let position = 0;
-                    const data = [];
-                    const length = response.headers['content-length'] ? Number(response.headers['content-length']) : -1;
-                    response.on('data', (chunk) => {
-                        position += chunk.length;
-                        if (length >= 0) {
-                            const percent = position / length;
-                            this.status({ name: 'download', target: location, percent: percent });
-                        } else {
-                            this.status({ name: 'download', target: location, position: position });
-                        }
-                        data.push(chunk);
-                    });
-                    response.on('end', () => {
-                        this.status({ name: 'download' });
-                        resolve(Buffer.concat(data));
-                    });
-                    response.on('error', (error) => {
-                        this.status({ name: 'download' });
-                        reject(error);
-                    });
-                });
-            }
-            case 301:
-            case 302: {
-                location = response.headers.location;
-                const context = location.startsWith('http://') || location.startsWith('https://') ? '' : `${url.protocol}//${url.hostname}`;
-                response.destroy();
-                return this.request(context + location);
-            }
-            default: {
-                throw new Error(`${response.statusCode} ${location}`);
-            }
+    async request(url, init) {
+        const response = await fetch(url, init);
+        if (!response.ok) {
+            throw new Error(response.status.toString());
         }
-    }
+        if (response.body) {
+            const reader = response.body.getReader();
+            const length = response.headers.has('Content-Length') ? parseInt(response.headers.get('Content-Length'), 10) : -1;
+            let position = 0;
+            const target = this;
+            const stream = new ReadableStream({
+                async start(controller) {
+                    const read = async () => {
+                        try {
+                            const result = await reader.read();
+                            if (result.done) {
+                                target.status({ name: 'download' });
+                                controller.close();
+                            } else {
+                                position += result.value.length;
+                                if (length >= 0) {
+                                    const percent = position / length;
+                                    target.status({ name: 'download', target: url, percent });
+                                } else {
+                                    target.status({ name: 'download', target: url, position });
+                                }
+                                controller.enqueue(result.value);
+                                return await read();
+                            }
+                        } catch (error) {
+                            controller.error(error);
+                            throw error;
+                        }
 
+                        return null;
+                    };
+                    return read();
+                }
+            });
+            return new Response(stream, {
+                status: response.status,
+                statusText: response.statusText,
+                headers: response.headers
+            });
+        }
+        return response;
+    }
     async download(targets, sources) {
         targets = targets || Array.from(this.targets);
         sources = sources || this.source;
@@ -431,25 +490,33 @@ export class Target {
             sources = sources && sources.startsWith(',') ? sources.substring(1).trim() : '';
         } else {
             const commaIndex = sources.indexOf(',');
-            if (commaIndex !== -1) {
-                source = sources.substring(0, commaIndex);
-                sources = sources.substring(commaIndex + 1);
-            } else {
+            if (commaIndex === -1) {
                 source = sources;
                 sources = '';
+            } else {
+                source = sources.substring(0, commaIndex);
+                sources = sources.substring(commaIndex + 1);
             }
         }
         await Promise.all(targets.map((target) => {
             const dir = path.dirname(`${this.folder}/${target}`);
             return fs.mkdir(dir, { recursive: true });
         }));
-        const data = await this.request(source);
+        const response = await this.request(source);
+        const buffer = await response.arrayBuffer();
+        const data = new Uint8Array(buffer);
         if (sourceFiles.length > 0) {
             this.status({ name: 'decompress' });
             const archive = decompress(data);
             for (const name of sourceFiles) {
                 this.status({ name: 'write', target: name });
-                if (name !== '.') {
+                if (name === '.') {
+                    const target = targets.shift();
+                    const dir = path.join(this.folder, target);
+                    /* eslint-disable no-await-in-loop */
+                    await fs.mkdir(dir, { recursive: true });
+                    /* eslint-enable no-await-in-loop */
+                } else {
                     const stream = archive.entries.get(name);
                     if (!stream) {
                         throw new Error(`Entry not found '${name}. Archive contains entries: ${JSON.stringify(Array.from(archive.entries.keys()))} .`);
@@ -460,17 +527,11 @@ export class Target {
                     /* eslint-disable no-await-in-loop */
                     await fs.writeFile(file, buffer, null);
                     /* eslint-enable no-await-in-loop */
-                } else {
-                    const target = targets.shift();
-                    const dir = path.join(this.folder, target);
-                    /* eslint-disable no-await-in-loop */
-                    await fs.mkdir(dir, { recursive: true });
-                    /* eslint-enable no-await-in-loop */
                 }
             }
         } else {
             const target = targets.shift();
-            this.status({ name: 'write', target: target });
+            this.status({ name: 'write', target });
             await fs.writeFile(`${this.folder}/${target}`, data, null);
         }
         if (targets.length > 0 && sources.length > 0) {
@@ -516,7 +577,7 @@ export class Target {
         this.model = await modelFactoryService.open(context);
     }
 
-    validate() {
+    async validate() {
         if (!this.model.format || (this.format && this.format !== this.model.format)) {
             throw new Error(`Invalid model format '${this.model.format}'.`);
         }
@@ -526,8 +587,8 @@ export class Target {
         if (this.runtime && this.model.runtime !== this.runtime) {
             throw new Error(`Invalid runtime '${this.model.runtime}'.`);
         }
-        if (this.model.metadata && !(this.model.metadata instanceof Map)) {
-            throw new Error("Invalid metadata.'");
+        if (this.model.metadata && !Array.isArray(this.model.metadata) && this.model.metadata.every((argument) => argument.name && argument.value)) {
+            throw new Error("Invalid model metadata.'");
         }
         if (this.assert) {
             for (const assert of this.assert) {
@@ -542,7 +603,7 @@ export class Target {
                         continue;
                     }
                     const match = /(.*)\[(.*)\]/.exec(property);
-                    if (match.length === 3 && context[match[1]] !== undefined) {
+                    if (match && match.length === 3 && context[match[1]] !== undefined) {
                         const array = context[match[1]];
                         const index = parseInt(match[2], 10);
                         if (array[index] !== undefined) {
@@ -561,9 +622,12 @@ export class Target {
             // continue
         }
         /* eslint-disable no-unused-expressions */
-        const validateGraph = (graph) => {
+        const validateGraph = async (graph) => {
             const values = new Map();
-            const validateValue = (value) => {
+            const validateValue = async (value) => {
+                if (value === null) {
+                    return;
+                }
                 value.name.toString();
                 value.name.length;
                 value.description;
@@ -579,35 +643,47 @@ export class Target {
                 }
                 if (value.initializer) {
                     value.initializer.type.toString();
-                    const tensor = new view.Tensor(value.initializer);
-                    if (tensor.encoding !== '<' && tensor.encoding !== '>' && tensor.encoding !== '|') {
-                        throw new Error(`Tensor encoding '${tensor.encoding}' is not implemented.`);
+                    if (value.initializer && value.initializer.peek && !value.initializer.peek()) {
+                        await value.initializer.read();
                     }
-                    if (tensor.layout && (tensor.layout !== 'sparse' && tensor.layout !== 'sparse.coo')) {
-                        throw new Error(`Tensor layout '${tensor.layout}' is not implemented.`);
-                    }
-                    if (!tensor.empty) {
-                        if (tensor.type && tensor.type.dataType === '?') {
-                            throw new Error('Tensor data type is not defined.');
-                        } else if (tensor.type && !tensor.type.shape) {
-                            throw new Error('Tensor shape is not defined.');
-                        } else {
-                            tensor.toString();
-                            /*
-                            const python = await import('../source/python.js');
-                            const tensor = argument.initializer;
-                            if (tensor.type && tensor.type.dataType !== '?') {
-                                let data_type = tensor.type.dataType;
-                                switch (data_type) {
-                                    case 'boolean': data_type = 'bool'; break;
+                    const tensor = new base.Tensor(value.initializer);
+                    if (!this.tags.has('skip-tensor-value')) {
+                        if (tensor.encoding !== '<' && tensor.encoding !== '>' && tensor.encoding !== '|') {
+                            throw new Error(`Tensor encoding '${tensor.encoding}' is not implemented.`);
+                        }
+                        if (tensor.layout && (tensor.layout !== 'sparse' && tensor.layout !== 'sparse.coo')) {
+                            throw new Error(`Tensor layout '${tensor.layout}' is not implemented.`);
+                        }
+                        if (!tensor.empty) {
+                            if (tensor.type && tensor.type.dataType === '?') {
+                                throw new Error('Tensor data type is not defined.');
+                            } else if (tensor.type && !tensor.type.shape) {
+                                throw new Error('Tensor shape is not defined.');
+                            } else {
+                                tensor.toString();
+                                if (this.tags.has('validation')) {
+                                    const size = tensor.type.shape.dimensions.reduce((a, b) => a * b, 1);
+                                    if (tensor.type && tensor.type.dataType !== '?' && size < 8192) {
+                                        let data_type = '?';
+                                        switch (tensor.type.dataType) {
+                                            case 'boolean': data_type = 'bool'; break;
+                                            case 'bfloat16': data_type = 'float32'; break;
+                                            case 'float8e5m2': data_type = 'float16'; break;
+                                            case 'float8e5m2fnuz': data_type = 'float16'; break;
+                                            case 'float8e4m3fn': data_type = 'float16'; break;
+                                            case 'float8e4m3fnuz': data_type = 'float16'; break;
+                                            case 'int4': data_type = 'int8'; break;
+                                            default: data_type = tensor.type.dataType; break;
+                                        }
+                                        Target.execution = Target.execution || new python.Execution();
+                                        const execution = Target.execution;
+                                        const bytes = execution.invoke('io.BytesIO', []);
+                                        const dtype = execution.invoke('numpy.dtype', [data_type]);
+                                        const array = execution.invoke('numpy.asarray', [tensor.value, dtype]);
+                                        execution.invoke('numpy.save', [bytes, array]);
+                                    }
                                 }
-                                const execution = new python.Execution();
-                                const bytes = execution.invoke('io.BytesIO', []);
-                                const dtype = execution.invoke('numpy.dtype', [ data_type ]);
-                                const array = execution.invoke('numpy.asarray', [ tensor.value, dtype ]);
-                                execution.invoke('numpy.save', [ bytes, array ]);
                             }
-                            */
                         }
                     }
                 } else if (value.name.length === 0) {
@@ -621,19 +697,29 @@ export class Target {
                     }
                 }
             };
-            for (const input of graph.inputs) {
-                input.name.toString();
-                input.name.length;
-                for (const value of input.value) {
-                    validateValue(value);
+            const signatures = Array.isArray(graph.signatures) ? graph.signatures : [graph];
+            for (const signature of signatures) {
+                for (const input of signature.inputs) {
+                    input.name.toString();
+                    input.name.length;
+                    for (const value of input.value) {
+                        /* eslint-disable no-await-in-loop */
+                        await validateValue(value);
+                        /* eslint-enable no-await-in-loop */
+                    }
+                }
+                for (const output of signature.outputs) {
+                    output.name.toString();
+                    output.name.length;
+                    for (const value of output.value) {
+                        /* eslint-disable no-await-in-loop */
+                        await validateValue(value);
+                        /* eslint-enable no-await-in-loop */
+                    }
                 }
             }
-            for (const output of graph.outputs) {
-                output.name.toString();
-                output.name.length;
-                for (const value of output.value) {
-                    validateValue(value);
-                }
+            if (graph.metadata && !Array.isArray(graph.metadata) && graph.metadata.every((argument) => argument.name && argument.value)) {
+                throw new Error("Invalid graph metadata.'");
             }
             for (const node of graph.nodes) {
                 const type = node.type;
@@ -641,39 +727,68 @@ export class Target {
                     throw new Error(`Invalid node type '${JSON.stringify(node.type)}'.`);
                 }
                 if (Array.isArray(type.nodes)) {
-                    validateGraph(type);
+                    /* eslint-disable no-await-in-loop */
+                    await validateGraph(type);
+                    /* eslint-enable no-await-in-loop */
                 }
-                view.Documentation.format(type);
+                view.Documentation.open(type);
                 node.name.toString();
                 node.description;
-                node.attributes.slice();
-                for (const attribute of node.attributes) {
-                    attribute.name.toString();
-                    attribute.name.length;
-                    const type = attribute.type;
-                    const value = attribute.value;
-                    if ((type === 'graph' || type === 'function') && value && Array.isArray(value.nodes)) {
-                        validateGraph(value);
-                    } else {
-                        let text = new view.Formatter(attribute.value, attribute.type).toString();
-                        if (text && text.length > 1000) {
-                            text = `${text.substring(0, 1000)}...`;
+                if (node.metadata && !Array.isArray(node.metadata) && node.metadata.every((argument) => argument.name && argument.value)) {
+                    throw new Error("Invalid graph metadata.'");
+                }
+                const attributes = node.attributes;
+                if (attributes) {
+                    for (const attribute of attributes) {
+                        attribute.name.toString();
+                        attribute.name.length;
+                        const type = attribute.type;
+                        const value = attribute.value;
+                        if ((type === 'graph' || type === 'function') && value && Array.isArray(value.nodes)) {
+                            /* eslint-disable no-await-in-loop */
+                            await validateGraph(value);
+                            /* eslint-enable no-await-in-loop */
+                        } else {
+                            let text = new view.Formatter(attribute.value, attribute.type).toString();
+                            if (text && text.length > 1000) {
+                                text = `${text.substring(0, 1000)}...`;
+                            }
+                            /* value = */ text.split('<');
                         }
-                        /* value = */ text.split('<');
                     }
                 }
-                for (const input of node.inputs) {
-                    input.name.toString();
-                    input.name.length;
-                    for (const value of input.value) {
-                        validateValue(value);
+                const inputs = node.inputs;
+                if (Array.isArray(inputs)) {
+                    for (const input of inputs) {
+                        input.name.toString();
+                        input.name.length;
+                        if (!input.type || input.type.endsWith('*')) {
+                            for (const value of input.value) {
+                                /* eslint-disable no-await-in-loop */
+                                await validateValue(value);
+                                /* eslint-enable no-await-in-loop */
+                            }
+                            if (this.tags.has('validation')) {
+                                if (input.value.length === 1 && input.value[0].initializer) {
+                                    const sidebar = new view.TensorSidebar(this.view, input);
+                                    sidebar.render();
+                                }
+                            }
+                        }
                     }
                 }
-                for (const output of node.outputs) {
-                    output.name.toString();
-                    output.name.length;
-                    for (const value of output.value) {
-                        validateValue(value);
+                const outputs = node.outputs;
+                if (Array.isArray(outputs)) {
+                    for (const output of node.outputs) {
+                        output.name.toString();
+                        output.name.length;
+                        if (!output.type || output.type.endsWith('*')) {
+                            for (const value of output.value) {
+                                /* eslint-disable no-await-in-loop */
+                                await validateValue(value);
+                                /* eslint-enable no-await-in-loop */
+                            }
+                        }
                     }
                 }
                 if (node.chain) {
@@ -682,34 +797,47 @@ export class Target {
                         chain.name.length;
                     }
                 }
-                // new dialog.NodeSidebar(host, node);
+                const sidebar = new view.NodeSidebar(this.view, node);
+                sidebar.render();
             }
+            const sidebar = new view.ModelSidebar(this.view, this.model, graph);
+            sidebar.render();
         };
         /* eslint-enable no-unused-expressions */
         for (const graph of this.model.graphs) {
-            validateGraph(graph);
+            /* eslint-disable no-await-in-loop */
+            await validateGraph(graph);
+            /* eslint-enable no-await-in-loop */
         }
     }
 
     async render() {
-        const current = new view.View(this.host);
-        current.options.attributes = true;
-        current.options.initializers = true;
-        await current.renderGraph(this.model, this.model.graphs[0], current.options);
+        for (const graph of this.model.graphs) {
+            const signatures = Array.isArray(graph.signatures) && graph.signatures.length > 0 ? graph.signatures : [graph];
+            for (const signature of signatures) {
+                /* eslint-disable no-await-in-loop */
+                await this.view.renderGraph(this.model, graph, signature, this.view.options);
+                /* eslint-enable no-await-in-loop */
+            }
+        }
     }
 }
 
-const main = () => {
-    worker_threads.parentPort.on('message', async (message) => {
+if (!worker_threads.isMainThread) {
+    worker_threads.parentPort.addEventListener('message', async (e) => {
+        const message = e.data;
         const response = {};
         try {
             const target = new Target(message);
             response.type = 'complete';
             response.target = target.name;
             target.on('status', (_, message) => {
-                message = Object.assign({ type: 'status' }, message);
+                message = { type: 'status', ...message };
                 worker_threads.parentPort.postMessage(message);
             });
+            if (message.measures) {
+                target.measures = new Map();
+            }
             await target.execute();
             response.measures = target.measures;
         } catch (error) {
@@ -728,8 +856,4 @@ const main = () => {
         }
         worker_threads.parentPort.postMessage(response);
     });
-};
-
-if (!worker_threads.isMainThread) {
-    main();
 }

@@ -5,17 +5,17 @@ const lasagne = {};
 
 lasagne.ModelFactory = class {
 
-    match(context) {
-        const obj = context.peek('pkl');
+    async match(context) {
+        const obj = await context.peek('pkl');
         if (obj && obj.__class__ && obj.__class__.__module__ === 'nolearn.lasagne.base' && obj.__class__.__name__ === 'NeuralNet') {
-            context.type = 'lasagne';
-            context.target = obj;
+            return context.set('lasagne', obj);
         }
+        return null;
     }
 
     async open(context) {
         const metadata = await context.metadata('lasagne-metadata.json');
-        return new lasagne.Model(metadata, context.target);
+        return new lasagne.Model(metadata, context.value);
     }
 };
 
@@ -74,9 +74,10 @@ lasagne.Graph = class {
 
 lasagne.Argument = class {
 
-    constructor(name, value) {
+    constructor(name, value, type) {
         this.name = name;
         this.value = value;
+        this.type = type || null;
     }
 };
 
@@ -86,8 +87,8 @@ lasagne.Value = class {
         if (typeof name !== 'string') {
             throw new lasagne.Error(`Invalid value identifier '${JSON.stringify(name)}'.`);
         }
-        this.name= name;
-        this.type = type ? type : initializer ? initializer.type : null;
+        this.name = name;
+        this.type = !type && initializer ? initializer.type : type;
         this.initializer = initializer;
     }
 };
@@ -110,7 +111,8 @@ lasagne.Node = class {
                 params.set(value.name, key);
                 continue;
             }
-            const attribute = new lasagne.Attribute(null, key, value);
+            const type = value && value.__class__ ? `${value.__class__.__module__}.${value.__class__.__name__}` : null;
+            const attribute = new lasagne.Argument(key, value, type);
             this.attributes.push(attribute);
         }
         if (layer.input_layer && layer.input_layer.name) {
@@ -129,17 +131,6 @@ lasagne.Node = class {
             }
         }
         this.outputs.push(new lasagne.Argument('output', [values.map(this.name)]));
-    }
-};
-
-lasagne.Attribute = class {
-
-    constructor(metadata, name, value) {
-        this.name = name;
-        this.value = value;
-        if (value && value.__class__) {
-            this.type = `${value.__class__.__module__}.${value.__class__.__name__}`;
-        }
     }
 };
 
@@ -183,6 +174,7 @@ lasagne.Tensor = class {
 
     constructor(storage) {
         this.type = new lasagne.TensorType(storage.dtype.__name__, new lasagne.TensorShape(storage.shape));
+        this.values = storage.data;
     }
 };
 

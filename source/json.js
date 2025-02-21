@@ -67,7 +67,7 @@ json.TextReader = class {
         this._position = 0;
         this._char = this._decoder.decode();
         this._whitespace();
-        let obj = undefined;
+        let obj = null;
         let first = true;
         for (;;) {
             if (Array.isArray(obj)) {
@@ -149,7 +149,6 @@ json.TextReader = class {
                     switch (key) {
                         case '__proto__':
                         case 'constructor':
-                        case 'prototype':
                             throw new json.Error(`Invalid key '${key}' ${this._location()}`);
                         default:
                             break;
@@ -207,7 +206,14 @@ json.TextReader = class {
                         break;
                     }
                     default: {
-                        const value = c === '"' ? this._string() : c >= '0' && c <= '9' ? this._number() : this._literal();
+                        let value = null;
+                        if (c === '"') {
+                            value = this._string();
+                        } else if (c >= '0' && c <= '9') {
+                            value = this._number();
+                        } else {
+                            value = this._literal();
+                        }
                         this._whitespace();
                         if (this._char !== undefined) {
                             this._unexpected();
@@ -376,7 +382,7 @@ json.TextReader = class {
         let line = 1;
         let column = 1;
         this._decoder.position = 0;
-        let c;
+        let c = '';
         do {
             if (this._decoder.position === this._position) {
                 return `at ${line}:${column}.`;

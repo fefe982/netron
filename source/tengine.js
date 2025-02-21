@@ -1,24 +1,22 @@
 
 // Experimental
 
-import * as base from './base.js';
-
 const tengine = {};
 
 tengine.ModelFactory = class {
 
-    match(context) {
-        const reader = tengine.Reader.open(context.stream);
+    async match(context) {
+        const reader = tengine.Reader.open(context);
         if (reader) {
-            context.type = 'tengine';
-            context.target = reader;
+            return context.set('tengine', reader);
         }
+        return null;
     }
 
     async open(context) {
         const metadata = await tengine.Metadata.open(context);
-        const reader = context.target;
-        reader.read();
+        const reader = context.value;
+        await reader.read();
         return new tengine.Model(metadata, reader);
     }
 };
@@ -27,8 +25,7 @@ tengine.Model = class {
 
     constructor(metadata, reader) {
         this.format = `Tengine v${reader.version}`;
-        this.metadata = new Map();
-        this.metadata.set('source', reader.source);
+        this.source = reader.source;
         this.graphs = reader.graphs.map((graph) => new tengine.Graph(metadata, graph));
     }
 };
@@ -64,9 +61,11 @@ tengine.Graph = class {
 
 tengine.Argument = class {
 
-    constructor(name, value) {
+    constructor(name, value, type, visible) {
         this.name = name;
         this.value = value;
+        this.type = type || null;
+        this.visible = visible !== false;
     }
 };
 
@@ -91,8 +90,23 @@ tengine.Node = class {
         this.type = metadata.type(type, version) || { name: type };
         for (let i = 0; i < node.params.length; i++) {
             const metadata = (this.type && this.type.attributes && i < this.type.attributes.length) ? this.type.attributes[i] : null;
-            const name = metadata ? metadata.name : i.toString();
-            this.attributes.push(new tengine.Attribute(metadata, name, node.params[i]));
+            const value = node.params[i];
+            let name = metadata ? metadata.name : i.toString();
+            let type = null;
+            let visible = true;
+            if (metadata) {
+                name = !name && metadata.name ? metadata.name : name;
+                type = !type && metadata.type ? metadata.type : type;
+                if (metadata.visible === false) {
+                    visible = false;
+                } else if (metadata.default !== undefined) {
+                    if (value === metadata.default || (value && value.toString() === metadata.default.toString())) {
+                        visible = false;
+                    }
+                }
+            }
+            const attribute = new tengine.Argument(name, value, type, visible);
+            this.attributes.push(attribute);
         }
         const inputs = node.inputs;
         let inputIndex = 0;
@@ -131,28 +145,6 @@ tengine.Node = class {
     }
 };
 
-tengine.Attribute = class {
-
-    constructor(metadata, key, value) {
-        this.type = '';
-        this.name = key;
-        this.value = value;
-        if (metadata) {
-            this.name = metadata.name;
-            if (metadata.type) {
-                this.type = metadata.type;
-            }
-            if (metadata.visible === false) {
-                this.visible = false;
-            } else if (Object.prototype.hasOwnProperty.call(metadata, 'default')) {
-                if (this.value === metadata.default || (this.value && this.value.toString() === metadata.default.toString())) {
-                    this.visible = false;
-                }
-            }
-        }
-    }
-};
-
 tengine.Tensor = class {
 
     constructor(type, values) {
@@ -171,7 +163,7 @@ tengine.TensorType = class {
             case 3: this.dataType = 'uint8'; break;
             case 4: this.dataType = 'int32'; break;
             case 5: this.dataType = 'int16'; break;
-            default: throw new tengine.Error(`Unsupported data type'${dataType}'.`);
+            default: throw new tengine.Error(`Unsupported data type '${dataType}'.`);
         }
         this.shape = shape;
     }
@@ -195,17 +187,16 @@ tengine.TensorShape = class {
 tengine.Metadata = class {
 
     static async open(context) {
-        if (tengine.Metadata._metadata) {
-            return tengine.Metadata._metadata;
-        }
-        try {
-            const data = await context.request('tengine-metadata.json');
+        if (!tengine.Metadata._metadata) {
+            let data = null;
+            try {
+                data = await context.request('tengine-metadata.json');
+            } catch {
+                // continue regardless of error
+            }
             tengine.Metadata._metadata = new tengine.Metadata(data);
-            return tengine.Metadata._metadata;
-        } catch (error) {
-            tengine.Metadata._metadata = new tengine.Metadata(null);
-            return tengine.Metadata._metadata;
         }
+        return tengine.Metadata._metadata;
     }
 
     constructor(data) {
@@ -243,26 +234,27 @@ tengine.Metadata = class {
 
 tengine.Reader = class {
 
-    static open(stream) {
-        if (stream && stream.length > 4) {
-            const buffer = stream.peek(2);
-            if (buffer[0] < 4 && buffer[1] === 0) {
-                return new tengine.Reader(stream);
+    static open(context) {
+        const stream = context.stream;
+        if (stream && stream.length > 12) {
+            const buffer = stream.peek(4);
+            if (buffer[0] < 4 && buffer[1] === 0 && buffer[3] === 0) {
+                return new tengine.Reader(context);
             }
         }
         return null;
     }
 
-    constructor(stream) {
-        this.stream = stream;
+    constructor(context) {
+        this.context = context;
         // https://github.com/OAID/Tengine/wiki/The-format-of-tmfile
         // https://github.com/OAID/Tengine/blob/tengine-lite/source/serializer/tmfile/tm2_format.h
     }
 
-    read() {
+    async read() {
         const types = new Map();
         const register = (index, version, name, params) => {
-            types.set(`${index}:${version}`, { name: name, params: params });
+            types.set(`${index}:${version}`, { name, params });
         };
         const operator = (index, version) => {
             let current = version;
@@ -386,23 +378,32 @@ tengine.Reader = class {
         register(101, 0, 'L2Normalization', []);
         register(102, 0, 'PackModel', ['i','i']);
         register(103, 0, 'Num', []);
-        const buffer = this.stream.peek();
-        const reader = new tengine.BinaryReader(buffer);
-        this._majorVersion = reader.uint16();
-        this._minorVersion = reader.uint16();
-        if (this._majorVersion !== 2) {
-            throw new tengine.Error(`Unsupported format version 'v${this._majorVersion}.${this._minorVersion}'.`);
+        const reader = await tengine.BinaryReader.open(this.context);
+        const major = reader.uint16();
+        const minor = reader.uint16();
+        if (major !== 2) {
+            throw new tengine.Error(`Unsupported format version 'v${this.version}'.`);
         }
-        this._compileVersion = reader.uint16();
+        this.version = `${major}.${minor}`;
+        reader.uint16(); // compileVersion
         reader.skip(2); // struct align
         reader.seek(reader.uint32()); // root table
-        this._originalFormat = reader.int32();
-        this._subFormat = reader.int32();
+        const originalFormat = reader.int32();
+        const subFormat = reader.int32();
+        const sources = [
+            '', 'Tengine', 'Caffe', 'ONNX',
+            'MXNet', 'TensorFlow', 'TensorFlow Lite', 'Darknet',
+            `DLA v${subFormat}`, 'ncnn', 'MegEngine', 'OneFlow',
+            'Horizon', 'Bitman'
+        ];
+        if (originalFormat >= sources.length) {
+            throw new tengine.Error(`Unsupported source '${originalFormat}'.`);
+        }
+        this.source = sources[originalFormat];
         this.graphs = [];
         const subgraphOffsets = reader.uint32s();
         for (const subgraphOffset of subgraphOffsets) {
             reader.seek(subgraphOffset);
-
             const subgraph = {};
             subgraph.id = reader.int32();
             subgraph.graphLayout = reader.int32();
@@ -477,14 +478,14 @@ tengine.Reader = class {
                     }
                 }
                 if (node.type === 'Slice') {
-                    node.params[6] = (this._originalFormat === 5) ? node.params[6] : 0;
+                    node.params[6] = (originalFormat === 5) ? node.params[6] : 0;
                 }
                 node.attributes = attributeOffsets.map((attributeOffset) => {
                     reader.seek(attributeOffset);
                     const name = reader.string();
                     const value = reader.string();
                     const type = reader.int32();
-                    return { name: name, value: value, type: type };
+                    return { name, value, type };
                 });
                 subgraph.nodes.push(node);
             }
@@ -540,65 +541,52 @@ tengine.Reader = class {
                 }
             }
         }
+        delete this.context;
         delete this.stream;
-    }
-
-    get version() {
-        return `${this._majorVersion}.${this._minorVersion}`;
-    }
-
-    get source() {
-        switch (this._originalFormat) {
-            case 0: return '';
-            case 1: return 'Tengine';
-            case 2: return 'Caffe';
-            case 3: return 'ONNX';
-            case 4: return 'MXNet';
-            case 5: return 'TensorFlow';
-            case 6: return 'TensorFlow Lite';
-            case 7: return 'Darknet';
-            case 8: return `DLA v${this._subFormat}`;
-            case 9: return 'ncnn';
-            case 10: return 'MegEngine';
-            case 11: return 'OneFlow';
-            case 12: return 'Horizon';
-            case 13: return 'Bitman';
-            default: throw new tengine.Error(`Unsupported source '${this._originalFormat}'.`);
-        }
     }
 };
 
-tengine.BinaryReader = class extends base.BinaryReader {
+tengine.BinaryReader = class {
 
-    string() {
-        const position = this.uint32();
-        let content = '';
-        if (position) {
-            const next = this._position;
-            this.seek(position);
-            const size = this.uint32();
-            this.seek(this.uint32());
-            for (let i = 0; i < size - 1; i++) {
-                content += String.fromCharCode(this._buffer[this._position++]);
-            }
-            this.seek(next);
-        }
-        return content;
+    static async open(context) {
+        const reader = await context.read('binary');
+        return new tengine.BinaryReader(reader);
     }
 
-    uint32s() {
-        const values = [];
-        const offset = this.uint32();
-        if (offset) {
-            const next = this.position;
-            this.seek(offset);
-            const count = this.uint32();
-            for (let i = 0; i < count; i++) {
-                values.push(this.uint32());
-            }
-            this.seek(next);
-        }
-        return values;
+    constructor(reader) {
+        this._reader = reader;
+    }
+
+    get position() {
+        return this._reader.position;
+    }
+
+    seek(offset) {
+        this._reader.seek(offset);
+    }
+
+    skip(offset) {
+        this._reader.skip(offset);
+    }
+
+    align(mod) {
+        return this._reader.align(mod);
+    }
+
+    read(length) {
+        return this._reader.read(length);
+    }
+
+    boolean() {
+        return this._reader.boolean();
+    }
+
+    byte() {
+        return this._reader.byte();
+    }
+
+    int32() {
+        return this._reader.int32();
     }
 
     int32s() {
@@ -616,6 +604,33 @@ tengine.BinaryReader = class extends base.BinaryReader {
         return values;
     }
 
+    uint16() {
+        return this._reader.uint16();
+    }
+
+    uint32() {
+        return this._reader.uint32();
+    }
+
+    uint32s() {
+        const values = [];
+        const offset = this.uint32();
+        if (offset) {
+            const next = this.position;
+            this.seek(offset);
+            const count = this.uint32();
+            for (let i = 0; i < count; i++) {
+                values.push(this.uint32());
+            }
+            this.seek(next);
+        }
+        return values;
+    }
+
+    float32() {
+        return this._reader.float32();
+    }
+
     float32s() {
         const values = [];
         const offset = this.uint32();
@@ -629,6 +644,22 @@ tengine.BinaryReader = class extends base.BinaryReader {
             this.seek(next);
         }
         return values;
+    }
+
+    string() {
+        const position = this.uint32();
+        let content = '';
+        if (position) {
+            const next = this.position;
+            this.seek(position);
+            const size = this.uint32();
+            this.seek(this.uint32());
+            for (let i = 0; i < size - 1; i++) {
+                content += String.fromCharCode(this.byte());
+            }
+            this.seek(next);
+        }
+        return content;
     }
 
     anchors(length) {
@@ -660,4 +691,3 @@ tengine.Error = class extends Error {
 };
 
 export const ModelFactory = tengine.ModelFactory;
-
