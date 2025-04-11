@@ -649,8 +649,10 @@ const version = async () => {
         return p1 + date + p3;
     });
     await fs.writeFile(file, content, 'utf-8');
+    await exec('npm install --package-lock-only');
     await load();
     await exec('git add package.json');
+    await exec('git add package-lock.json');
     await exec(`git commit -m "Update to ${configuration.version}"`);
     await exec(`git tag v${configuration.version}`);
     await exec('git push');
